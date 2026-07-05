@@ -1,0 +1,6 @@
+﻿name,code,error
+地下管网,BK1058,"HTTPSConnectionPool(host='91.push2his.eastmoney.com', port=4"
+中盘成长,BK1669,"HTTPSConnectionPool(host='91.push2his.eastmoney.com', port=4"
+工业母机,BK1004,"('Connection broken: IncompleteRead(20182 bytes read, 21953 "
+医疗器械概念,BK0668,"HTTPSConnectionPool(host='91.push2his.eastmoney.com', port=4"
+麒麟电池,BK1092,"HTTPSConnectionPool(host='91.push2his.eastmoney.com', port=4"

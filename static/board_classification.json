@@ -1,0 +1,5024 @@
+{
+  "categories": [
+    {
+      "name": "医疗健康",
+      "boards": [
+        {
+          "name": "医美服务",
+          "type": "industry",
+          "code": "BK1499"
+        },
+        {
+          "name": "医疗研发外包",
+          "type": "industry",
+          "code": "BK1600"
+        },
+        {
+          "name": "检测服务",
+          "type": "industry",
+          "code": "BK1566"
+        },
+        {
+          "name": "农药",
+          "type": "industry",
+          "code": "BK1436"
+        },
+        {
+          "name": "美容护理",
+          "type": "industry",
+          "code": "BK1035"
+        },
+        {
+          "name": "医疗服务",
+          "type": "industry",
+          "code": "BK0727"
+        },
+        {
+          "name": "体外诊断",
+          "type": "industry",
+          "code": "BK1603"
+        },
+        {
+          "name": "医药流通",
+          "type": "industry",
+          "code": "BK1607"
+        },
+        {
+          "name": "中药Ⅲ",
+          "type": "industry",
+          "code": "BK1608"
+        },
+        {
+          "name": "中药Ⅱ",
+          "type": "industry",
+          "code": "BK1040"
+        },
+        {
+          "name": "医院",
+          "type": "industry",
+          "code": "BK1601"
+        },
+        {
+          "name": "医药商业",
+          "type": "industry",
+          "code": "BK1042"
+        },
+        {
+          "name": "医疗美容",
+          "type": "industry",
+          "code": "BK1253"
+        },
+        {
+          "name": "血液制品",
+          "type": "industry",
+          "code": "BK1597"
+        },
+        {
+          "name": "医疗器械",
+          "type": "industry",
+          "code": "BK1041"
+        },
+        {
+          "name": "疫苗",
+          "type": "industry",
+          "code": "BK1598"
+        },
+        {
+          "name": "医药生物",
+          "type": "industry",
+          "code": "BK1216"
+        },
+        {
+          "name": "医疗耗材",
+          "type": "industry",
+          "code": "BK1604"
+        },
+        {
+          "name": "原料药",
+          "type": "industry",
+          "code": "BK1595"
+        },
+        {
+          "name": "生物制品",
+          "type": "industry",
+          "code": "BK1044"
+        },
+        {
+          "name": "其他医疗服务",
+          "type": "industry",
+          "code": "BK1599"
+        },
+        {
+          "name": "线下药店",
+          "type": "industry",
+          "code": "BK1606"
+        },
+        {
+          "name": "其他生物制品",
+          "type": "industry",
+          "code": "BK1596"
+        },
+        {
+          "name": "化学制药",
+          "type": "industry",
+          "code": "BK0465"
+        },
+        {
+          "name": "医疗设备",
+          "type": "industry",
+          "code": "BK1605"
+        },
+        {
+          "name": "医美耗材",
+          "type": "industry",
+          "code": "BK1500"
+        },
+        {
+          "name": "诊断服务",
+          "type": "industry",
+          "code": "BK1602"
+        },
+        {
+          "name": "转基因",
+          "type": "concept",
+          "code": "BK0907"
+        },
+        {
+          "name": "CRO",
+          "type": "concept",
+          "code": "BK0899"
+        },
+        {
+          "name": "毛发医疗",
+          "type": "concept",
+          "code": "BK0996"
+        },
+        {
+          "name": "生物质能发电",
+          "type": "concept",
+          "code": "BK1098"
+        },
+        {
+          "name": "生物识别",
+          "type": "concept",
+          "code": "BK0970"
+        },
+        {
+          "name": "农药兽药",
+          "type": "concept",
+          "code": "BK0730"
+        },
+        {
+          "name": "养老金",
+          "type": "concept",
+          "code": "BK0823"
+        },
+        {
+          "name": "房屋检测",
+          "type": "concept",
+          "code": "BK1179"
+        },
+        {
+          "name": "养老概念",
+          "type": "concept",
+          "code": "BK0653"
+        },
+        {
+          "name": "创新医疗服务",
+          "type": "concept",
+          "code": "BK1658"
+        },
+        {
+          "name": "合成生物",
+          "type": "concept",
+          "code": "BK1174"
+        },
+        {
+          "name": "精准诊断",
+          "type": "concept",
+          "code": "BK1659"
+        },
+        {
+          "name": "医疗器械概念",
+          "type": "concept",
+          "code": "BK0668"
+        },
+        {
+          "name": "生物疫苗",
+          "type": "concept",
+          "code": "BK0548"
+        },
+        {
+          "name": "AI制药（医疗）",
+          "type": "concept",
+          "code": "BK1170"
+        },
+        {
+          "name": "体外诊断概念",
+          "type": "concept",
+          "code": "BK0841"
+        },
+        {
+          "name": "中药概念",
+          "type": "concept",
+          "code": "BK0615"
+        },
+        {
+          "name": "独家药品",
+          "type": "concept",
+          "code": "BK0676"
+        },
+        {
+          "name": "医美概念",
+          "type": "concept",
+          "code": "BK0889"
+        },
+        {
+          "name": "DRG/DIP",
+          "type": "concept",
+          "code": "BK1054"
+        },
+        {
+          "name": "医药医疗风格",
+          "type": "concept",
+          "code": "BK1712"
+        },
+        {
+          "name": "CAR-T细胞疗法",
+          "type": "concept",
+          "code": "BK0986"
+        },
+        {
+          "name": "互联医疗",
+          "type": "concept",
+          "code": "BK0837"
+        },
+        {
+          "name": "特色药",
+          "type": "concept",
+          "code": "BK1656"
+        },
+        {
+          "name": "减肥药",
+          "type": "concept",
+          "code": "BK1146"
+        },
+        {
+          "name": "SPD概念",
+          "type": "concept",
+          "code": "BK1147"
+        },
+        {
+          "name": "流感",
+          "type": "concept",
+          "code": "BK0906"
+        },
+        {
+          "name": "免疫治疗",
+          "type": "concept",
+          "code": "BK0698"
+        },
+        {
+          "name": "创新药",
+          "type": "concept",
+          "code": "BK1106"
+        },
+        {
+          "name": "基因测序",
+          "type": "concept",
+          "code": "BK0693"
+        },
+        {
+          "name": "精准医疗",
+          "type": "concept",
+          "code": "BK0806"
+        },
+        {
+          "name": "长寿药",
+          "type": "concept",
+          "code": "BK0936"
+        }
+      ]
+    },
+    {
+      "name": "科技信息",
+      "boards": [
+        {
+          "name": "半导体材料",
+          "type": "industry",
+          "code": "BK1325"
+        },
+        {
+          "name": "半导体设备",
+          "type": "industry",
+          "code": "BK1326"
+        },
+        {
+          "name": "光伏加工设备",
+          "type": "industry",
+          "code": "BK1317"
+        },
+        {
+          "name": "LED",
+          "type": "industry",
+          "code": "BK1333"
+        },
+        {
+          "name": "电子化学品Ⅲ",
+          "type": "industry",
+          "code": "BK1332"
+        },
+        {
+          "name": "电子化学品Ⅱ",
+          "type": "industry",
+          "code": "BK1039"
+        },
+        {
+          "name": "光学光电子",
+          "type": "industry",
+          "code": "BK1038"
+        },
+        {
+          "name": "光学元件",
+          "type": "industry",
+          "code": "BK1334"
+        },
+        {
+          "name": "面板",
+          "type": "industry",
+          "code": "BK1335"
+        },
+        {
+          "name": "光伏发电",
+          "type": "industry",
+          "code": "BK1375"
+        },
+        {
+          "name": "光伏设备",
+          "type": "industry",
+          "code": "BK1031"
+        },
+        {
+          "name": "电信运营商",
+          "type": "industry",
+          "code": "BK1587"
+        },
+        {
+          "name": "半导体",
+          "type": "industry",
+          "code": "BK1036"
+        },
+        {
+          "name": "光伏主材",
+          "type": "industry",
+          "code": "BK1318"
+        },
+        {
+          "name": "集成电路封测",
+          "type": "industry",
+          "code": "BK1328"
+        },
+        {
+          "name": "互联网电商",
+          "type": "industry",
+          "code": "BK1268"
+        },
+        {
+          "name": "光伏辅材",
+          "type": "industry",
+          "code": "BK1316"
+        },
+        {
+          "name": "被动元件",
+          "type": "industry",
+          "code": "BK1339"
+        },
+        {
+          "name": "光伏电池组件",
+          "type": "industry",
+          "code": "BK1315"
+        },
+        {
+          "name": "军工电子Ⅲ",
+          "type": "industry",
+          "code": "BK1386"
+        },
+        {
+          "name": "军工电子Ⅱ",
+          "type": "industry",
+          "code": "BK1233"
+        },
+        {
+          "name": "电子",
+          "type": "industry",
+          "code": "BK1201"
+        },
+        {
+          "name": "其他数字媒体",
+          "type": "industry",
+          "code": "BK1295"
+        },
+        {
+          "name": "安防设备",
+          "type": "industry",
+          "code": "BK1445"
+        },
+        {
+          "name": "数字芯片设计",
+          "type": "industry",
+          "code": "BK1331"
+        },
+        {
+          "name": "元件",
+          "type": "industry",
+          "code": "BK0459"
+        },
+        {
+          "name": "门户网站",
+          "type": "industry",
+          "code": "BK1294"
+        },
+        {
+          "name": "模拟芯片设计",
+          "type": "industry",
+          "code": "BK1330"
+        },
+        {
+          "name": "汽车电子电气系统",
+          "type": "industry",
+          "code": "BK1529"
+        },
+        {
+          "name": "游戏Ⅲ",
+          "type": "industry",
+          "code": "BK1301"
+        },
+        {
+          "name": "游戏Ⅱ",
+          "type": "industry",
+          "code": "BK1046"
+        },
+        {
+          "name": "机器人",
+          "type": "industry",
+          "code": "BK1408"
+        },
+        {
+          "name": "激光设备",
+          "type": "industry",
+          "code": "BK1409"
+        },
+        {
+          "name": "印制电路板",
+          "type": "industry",
+          "code": "BK1340"
+        },
+        {
+          "name": "自动化设备",
+          "type": "industry",
+          "code": "BK1237"
+        },
+        {
+          "name": "集成电路制造",
+          "type": "industry",
+          "code": "BK1329"
+        },
+        {
+          "name": "数字媒体",
+          "type": "industry",
+          "code": "BK1221"
+        },
+        {
+          "name": "其他电子Ⅲ",
+          "type": "industry",
+          "code": "BK1336"
+        },
+        {
+          "name": "其他电子Ⅱ",
+          "type": "industry",
+          "code": "BK1223"
+        },
+        {
+          "name": "电网自动化设备",
+          "type": "industry",
+          "code": "BK1309"
+        },
+        {
+          "name": "分立器件",
+          "type": "industry",
+          "code": "BK1327"
+        },
+        {
+          "name": "消费电子零部件及组装",
+          "type": "industry",
+          "code": "BK1338"
+        },
+        {
+          "name": "消费电子",
+          "type": "industry",
+          "code": "BK1037"
+        },
+        {
+          "name": "通信工程及服务",
+          "type": "industry",
+          "code": "BK1588"
+        },
+        {
+          "name": "横向通用软件",
+          "type": "industry",
+          "code": "BK1448"
+        },
+        {
+          "name": "计算机设备",
+          "type": "industry",
+          "code": "BK0735"
+        },
+        {
+          "name": "软件开发",
+          "type": "industry",
+          "code": "BK0737"
+        },
+        {
+          "name": "通信终端及配件",
+          "type": "industry",
+          "code": "BK1593"
+        },
+        {
+          "name": "计算机",
+          "type": "industry",
+          "code": "BK1207"
+        },
+        {
+          "name": "垂直应用软件",
+          "type": "industry",
+          "code": "BK1447"
+        },
+        {
+          "name": "IT服务Ⅲ",
+          "type": "industry",
+          "code": "BK1444"
+        },
+        {
+          "name": "IT服务Ⅱ",
+          "type": "industry",
+          "code": "BK1238"
+        },
+        {
+          "name": "通信服务",
+          "type": "industry",
+          "code": "BK0736"
+        },
+        {
+          "name": "品牌消费电子",
+          "type": "industry",
+          "code": "BK1337"
+        },
+        {
+          "name": "其他自动化设备",
+          "type": "industry",
+          "code": "BK1410"
+        },
+        {
+          "name": "其他计算机设备",
+          "type": "industry",
+          "code": "BK1446"
+        },
+        {
+          "name": "通信应用增值服务",
+          "type": "industry",
+          "code": "BK1589"
+        },
+        {
+          "name": "通信",
+          "type": "industry",
+          "code": "BK1215"
+        },
+        {
+          "name": "其他通信设备",
+          "type": "industry",
+          "code": "BK1590"
+        },
+        {
+          "name": "通信网络设备及器件",
+          "type": "industry",
+          "code": "BK1591"
+        },
+        {
+          "name": "通信设备",
+          "type": "industry",
+          "code": "BK0448"
+        },
+        {
+          "name": "通信线缆及配套",
+          "type": "industry",
+          "code": "BK1592"
+        },
+        {
+          "name": "光刻机(胶)",
+          "type": "concept",
+          "code": "BK0884"
+        },
+        {
+          "name": "显示技术",
+          "type": "concept",
+          "code": "BK1651"
+        },
+        {
+          "name": "电子纸概念",
+          "type": "concept",
+          "code": "BK1057"
+        },
+        {
+          "name": "存储芯片",
+          "type": "concept",
+          "code": "BK1137"
+        },
+        {
+          "name": "先进封装",
+          "type": "concept",
+          "code": "BK1101"
+        },
+        {
+          "name": "OLED",
+          "type": "concept",
+          "code": "BK0840"
+        },
+        {
+          "name": "MiniLED",
+          "type": "concept",
+          "code": "BK0902"
+        },
+        {
+          "name": "MicroLED",
+          "type": "concept",
+          "code": "BK0948"
+        },
+        {
+          "name": "氮化镓",
+          "type": "concept",
+          "code": "BK0916"
+        },
+        {
+          "name": "碳化硅",
+          "type": "concept",
+          "code": "BK0977"
+        },
+        {
+          "name": "半导体概念",
+          "type": "concept",
+          "code": "BK0917"
+        },
+        {
+          "name": "北斗导航",
+          "type": "concept",
+          "code": "BK0629"
+        },
+        {
+          "name": "EDA概念",
+          "type": "concept",
+          "code": "BK0946"
+        },
+        {
+          "name": "LED概念",
+          "type": "concept",
+          "code": "BK0580"
+        },
+        {
+          "name": "第三代半导体",
+          "type": "concept",
+          "code": "BK0952"
+        },
+        {
+          "name": "卫星互联网",
+          "type": "concept",
+          "code": "BK0921"
+        },
+        {
+          "name": "被动元件概念",
+          "type": "concept",
+          "code": "BK0976"
+        },
+        {
+          "name": "IGBT概念",
+          "type": "concept",
+          "code": "BK1048"
+        },
+        {
+          "name": "光伏概念",
+          "type": "concept",
+          "code": "BK0588"
+        },
+        {
+          "name": "电子竞技",
+          "type": "concept",
+          "code": "BK0853"
+        },
+        {
+          "name": "国产芯片",
+          "type": "concept",
+          "code": "BK0891"
+        },
+        {
+          "name": "时空大数据",
+          "type": "concept",
+          "code": "BK1130"
+        },
+        {
+          "name": "元宇宙概念",
+          "type": "concept",
+          "code": "BK1009"
+        },
+        {
+          "name": "电子后视镜",
+          "type": "concept",
+          "code": "BK1125"
+        },
+        {
+          "name": "汽车芯片",
+          "type": "concept",
+          "code": "BK0969"
+        },
+        {
+          "name": "智能电视",
+          "type": "concept",
+          "code": "BK0656"
+        },
+        {
+          "name": "传感器",
+          "type": "concept",
+          "code": "BK0905"
+        },
+        {
+          "name": "网络游戏",
+          "type": "concept",
+          "code": "BK0509"
+        },
+        {
+          "name": "6G概念",
+          "type": "concept",
+          "code": "BK0964"
+        },
+        {
+          "name": "虚拟数字人",
+          "type": "concept",
+          "code": "BK1055"
+        },
+        {
+          "name": "小米概念",
+          "type": "concept",
+          "code": "BK0833"
+        },
+        {
+          "name": "智能家居",
+          "type": "concept",
+          "code": "BK0680"
+        },
+        {
+          "name": "虚拟机器人",
+          "type": "concept",
+          "code": "BK1190"
+        },
+        {
+          "name": "机器视觉",
+          "type": "concept",
+          "code": "BK0998"
+        },
+        {
+          "name": "短剧互动游戏",
+          "type": "concept",
+          "code": "BK1151"
+        },
+        {
+          "name": "数字孪生",
+          "type": "concept",
+          "code": "BK0861"
+        },
+        {
+          "name": "工业互联",
+          "type": "concept",
+          "code": "BK0832"
+        },
+        {
+          "name": "机器人执行器",
+          "type": "concept",
+          "code": "BK1145"
+        },
+        {
+          "name": "MLCC",
+          "type": "concept",
+          "code": "BK0890"
+        },
+        {
+          "name": "PCB",
+          "type": "concept",
+          "code": "BK0877"
+        },
+        {
+          "name": "安防概念",
+          "type": "concept",
+          "code": "BK0667"
+        },
+        {
+          "name": "AI眼镜",
+          "type": "concept",
+          "code": "BK1178"
+        },
+        {
+          "name": "苹果概念",
+          "type": "concept",
+          "code": "BK0666"
+        },
+        {
+          "name": "智能穿戴",
+          "type": "concept",
+          "code": "BK0641"
+        },
+        {
+          "name": "数字水印",
+          "type": "concept",
+          "code": "BK1129"
+        },
+        {
+          "name": "ETC",
+          "type": "concept",
+          "code": "BK0875"
+        },
+        {
+          "name": "无人驾驶",
+          "type": "concept",
+          "code": "BK0802"
+        },
+        {
+          "name": "华为汽车",
+          "type": "concept",
+          "code": "BK0984"
+        },
+        {
+          "name": "华为概念",
+          "type": "concept",
+          "code": "BK0854"
+        },
+        {
+          "name": "机器人概念",
+          "type": "concept",
+          "code": "BK1090"
+        },
+        {
+          "name": "数据确权",
+          "type": "concept",
+          "code": "BK1118"
+        },
+        {
+          "name": "小米汽车",
+          "type": "concept",
+          "code": "BK1155"
+        },
+        {
+          "name": "智能电网",
+          "type": "concept",
+          "code": "BK0581"
+        },
+        {
+          "name": "5G概念",
+          "type": "concept",
+          "code": "BK0714"
+        },
+        {
+          "name": "PLC概念",
+          "type": "concept",
+          "code": "BK1119"
+        },
+        {
+          "name": "华为欧拉",
+          "type": "concept",
+          "code": "BK1013"
+        },
+        {
+          "name": "消费电子概念",
+          "type": "concept",
+          "code": "BK1646"
+        },
+        {
+          "name": "人形机器人",
+          "type": "concept",
+          "code": "BK1184"
+        },
+        {
+          "name": "3D打印",
+          "type": "concept",
+          "code": "BK0619"
+        },
+        {
+          "name": "华为海思",
+          "type": "concept",
+          "code": "BK1180"
+        },
+        {
+          "name": "UWB概念",
+          "type": "concept",
+          "code": "BK0880"
+        },
+        {
+          "name": "车联网(车路云)",
+          "type": "concept",
+          "code": "BK0920"
+        },
+        {
+          "name": "物联网",
+          "type": "concept",
+          "code": "BK0554"
+        },
+        {
+          "name": "液冷概念",
+          "type": "concept",
+          "code": "BK1138"
+        },
+        {
+          "name": "VPN",
+          "type": "concept",
+          "code": "BK0885"
+        },
+        {
+          "name": "人工智能",
+          "type": "concept",
+          "code": "BK0800"
+        },
+        {
+          "name": "通信技术",
+          "type": "concept",
+          "code": "BK1650"
+        },
+        {
+          "name": "数字经济",
+          "type": "concept",
+          "code": "BK1061"
+        },
+        {
+          "name": "互联网金融",
+          "type": "concept",
+          "code": "BK0637"
+        },
+        {
+          "name": "第四代半导体",
+          "type": "concept",
+          "code": "BK1121"
+        },
+        {
+          "name": "ChatGPT概念",
+          "type": "concept",
+          "code": "BK1126"
+        },
+        {
+          "name": "毫米波概念",
+          "type": "concept",
+          "code": "BK1124"
+        },
+        {
+          "name": "电子车牌",
+          "type": "concept",
+          "code": "BK0982"
+        },
+        {
+          "name": "AIPC",
+          "type": "concept",
+          "code": "BK1164"
+        },
+        {
+          "name": "AI手机",
+          "type": "concept",
+          "code": "BK1162"
+        },
+        {
+          "name": "工业母机",
+          "type": "concept",
+          "code": "BK1004"
+        },
+        {
+          "name": "数字阅读",
+          "type": "concept",
+          "code": "BK0959"
+        },
+        {
+          "name": "激光雷达",
+          "type": "concept",
+          "code": "BK1002"
+        },
+        {
+          "name": "DeepSeek概念",
+          "type": "concept",
+          "code": "BK1188"
+        },
+        {
+          "name": "数据安全",
+          "type": "concept",
+          "code": "BK1047"
+        },
+        {
+          "name": "边缘计算",
+          "type": "concept",
+          "code": "BK0860"
+        },
+        {
+          "name": "AI智能体",
+          "type": "concept",
+          "code": "BK0809"
+        },
+        {
+          "name": "信创",
+          "type": "concept",
+          "code": "BK1104"
+        },
+        {
+          "name": "AIGC概念",
+          "type": "concept",
+          "code": "BK1111"
+        },
+        {
+          "name": "互联网服务",
+          "type": "concept",
+          "code": "BK0447"
+        },
+        {
+          "name": "国产软件",
+          "type": "concept",
+          "code": "BK0696"
+        },
+        {
+          "name": "数据要素",
+          "type": "concept",
+          "code": "BK1135"
+        },
+        {
+          "name": "区块链",
+          "type": "concept",
+          "code": "BK0830"
+        },
+        {
+          "name": "电子烟",
+          "type": "concept",
+          "code": "BK0865"
+        },
+        {
+          "name": "AI语料",
+          "type": "concept",
+          "code": "BK1172"
+        },
+        {
+          "name": "数据中心",
+          "type": "concept",
+          "code": "BK0922"
+        },
+        {
+          "name": "网络安全",
+          "type": "concept",
+          "code": "BK0655"
+        },
+        {
+          "name": "财税数字化",
+          "type": "concept",
+          "code": "BK1176"
+        },
+        {
+          "name": "大数据",
+          "type": "concept",
+          "code": "BK0634"
+        },
+        {
+          "name": "量子科技",
+          "type": "concept",
+          "code": "BK0710"
+        },
+        {
+          "name": "AI芯片",
+          "type": "concept",
+          "code": "BK1127"
+        },
+        {
+          "name": "全息技术",
+          "type": "concept",
+          "code": "BK0699"
+        },
+        {
+          "name": "算力概念",
+          "type": "concept",
+          "code": "BK1134"
+        },
+        {
+          "name": "AI应用",
+          "type": "concept",
+          "code": "BK1629"
+        },
+        {
+          "name": "多模态AI",
+          "type": "concept",
+          "code": "BK1153"
+        },
+        {
+          "name": "MLOps概念",
+          "type": "concept",
+          "code": "BK1132"
+        },
+        {
+          "name": "电子身份证",
+          "type": "concept",
+          "code": "BK1075"
+        },
+        {
+          "name": "英伟达概念",
+          "type": "concept",
+          "code": "BK1161"
+        },
+        {
+          "name": "Web3.0",
+          "type": "concept",
+          "code": "BK1110"
+        },
+        {
+          "name": "华为昇腾",
+          "type": "concept",
+          "code": "BK0995"
+        },
+        {
+          "name": "东数西算",
+          "type": "concept",
+          "code": "BK1064"
+        },
+        {
+          "name": "腾讯云",
+          "type": "concept",
+          "code": "BK1189"
+        },
+        {
+          "name": "数字货币",
+          "type": "concept",
+          "code": "BK0883"
+        },
+        {
+          "name": "智谱AI概念",
+          "type": "concept",
+          "code": "BK1182"
+        },
+        {
+          "name": "IPv6",
+          "type": "concept",
+          "code": "BK0897"
+        },
+        {
+          "name": "光通信模块",
+          "type": "concept",
+          "code": "BK1136"
+        },
+        {
+          "name": "云计算",
+          "type": "concept",
+          "code": "BK0579"
+        },
+        {
+          "name": "国资云概念",
+          "type": "concept",
+          "code": "BK1008"
+        },
+        {
+          "name": "F5G概念",
+          "type": "concept",
+          "code": "BK1088"
+        },
+        {
+          "name": "Kimi概念",
+          "type": "concept",
+          "code": "BK1169"
+        },
+        {
+          "name": "CPO概念",
+          "type": "concept",
+          "code": "BK1128"
+        }
+      ]
+    },
+    {
+      "name": "金融地产",
+      "boards": [
+        {
+          "name": "玻璃玻纤",
+          "type": "industry",
+          "code": "BK0546"
+        },
+        {
+          "name": "其他专业工程",
+          "type": "industry",
+          "code": "BK1477"
+        },
+        {
+          "name": "物业管理",
+          "type": "industry",
+          "code": "BK1343"
+        },
+        {
+          "name": "卫浴制品",
+          "type": "industry",
+          "code": "BK1541"
+        },
+        {
+          "name": "国有大型银行Ⅲ",
+          "type": "industry",
+          "code": "BK1611"
+        },
+        {
+          "name": "商业地产",
+          "type": "industry",
+          "code": "BK1345"
+        },
+        {
+          "name": "玻璃制造",
+          "type": "industry",
+          "code": "BK1461"
+        },
+        {
+          "name": "产业地产",
+          "type": "industry",
+          "code": "BK1344"
+        },
+        {
+          "name": "成品家居",
+          "type": "industry",
+          "code": "BK1537"
+        },
+        {
+          "name": "管材",
+          "type": "industry",
+          "code": "BK1466"
+        },
+        {
+          "name": "房地产服务",
+          "type": "industry",
+          "code": "BK1045"
+        },
+        {
+          "name": "装修装饰Ⅲ",
+          "type": "industry",
+          "code": "BK1478"
+        },
+        {
+          "name": "装修装饰Ⅱ",
+          "type": "industry",
+          "code": "BK0725"
+        },
+        {
+          "name": "专业工程",
+          "type": "industry",
+          "code": "BK1248"
+        },
+        {
+          "name": "城商行Ⅲ",
+          "type": "industry",
+          "code": "BK1609"
+        },
+        {
+          "name": "农商行Ⅲ",
+          "type": "industry",
+          "code": "BK1612"
+        },
+        {
+          "name": "银行",
+          "type": "industry",
+          "code": "BK1283"
+        },
+        {
+          "name": "银行Ⅱ",
+          "type": "industry",
+          "code": "BK0475"
+        },
+        {
+          "name": "建筑材料",
+          "type": "industry",
+          "code": "BK1208"
+        },
+        {
+          "name": "定制家居",
+          "type": "industry",
+          "code": "BK1539"
+        },
+        {
+          "name": "工程机械整机",
+          "type": "industry",
+          "code": "BK1393"
+        },
+        {
+          "name": "工程机械",
+          "type": "industry",
+          "code": "BK0739"
+        },
+        {
+          "name": "房地产",
+          "type": "industry",
+          "code": "BK1202"
+        },
+        {
+          "name": "资产管理",
+          "type": "industry",
+          "code": "BK1364"
+        },
+        {
+          "name": "房地产开发",
+          "type": "industry",
+          "code": "BK0451"
+        },
+        {
+          "name": "工程机械器件",
+          "type": "industry",
+          "code": "BK1392"
+        },
+        {
+          "name": "股份制银行Ⅲ",
+          "type": "industry",
+          "code": "BK1610"
+        },
+        {
+          "name": "家居用品",
+          "type": "industry",
+          "code": "BK0440"
+        },
+        {
+          "name": "住宅开发",
+          "type": "industry",
+          "code": "BK1346"
+        },
+        {
+          "name": "建筑装饰",
+          "type": "industry",
+          "code": "BK1209"
+        },
+        {
+          "name": "装修建材",
+          "type": "industry",
+          "code": "BK0476"
+        },
+        {
+          "name": "瓷砖地板",
+          "type": "industry",
+          "code": "BK1538"
+        },
+        {
+          "name": "工程咨询服务Ⅲ",
+          "type": "industry",
+          "code": "BK1471"
+        },
+        {
+          "name": "工程咨询服务Ⅱ",
+          "type": "industry",
+          "code": "BK0726"
+        },
+        {
+          "name": "水泥制品",
+          "type": "industry",
+          "code": "BK1463"
+        },
+        {
+          "name": "水泥",
+          "type": "industry",
+          "code": "BK0424"
+        },
+        {
+          "name": "水泥制造",
+          "type": "industry",
+          "code": "BK1464"
+        },
+        {
+          "name": "房地产综合服务",
+          "type": "industry",
+          "code": "BK1342"
+        },
+        {
+          "name": "卫浴电器",
+          "type": "industry",
+          "code": "BK1452"
+        },
+        {
+          "name": "基建市政工程",
+          "type": "industry",
+          "code": "BK1472"
+        },
+        {
+          "name": "钢铁管材",
+          "type": "industry",
+          "code": "BK1368"
+        },
+        {
+          "name": "院线",
+          "type": "industry",
+          "code": "BK1300"
+        },
+        {
+          "name": "其他建材Ⅲ",
+          "type": "industry",
+          "code": "BK1468"
+        },
+        {
+          "name": "园林工程",
+          "type": "industry",
+          "code": "BK1473"
+        },
+        {
+          "name": "其他家居用品",
+          "type": "industry",
+          "code": "BK1540"
+        },
+        {
+          "name": "化学工程",
+          "type": "industry",
+          "code": "BK1476"
+        },
+        {
+          "name": "油服工程",
+          "type": "industry",
+          "code": "BK1275"
+        },
+        {
+          "name": "商业物业经营",
+          "type": "industry",
+          "code": "BK1554"
+        },
+        {
+          "name": "影视院线",
+          "type": "industry",
+          "code": "BK1222"
+        },
+        {
+          "name": "租赁",
+          "type": "industry",
+          "code": "BK1365"
+        },
+        {
+          "name": "证券Ⅲ",
+          "type": "industry",
+          "code": "BK1366"
+        },
+        {
+          "name": "证券Ⅱ",
+          "type": "industry",
+          "code": "BK0473"
+        },
+        {
+          "name": "信托",
+          "type": "industry",
+          "code": "BK1363"
+        },
+        {
+          "name": "油气及炼化工程",
+          "type": "industry",
+          "code": "BK1572"
+        },
+        {
+          "name": "防水材料",
+          "type": "industry",
+          "code": "BK1465"
+        },
+        {
+          "name": "非银金融",
+          "type": "industry",
+          "code": "BK1203"
+        },
+        {
+          "name": "房产租赁经纪",
+          "type": "industry",
+          "code": "BK1341"
+        },
+        {
+          "name": "多元金融",
+          "type": "industry",
+          "code": "BK0738"
+        },
+        {
+          "name": "金融控股",
+          "type": "industry",
+          "code": "BK1359"
+        },
+        {
+          "name": "保险Ⅲ",
+          "type": "industry",
+          "code": "BK1358"
+        },
+        {
+          "name": "保险Ⅱ",
+          "type": "industry",
+          "code": "BK0474"
+        },
+        {
+          "name": "国际工程",
+          "type": "industry",
+          "code": "BK1475"
+        },
+        {
+          "name": "金融信息服务",
+          "type": "industry",
+          "code": "BK1360"
+        },
+        {
+          "name": "期货",
+          "type": "industry",
+          "code": "BK1361"
+        },
+        {
+          "name": "玻璃基板",
+          "type": "concept",
+          "code": "BK1175"
+        },
+        {
+          "name": "3D玻璃",
+          "type": "concept",
+          "code": "BK0881"
+        },
+        {
+          "name": "装配建筑",
+          "type": "concept",
+          "code": "BK0945"
+        },
+        {
+          "name": "工程机械概念",
+          "type": "concept",
+          "code": "BK0991"
+        },
+        {
+          "name": "REITs概念",
+          "type": "concept",
+          "code": "BK0992"
+        },
+        {
+          "name": "建筑节能",
+          "type": "concept",
+          "code": "BK1076"
+        },
+        {
+          "name": "铁路基建",
+          "type": "concept",
+          "code": "BK0592"
+        },
+        {
+          "name": "基金重仓",
+          "type": "concept",
+          "code": "BK0536"
+        },
+        {
+          "name": "工程建设",
+          "type": "concept",
+          "code": "BK0425"
+        },
+        {
+          "name": "参股银行",
+          "type": "concept",
+          "code": "BK0525"
+        },
+        {
+          "name": "金融地产风格",
+          "type": "concept",
+          "code": "BK1714"
+        },
+        {
+          "name": "创投",
+          "type": "concept",
+          "code": "BK0506"
+        },
+        {
+          "name": "融资融券",
+          "type": "concept",
+          "code": "BK0596"
+        },
+        {
+          "name": "参股保险",
+          "type": "concept",
+          "code": "BK0604"
+        },
+        {
+          "name": "化债(AMC)概念",
+          "type": "concept",
+          "code": "BK0980"
+        },
+        {
+          "name": "参股券商",
+          "type": "concept",
+          "code": "BK0514"
+        },
+        {
+          "name": "参股期货",
+          "type": "concept",
+          "code": "BK0524"
+        },
+        {
+          "name": "人脑工程",
+          "type": "concept",
+          "code": "BK0706"
+        },
+        {
+          "name": "券商概念",
+          "type": "concept",
+          "code": "BK0711"
+        }
+      ]
+    },
+    {
+      "name": "能源资源",
+      "boards": [
+        {
+          "name": "硅料硅片",
+          "type": "industry",
+          "code": "BK1319"
+        },
+        {
+          "name": "风电整机",
+          "type": "industry",
+          "code": "BK1314"
+        },
+        {
+          "name": "燃料电池",
+          "type": "industry",
+          "code": "BK1305"
+        },
+        {
+          "name": "风力发电",
+          "type": "industry",
+          "code": "BK1374"
+        },
+        {
+          "name": "核力发电",
+          "type": "industry",
+          "code": "BK1376"
+        },
+        {
+          "name": "风电设备",
+          "type": "industry",
+          "code": "BK1032"
+        },
+        {
+          "name": "其他能源发电",
+          "type": "industry",
+          "code": "BK1378"
+        },
+        {
+          "name": "水力发电",
+          "type": "industry",
+          "code": "BK1380"
+        },
+        {
+          "name": "风电零部件",
+          "type": "industry",
+          "code": "BK1313"
+        },
+        {
+          "name": "其他小金属",
+          "type": "industry",
+          "code": "BK1624"
+        },
+        {
+          "name": "热力服务",
+          "type": "industry",
+          "code": "BK1379"
+        },
+        {
+          "name": "其他金属新材料",
+          "type": "industry",
+          "code": "BK1619"
+        },
+        {
+          "name": "电力",
+          "type": "industry",
+          "code": "BK0428"
+        },
+        {
+          "name": "能源及重型设备",
+          "type": "industry",
+          "code": "BK1403"
+        },
+        {
+          "name": "公用事业",
+          "type": "industry",
+          "code": "BK0427"
+        },
+        {
+          "name": "金属包装",
+          "type": "industry",
+          "code": "BK1532"
+        },
+        {
+          "name": "电能综合服务",
+          "type": "industry",
+          "code": "BK1373"
+        },
+        {
+          "name": "油田服务",
+          "type": "industry",
+          "code": "BK1573"
+        },
+        {
+          "name": "冶钢辅料",
+          "type": "industry",
+          "code": "BK1372"
+        },
+        {
+          "name": "水务及水治理",
+          "type": "industry",
+          "code": "BK1390"
+        },
+        {
+          "name": "小金属",
+          "type": "industry",
+          "code": "BK1027"
+        },
+        {
+          "name": "环保设备Ⅲ",
+          "type": "industry",
+          "code": "BK1387"
+        },
+        {
+          "name": "环保设备Ⅱ",
+          "type": "industry",
+          "code": "BK1234"
+        },
+        {
+          "name": "冶钢原料",
+          "type": "industry",
+          "code": "BK1228"
+        },
+        {
+          "name": "长材",
+          "type": "industry",
+          "code": "BK1369"
+        },
+        {
+          "name": "炼化及贸易",
+          "type": "industry",
+          "code": "BK1274"
+        },
+        {
+          "name": "石油石化",
+          "type": "industry",
+          "code": "BK0464"
+        },
+        {
+          "name": "金属制品",
+          "type": "industry",
+          "code": "BK1396"
+        },
+        {
+          "name": "铁矿石",
+          "type": "industry",
+          "code": "BK1371"
+        },
+        {
+          "name": "油气开采Ⅲ",
+          "type": "industry",
+          "code": "BK1574"
+        },
+        {
+          "name": "油气开采Ⅱ",
+          "type": "industry",
+          "code": "BK1276"
+        },
+        {
+          "name": "煤化工",
+          "type": "industry",
+          "code": "BK1419"
+        },
+        {
+          "name": "火力发电",
+          "type": "industry",
+          "code": "BK1377"
+        },
+        {
+          "name": "钢铁",
+          "type": "industry",
+          "code": "BK0479"
+        },
+        {
+          "name": "逆变器",
+          "type": "industry",
+          "code": "BK1320"
+        },
+        {
+          "name": "普钢",
+          "type": "industry",
+          "code": "BK1226"
+        },
+        {
+          "name": "动力煤",
+          "type": "industry",
+          "code": "BK1493"
+        },
+        {
+          "name": "板材",
+          "type": "industry",
+          "code": "BK1367"
+        },
+        {
+          "name": "环保",
+          "type": "industry",
+          "code": "BK0728"
+        },
+        {
+          "name": "燃气Ⅲ",
+          "type": "industry",
+          "code": "BK1381"
+        },
+        {
+          "name": "燃气Ⅱ",
+          "type": "industry",
+          "code": "BK1028"
+        },
+        {
+          "name": "特钢Ⅲ",
+          "type": "industry",
+          "code": "BK1370"
+        },
+        {
+          "name": "特钢Ⅱ",
+          "type": "industry",
+          "code": "BK1227"
+        },
+        {
+          "name": "环境治理",
+          "type": "industry",
+          "code": "BK1235"
+        },
+        {
+          "name": "油品石化贸易",
+          "type": "industry",
+          "code": "BK1571"
+        },
+        {
+          "name": "氟化工",
+          "type": "industry",
+          "code": "BK1424"
+        },
+        {
+          "name": "综合环境治理",
+          "type": "industry",
+          "code": "BK1391"
+        },
+        {
+          "name": "煤炭开采",
+          "type": "industry",
+          "code": "BK1250"
+        },
+        {
+          "name": "煤炭",
+          "type": "industry",
+          "code": "BK0437"
+        },
+        {
+          "name": "其他石化",
+          "type": "industry",
+          "code": "BK1570"
+        },
+        {
+          "name": "金属新材料",
+          "type": "industry",
+          "code": "BK1288"
+        },
+        {
+          "name": "磷肥及磷化工",
+          "type": "industry",
+          "code": "BK1435"
+        },
+        {
+          "name": "焦炭Ⅲ",
+          "type": "industry",
+          "code": "BK1492"
+        },
+        {
+          "name": "焦炭Ⅱ",
+          "type": "industry",
+          "code": "BK1249"
+        },
+        {
+          "name": "电力设备",
+          "type": "industry",
+          "code": "BK1200"
+        },
+        {
+          "name": "电网设备",
+          "type": "industry",
+          "code": "BK0457"
+        },
+        {
+          "name": "锂电专用设备",
+          "type": "industry",
+          "code": "BK1304"
+        },
+        {
+          "name": "固废治理",
+          "type": "industry",
+          "code": "BK1389"
+        },
+        {
+          "name": "非金属材料Ⅲ",
+          "type": "industry",
+          "code": "BK1411"
+        },
+        {
+          "name": "非金属材料Ⅱ",
+          "type": "industry",
+          "code": "BK1020"
+        },
+        {
+          "name": "焦煤",
+          "type": "industry",
+          "code": "BK1494"
+        },
+        {
+          "name": "黄金",
+          "type": "industry",
+          "code": "BK1617"
+        },
+        {
+          "name": "铝",
+          "type": "industry",
+          "code": "BK1613"
+        },
+        {
+          "name": "有色金属",
+          "type": "industry",
+          "code": "BK0478"
+        },
+        {
+          "name": "综合电力设备商",
+          "type": "industry",
+          "code": "BK1323"
+        },
+        {
+          "name": "贵金属",
+          "type": "industry",
+          "code": "BK0732"
+        },
+        {
+          "name": "铅锌",
+          "type": "industry",
+          "code": "BK1614"
+        },
+        {
+          "name": "工业金属",
+          "type": "industry",
+          "code": "BK1287"
+        },
+        {
+          "name": "蓄电池及其他电池",
+          "type": "industry",
+          "code": "BK1306"
+        },
+        {
+          "name": "大气治理",
+          "type": "industry",
+          "code": "BK1388"
+        },
+        {
+          "name": "锂电池",
+          "type": "industry",
+          "code": "BK1303"
+        },
+        {
+          "name": "稀土",
+          "type": "industry",
+          "code": "BK1626"
+        },
+        {
+          "name": "电池",
+          "type": "industry",
+          "code": "BK1033"
+        },
+        {
+          "name": "铜",
+          "type": "industry",
+          "code": "BK1615"
+        },
+        {
+          "name": "白银",
+          "type": "industry",
+          "code": "BK1616"
+        },
+        {
+          "name": "电池化学品",
+          "type": "industry",
+          "code": "BK1302"
+        },
+        {
+          "name": "钴",
+          "type": "industry",
+          "code": "BK1620"
+        },
+        {
+          "name": "镍",
+          "type": "industry",
+          "code": "BK1622"
+        },
+        {
+          "name": "能源金属",
+          "type": "industry",
+          "code": "BK1015"
+        },
+        {
+          "name": "锂",
+          "type": "industry",
+          "code": "BK1621"
+        },
+        {
+          "name": "HJT电池",
+          "type": "concept",
+          "code": "BK0908"
+        },
+        {
+          "name": "TOPCon电池",
+          "type": "concept",
+          "code": "BK1097"
+        },
+        {
+          "name": "BC电池",
+          "type": "concept",
+          "code": "BK1148"
+        },
+        {
+          "name": "钙钛矿电池",
+          "type": "concept",
+          "code": "BK1094"
+        },
+        {
+          "name": "新能源",
+          "type": "concept",
+          "code": "BK0493"
+        },
+        {
+          "name": "绿色电力",
+          "type": "concept",
+          "code": "BK1024"
+        },
+        {
+          "name": "天然气",
+          "type": "concept",
+          "code": "BK0843"
+        },
+        {
+          "name": "油气资源",
+          "type": "concept",
+          "code": "BK1649"
+        },
+        {
+          "name": "氢能源",
+          "type": "concept",
+          "code": "BK0864"
+        },
+        {
+          "name": "节能环保",
+          "type": "concept",
+          "code": "BK0494"
+        },
+        {
+          "name": "风能",
+          "type": "concept",
+          "code": "BK0595"
+        },
+        {
+          "name": "低碳冶金",
+          "type": "concept",
+          "code": "BK0979"
+        },
+        {
+          "name": "超超临界发电",
+          "type": "concept",
+          "code": "BK1087"
+        },
+        {
+          "name": "燃料电池概念",
+          "type": "concept",
+          "code": "BK0682"
+        },
+        {
+          "name": "碳交易",
+          "type": "concept",
+          "code": "BK0966"
+        },
+        {
+          "name": "煤化工概念",
+          "type": "concept",
+          "code": "BK0492"
+        },
+        {
+          "name": "核能核电",
+          "type": "concept",
+          "code": "BK0577"
+        },
+        {
+          "name": "油气设服",
+          "type": "concept",
+          "code": "BK0606"
+        },
+        {
+          "name": "磷化工",
+          "type": "concept",
+          "code": "BK1010"
+        },
+        {
+          "name": "雅下水电概念",
+          "type": "concept",
+          "code": "BK1192"
+        },
+        {
+          "name": "钒电池",
+          "type": "concept",
+          "code": "BK1095"
+        },
+        {
+          "name": "垃圾分类",
+          "type": "concept",
+          "code": "BK0873"
+        },
+        {
+          "name": "储能概念",
+          "type": "concept",
+          "code": "BK0989"
+        },
+        {
+          "name": "氟化工概念",
+          "type": "concept",
+          "code": "BK0690"
+        },
+        {
+          "name": "熔盐储能",
+          "type": "concept",
+          "code": "BK1103"
+        },
+        {
+          "name": "充电桩",
+          "type": "concept",
+          "code": "BK0700"
+        },
+        {
+          "name": "无线充电",
+          "type": "concept",
+          "code": "BK0960"
+        },
+        {
+          "name": "电网概念",
+          "type": "concept",
+          "code": "BK1647"
+        },
+        {
+          "name": "新能源车",
+          "type": "concept",
+          "code": "BK0900"
+        },
+        {
+          "name": "黄金概念",
+          "type": "concept",
+          "code": "BK0547"
+        },
+        {
+          "name": "稀缺资源",
+          "type": "concept",
+          "code": "BK0519"
+        },
+        {
+          "name": "电池技术",
+          "type": "concept",
+          "code": "BK1648"
+        },
+        {
+          "name": "发电机概念",
+          "type": "concept",
+          "code": "BK1014"
+        },
+        {
+          "name": "麒麟电池",
+          "type": "concept",
+          "code": "BK1092"
+        },
+        {
+          "name": "小金属概念",
+          "type": "concept",
+          "code": "BK0695"
+        },
+        {
+          "name": "特高压",
+          "type": "concept",
+          "code": "BK0918"
+        },
+        {
+          "name": "锂电池概念",
+          "type": "concept",
+          "code": "BK0574"
+        },
+        {
+          "name": "固态电池",
+          "type": "concept",
+          "code": "BK0968"
+        },
+        {
+          "name": "稀土永磁",
+          "type": "concept",
+          "code": "BK0578"
+        },
+        {
+          "name": "刀片电池",
+          "type": "concept",
+          "code": "BK0951"
+        },
+        {
+          "name": "动力电池回收",
+          "type": "concept",
+          "code": "BK1052"
+        },
+        {
+          "name": "钠离子电池",
+          "type": "concept",
+          "code": "BK0988"
+        },
+        {
+          "name": "铜缆高速连接",
+          "type": "concept",
+          "code": "BK1168"
+        },
+        {
+          "name": "锂矿概念",
+          "type": "concept",
+          "code": "BK1173"
+        }
+      ]
+    },
+    {
+      "name": "高端制造",
+      "boards": [
+        {
+          "name": "橡胶助剂",
+          "type": "industry",
+          "code": "BK1443"
+        },
+        {
+          "name": "航天装备Ⅲ",
+          "type": "industry",
+          "code": "BK1385"
+        },
+        {
+          "name": "航天装备Ⅱ",
+          "type": "industry",
+          "code": "BK1232"
+        },
+        {
+          "name": "玻纤制造",
+          "type": "industry",
+          "code": "BK1462"
+        },
+        {
+          "name": "摩托车",
+          "type": "industry",
+          "code": "BK1521"
+        },
+        {
+          "name": "冰洗",
+          "type": "industry",
+          "code": "BK1449"
+        },
+        {
+          "name": "白色家电",
+          "type": "industry",
+          "code": "BK1239"
+        },
+        {
+          "name": "空调",
+          "type": "industry",
+          "code": "BK1450"
+        },
+        {
+          "name": "摩托车及其他",
+          "type": "industry",
+          "code": "BK1263"
+        },
+        {
+          "name": "其他运输设备",
+          "type": "industry",
+          "code": "BK1522"
+        },
+        {
+          "name": "国防军工",
+          "type": "industry",
+          "code": "BK1204"
+        },
+        {
+          "name": "航空装备Ⅲ",
+          "type": "industry",
+          "code": "BK1384"
+        },
+        {
+          "name": "航空装备Ⅱ",
+          "type": "industry",
+          "code": "BK1231"
+        },
+        {
+          "name": "其他专用设备",
+          "type": "industry",
+          "code": "BK1405"
+        },
+        {
+          "name": "纺织鞋类制造",
+          "type": "industry",
+          "code": "BK1347"
+        },
+        {
+          "name": "铁路公路",
+          "type": "industry",
+          "code": "BK0421"
+        },
+        {
+          "name": "仪器仪表",
+          "type": "industry",
+          "code": "BK0458"
+        },
+        {
+          "name": "纺织服装设备",
+          "type": "industry",
+          "code": "BK1401"
+        },
+        {
+          "name": "照明设备Ⅲ",
+          "type": "industry",
+          "code": "BK1460"
+        },
+        {
+          "name": "照明设备Ⅱ",
+          "type": "industry",
+          "code": "BK1245"
+        },
+        {
+          "name": "专用设备",
+          "type": "industry",
+          "code": "BK0910"
+        },
+        {
+          "name": "铁路运输",
+          "type": "industry",
+          "code": "BK1485"
+        },
+        {
+          "name": "楼宇设备",
+          "type": "industry",
+          "code": "BK1402"
+        },
+        {
+          "name": "轨交设备Ⅲ",
+          "type": "industry",
+          "code": "BK1394"
+        },
+        {
+          "name": "轨交设备Ⅱ",
+          "type": "industry",
+          "code": "BK1236"
+        },
+        {
+          "name": "橡胶",
+          "type": "industry",
+          "code": "BK1018"
+        },
+        {
+          "name": "其他通用设备",
+          "type": "industry",
+          "code": "BK1398"
+        },
+        {
+          "name": "汽车经销商",
+          "type": "industry",
+          "code": "BK1523"
+        },
+        {
+          "name": "纺织制造",
+          "type": "industry",
+          "code": "BK1224"
+        },
+        {
+          "name": "轻工制造",
+          "type": "industry",
+          "code": "BK1212"
+        },
+        {
+          "name": "机械设备",
+          "type": "industry",
+          "code": "BK1205"
+        },
+        {
+          "name": "商用载客车",
+          "type": "industry",
+          "code": "BK1531"
+        },
+        {
+          "name": "其他黑色家电",
+          "type": "industry",
+          "code": "BK1454"
+        },
+        {
+          "name": "航空机场",
+          "type": "industry",
+          "code": "BK0420"
+        },
+        {
+          "name": "通用设备",
+          "type": "industry",
+          "code": "BK0545"
+        },
+        {
+          "name": "汽车服务",
+          "type": "industry",
+          "code": "BK1016"
+        },
+        {
+          "name": "其他汽车零部件",
+          "type": "industry",
+          "code": "BK1528"
+        },
+        {
+          "name": "化妆品制造及其他",
+          "type": "industry",
+          "code": "BK1497"
+        },
+        {
+          "name": "地面兵装Ⅲ",
+          "type": "industry",
+          "code": "BK1382"
+        },
+        {
+          "name": "地面兵装Ⅱ",
+          "type": "industry",
+          "code": "BK1229"
+        },
+        {
+          "name": "厨房小家电",
+          "type": "industry",
+          "code": "BK1457"
+        },
+        {
+          "name": "家用电器",
+          "type": "industry",
+          "code": "BK0456"
+        },
+        {
+          "name": "家电零部件Ⅲ",
+          "type": "industry",
+          "code": "BK1455"
+        },
+        {
+          "name": "家电零部件Ⅱ",
+          "type": "industry",
+          "code": "BK1242"
+        },
+        {
+          "name": "汽车综合服务",
+          "type": "industry",
+          "code": "BK1524"
+        },
+        {
+          "name": "其他橡胶制品",
+          "type": "industry",
+          "code": "BK1441"
+        },
+        {
+          "name": "商用车",
+          "type": "industry",
+          "code": "BK1264"
+        },
+        {
+          "name": "印刷包装机械",
+          "type": "industry",
+          "code": "BK1406"
+        },
+        {
+          "name": "航空运输",
+          "type": "industry",
+          "code": "BK1479"
+        },
+        {
+          "name": "车身附件及饰件",
+          "type": "industry",
+          "code": "BK1525"
+        },
+        {
+          "name": "工控设备",
+          "type": "industry",
+          "code": "BK1407"
+        },
+        {
+          "name": "汽车",
+          "type": "industry",
+          "code": "BK1211"
+        },
+        {
+          "name": "轮胎轮毂",
+          "type": "industry",
+          "code": "BK1527"
+        },
+        {
+          "name": "黑色家电",
+          "type": "industry",
+          "code": "BK1241"
+        },
+        {
+          "name": "商用载货车",
+          "type": "industry",
+          "code": "BK1530"
+        },
+        {
+          "name": "汽车零部件",
+          "type": "industry",
+          "code": "BK0481"
+        },
+        {
+          "name": "其他家电Ⅲ",
+          "type": "industry",
+          "code": "BK1456"
+        },
+        {
+          "name": "其他家电Ⅱ",
+          "type": "industry",
+          "code": "BK1243"
+        },
+        {
+          "name": "磨具磨料",
+          "type": "industry",
+          "code": "BK1397"
+        },
+        {
+          "name": "航海装备Ⅲ",
+          "type": "industry",
+          "code": "BK1383"
+        },
+        {
+          "name": "航海装备Ⅱ",
+          "type": "industry",
+          "code": "BK1230"
+        },
+        {
+          "name": "机床工具",
+          "type": "industry",
+          "code": "BK1395"
+        },
+        {
+          "name": "电工仪器仪表",
+          "type": "industry",
+          "code": "BK1308"
+        },
+        {
+          "name": "制冷空调设备",
+          "type": "industry",
+          "code": "BK1400"
+        },
+        {
+          "name": "配电设备",
+          "type": "industry",
+          "code": "BK1310"
+        },
+        {
+          "name": "综合乘用车",
+          "type": "industry",
+          "code": "BK1520"
+        },
+        {
+          "name": "底盘与发动机系统",
+          "type": "industry",
+          "code": "BK1526"
+        },
+        {
+          "name": "小家电",
+          "type": "industry",
+          "code": "BK1244"
+        },
+        {
+          "name": "清洁小家电",
+          "type": "industry",
+          "code": "BK1459"
+        },
+        {
+          "name": "农用机械",
+          "type": "industry",
+          "code": "BK1404"
+        },
+        {
+          "name": "线缆部件及其他",
+          "type": "industry",
+          "code": "BK1312"
+        },
+        {
+          "name": "输变电设备",
+          "type": "industry",
+          "code": "BK1311"
+        },
+        {
+          "name": "彩电",
+          "type": "industry",
+          "code": "BK1453"
+        },
+        {
+          "name": "乘用车",
+          "type": "industry",
+          "code": "BK1262"
+        },
+        {
+          "name": "厨卫电器",
+          "type": "industry",
+          "code": "BK1240"
+        },
+        {
+          "name": "其他电源设备Ⅲ",
+          "type": "industry",
+          "code": "BK1322"
+        },
+        {
+          "name": "其他电源设备Ⅱ",
+          "type": "industry",
+          "code": "BK1034"
+        },
+        {
+          "name": "火电设备",
+          "type": "industry",
+          "code": "BK1321"
+        },
+        {
+          "name": "电机Ⅲ",
+          "type": "industry",
+          "code": "BK1307"
+        },
+        {
+          "name": "电机Ⅱ",
+          "type": "industry",
+          "code": "BK1030"
+        },
+        {
+          "name": "厨房电器",
+          "type": "industry",
+          "code": "BK1451"
+        },
+        {
+          "name": "电动乘用车",
+          "type": "industry",
+          "code": "BK1519"
+        },
+        {
+          "name": "个护小家电",
+          "type": "industry",
+          "code": "BK1458"
+        },
+        {
+          "name": "航天航空",
+          "type": "concept",
+          "code": "BK0480"
+        },
+        {
+          "name": "商业航天",
+          "type": "concept",
+          "code": "BK0963"
+        },
+        {
+          "name": "交运设备",
+          "type": "concept",
+          "code": "BK0429"
+        },
+        {
+          "name": "军民融合",
+          "type": "concept",
+          "code": "BK0808"
+        },
+        {
+          "name": "大飞机",
+          "type": "concept",
+          "code": "BK0814"
+        },
+        {
+          "name": "汽车一体化压铸",
+          "type": "concept",
+          "code": "BK1093"
+        },
+        {
+          "name": "低空经济",
+          "type": "concept",
+          "code": "BK1166"
+        },
+        {
+          "name": "军工",
+          "type": "concept",
+          "code": "BK0490"
+        },
+        {
+          "name": "无人机",
+          "type": "concept",
+          "code": "BK0704"
+        },
+        {
+          "name": "通用航空",
+          "type": "concept",
+          "code": "BK0625"
+        },
+        {
+          "name": "船舶制造",
+          "type": "concept",
+          "code": "BK0729"
+        },
+        {
+          "name": "飞行汽车(eVTOL)",
+          "type": "concept",
+          "code": "BK1157"
+        },
+        {
+          "name": "航母概念",
+          "type": "concept",
+          "code": "BK0715"
+        },
+        {
+          "name": "轮毂电机",
+          "type": "concept",
+          "code": "BK1099"
+        },
+        {
+          "name": "先进制造风格",
+          "type": "concept",
+          "code": "BK1710"
+        },
+        {
+          "name": "减速器",
+          "type": "concept",
+          "code": "BK1100"
+        },
+        {
+          "name": "汽车整车",
+          "type": "concept",
+          "code": "BK1029"
+        },
+        {
+          "name": "特斯拉概念",
+          "type": "concept",
+          "code": "BK0644"
+        },
+        {
+          "name": "汽车热管理",
+          "type": "concept",
+          "code": "BK1089"
+        },
+        {
+          "name": "光纤概念",
+          "type": "concept",
+          "code": "BK1660"
+        },
+        {
+          "name": "汽车拆解",
+          "type": "concept",
+          "code": "BK0943"
+        },
+        {
+          "name": "同步磁阻电机",
+          "type": "concept",
+          "code": "BK1131"
+        }
+      ]
+    },
+    {
+      "name": "材料化工",
+      "boards": [
+        {
+          "name": "有机硅",
+          "type": "industry",
+          "code": "BK1431"
+        },
+        {
+          "name": "辅料",
+          "type": "industry",
+          "code": "BK1348"
+        },
+        {
+          "name": "涂料",
+          "type": "industry",
+          "code": "BK1469"
+        },
+        {
+          "name": "聚氨酯",
+          "type": "industry",
+          "code": "BK1426"
+        },
+        {
+          "name": "炼油化工",
+          "type": "industry",
+          "code": "BK1569"
+        },
+        {
+          "name": "民爆制品",
+          "type": "industry",
+          "code": "BK1427"
+        },
+        {
+          "name": "钼",
+          "type": "industry",
+          "code": "BK1623"
+        },
+        {
+          "name": "耐火材料",
+          "type": "industry",
+          "code": "BK1467"
+        },
+        {
+          "name": "原材料供应链服务",
+          "type": "industry",
+          "code": "BK1490"
+        },
+        {
+          "name": "其他化学制品",
+          "type": "industry",
+          "code": "BK1428"
+        },
+        {
+          "name": "化学制品",
+          "type": "industry",
+          "code": "BK0538"
+        },
+        {
+          "name": "复合肥",
+          "type": "industry",
+          "code": "BK1433"
+        },
+        {
+          "name": "无机盐",
+          "type": "industry",
+          "code": "BK1422"
+        },
+        {
+          "name": "纺织服饰",
+          "type": "industry",
+          "code": "BK0436"
+        },
+        {
+          "name": "其他塑料制品",
+          "type": "industry",
+          "code": "BK1440"
+        },
+        {
+          "name": "涤纶",
+          "type": "industry",
+          "code": "BK1413"
+        },
+        {
+          "name": "涂料油墨",
+          "type": "industry",
+          "code": "BK1430"
+        },
+        {
+          "name": "基础化工",
+          "type": "industry",
+          "code": "BK1206"
+        },
+        {
+          "name": "其他化学原料",
+          "type": "industry",
+          "code": "BK1420"
+        },
+        {
+          "name": "氯碱",
+          "type": "industry",
+          "code": "BK1418"
+        },
+        {
+          "name": "其他纺织",
+          "type": "industry",
+          "code": "BK1350"
+        },
+        {
+          "name": "纺织化学制品",
+          "type": "industry",
+          "code": "BK1423"
+        },
+        {
+          "name": "化学原料",
+          "type": "industry",
+          "code": "BK1019"
+        },
+        {
+          "name": "纯碱",
+          "type": "industry",
+          "code": "BK1417"
+        },
+        {
+          "name": "合成树脂",
+          "type": "industry",
+          "code": "BK1438"
+        },
+        {
+          "name": "改性塑料",
+          "type": "industry",
+          "code": "BK1437"
+        },
+        {
+          "name": "其他化学纤维",
+          "type": "industry",
+          "code": "BK1415"
+        },
+        {
+          "name": "化学纤维",
+          "type": "industry",
+          "code": "BK0471"
+        },
+        {
+          "name": "胶黏剂及胶带",
+          "type": "industry",
+          "code": "BK1425"
+        },
+        {
+          "name": "塑料",
+          "type": "industry",
+          "code": "BK0454"
+        },
+        {
+          "name": "钨",
+          "type": "industry",
+          "code": "BK1625"
+        },
+        {
+          "name": "锦纶",
+          "type": "industry",
+          "code": "BK1414"
+        },
+        {
+          "name": "炭黑",
+          "type": "industry",
+          "code": "BK1442"
+        },
+        {
+          "name": "钛白粉",
+          "type": "industry",
+          "code": "BK1421"
+        },
+        {
+          "name": "氮肥",
+          "type": "industry",
+          "code": "BK1432"
+        },
+        {
+          "name": "印染",
+          "type": "industry",
+          "code": "BK1351"
+        },
+        {
+          "name": "钾肥",
+          "type": "industry",
+          "code": "BK1434"
+        },
+        {
+          "name": "氨纶",
+          "type": "industry",
+          "code": "BK1412"
+        },
+        {
+          "name": "粘胶",
+          "type": "industry",
+          "code": "BK1416"
+        },
+        {
+          "name": "塑料包装",
+          "type": "industry",
+          "code": "BK1533"
+        },
+        {
+          "name": "化学制剂",
+          "type": "industry",
+          "code": "BK1594"
+        },
+        {
+          "name": "膜材料",
+          "type": "industry",
+          "code": "BK1439"
+        },
+        {
+          "name": "磁性材料",
+          "type": "industry",
+          "code": "BK1618"
+        },
+        {
+          "name": "工业气体",
+          "type": "concept",
+          "code": "BK0981"
+        },
+        {
+          "name": "纳米银",
+          "type": "concept",
+          "code": "BK0855"
+        },
+        {
+          "name": "有机硅概念",
+          "type": "concept",
+          "code": "BK0961"
+        },
+        {
+          "name": "民爆概念",
+          "type": "concept",
+          "code": "BK1066"
+        },
+        {
+          "name": "降解塑料",
+          "type": "concept",
+          "code": "BK0909"
+        },
+        {
+          "name": "新材料",
+          "type": "concept",
+          "code": "BK0523"
+        },
+        {
+          "name": "包装材料",
+          "type": "concept",
+          "code": "BK0733"
+        },
+        {
+          "name": "碳基材料",
+          "type": "concept",
+          "code": "BK1006"
+        },
+        {
+          "name": "PEEK材料概念",
+          "type": "concept",
+          "code": "BK1156"
+        },
+        {
+          "name": "碳纤维",
+          "type": "concept",
+          "code": "BK1171"
+        },
+        {
+          "name": "化工原料",
+          "type": "concept",
+          "code": "BK0512"
+        },
+        {
+          "name": "超导概念",
+          "type": "concept",
+          "code": "BK0679"
+        },
+        {
+          "name": "石墨烯",
+          "type": "concept",
+          "code": "BK0617"
+        },
+        {
+          "name": "钛白粉概念",
+          "type": "concept",
+          "code": "BK0805"
+        }
+      ]
+    },
+    {
+      "name": "消费零售",
+      "boards": [
+        {
+          "name": "水产饲料",
+          "type": "industry",
+          "code": "BK1509"
+        },
+        {
+          "name": "熟食",
+          "type": "industry",
+          "code": "BK1584"
+        },
+        {
+          "name": "跨境电商",
+          "type": "industry",
+          "code": "BK1115"
+        },
+        {
+          "name": "肉鸡养殖",
+          "type": "industry",
+          "code": "BK1511"
+        },
+        {
+          "name": "其他酒类",
+          "type": "industry",
+          "code": "BK1578"
+        },
+        {
+          "name": "其他饰品",
+          "type": "industry",
+          "code": "BK1356"
+        },
+        {
+          "name": "粮油加工",
+          "type": "industry",
+          "code": "BK1504"
+        },
+        {
+          "name": "预加工食品",
+          "type": "industry",
+          "code": "BK1581"
+        },
+        {
+          "name": "综合电商",
+          "type": "industry",
+          "code": "BK1548"
+        },
+        {
+          "name": "家纺",
+          "type": "industry",
+          "code": "BK1353"
+        },
+        {
+          "name": "肉制品",
+          "type": "industry",
+          "code": "BK1580"
+        },
+        {
+          "name": "非运动服装",
+          "type": "industry",
+          "code": "BK1352"
+        },
+        {
+          "name": "乳品",
+          "type": "industry",
+          "code": "BK1585"
+        },
+        {
+          "name": "饮料乳品",
+          "type": "industry",
+          "code": "BK1282"
+        },
+        {
+          "name": "运动服装",
+          "type": "industry",
+          "code": "BK1355"
+        },
+        {
+          "name": "生活用纸",
+          "type": "industry",
+          "code": "BK1495"
+        },
+        {
+          "name": "非白酒",
+          "type": "industry",
+          "code": "BK1279"
+        },
+        {
+          "name": "软饮料",
+          "type": "industry",
+          "code": "BK1586"
+        },
+        {
+          "name": "服装家纺",
+          "type": "industry",
+          "code": "BK1225"
+        },
+        {
+          "name": "多业态零售",
+          "type": "industry",
+          "code": "BK1553"
+        },
+        {
+          "name": "品牌化妆品",
+          "type": "industry",
+          "code": "BK1498"
+        },
+        {
+          "name": "纸包装",
+          "type": "industry",
+          "code": "BK1535"
+        },
+        {
+          "name": "餐饮",
+          "type": "industry",
+          "code": "BK1559"
+        },
+        {
+          "name": "个护用品",
+          "type": "industry",
+          "code": "BK1251"
+        },
+        {
+          "name": "贸易Ⅲ",
+          "type": "industry",
+          "code": "BK1550"
+        },
+        {
+          "name": "贸易Ⅱ",
+          "type": "industry",
+          "code": "BK0484"
+        },
+        {
+          "name": "大宗用纸",
+          "type": "industry",
+          "code": "BK1544"
+        },
+        {
+          "name": "化妆品",
+          "type": "industry",
+          "code": "BK1252"
+        },
+        {
+          "name": "食品加工",
+          "type": "industry",
+          "code": "BK1280"
+        },
+        {
+          "name": "人工景区",
+          "type": "industry",
+          "code": "BK1562"
+        },
+        {
+          "name": "酒店餐饮",
+          "type": "industry",
+          "code": "BK1271"
+        },
+        {
+          "name": "自然景区",
+          "type": "industry",
+          "code": "BK1563"
+        },
+        {
+          "name": "电商服务",
+          "type": "industry",
+          "code": "BK1546"
+        },
+        {
+          "name": "造纸",
+          "type": "industry",
+          "code": "BK1267"
+        },
+        {
+          "name": "食品饮料",
+          "type": "industry",
+          "code": "BK0438"
+        },
+        {
+          "name": "农产品加工",
+          "type": "industry",
+          "code": "BK1256"
+        },
+        {
+          "name": "酒店",
+          "type": "industry",
+          "code": "BK1560"
+        },
+        {
+          "name": "旅游及景区",
+          "type": "industry",
+          "code": "BK1272"
+        },
+        {
+          "name": "宠物食品",
+          "type": "industry",
+          "code": "BK1507"
+        },
+        {
+          "name": "特种纸",
+          "type": "industry",
+          "code": "BK1545"
+        },
+        {
+          "name": "商贸零售",
+          "type": "industry",
+          "code": "BK1213"
+        },
+        {
+          "name": "水产养殖",
+          "type": "industry",
+          "code": "BK1514"
+        },
+        {
+          "name": "鞋帽及其他",
+          "type": "industry",
+          "code": "BK1354"
+        },
+        {
+          "name": "饰品",
+          "type": "industry",
+          "code": "BK0734"
+        },
+        {
+          "name": "洗护用品",
+          "type": "industry",
+          "code": "BK1496"
+        },
+        {
+          "name": "调味发酵品Ⅲ",
+          "type": "industry",
+          "code": "BK1576"
+        },
+        {
+          "name": "调味发酵品Ⅱ",
+          "type": "industry",
+          "code": "BK1278"
+        },
+        {
+          "name": "一般零售",
+          "type": "industry",
+          "code": "BK0482"
+        },
+        {
+          "name": "旅游综合",
+          "type": "industry",
+          "code": "BK1561"
+        },
+        {
+          "name": "休闲食品",
+          "type": "industry",
+          "code": "BK1281"
+        },
+        {
+          "name": "包装印刷",
+          "type": "industry",
+          "code": "BK1265"
+        },
+        {
+          "name": "钟表珠宝",
+          "type": "industry",
+          "code": "BK1357"
+        },
+        {
+          "name": "百货",
+          "type": "industry",
+          "code": "BK1551"
+        },
+        {
+          "name": "啤酒",
+          "type": "industry",
+          "code": "BK1577"
+        },
+        {
+          "name": "棉纺",
+          "type": "industry",
+          "code": "BK1349"
+        },
+        {
+          "name": "烘焙食品",
+          "type": "industry",
+          "code": "BK1582"
+        },
+        {
+          "name": "综合包装",
+          "type": "industry",
+          "code": "BK1536"
+        },
+        {
+          "name": "零食",
+          "type": "industry",
+          "code": "BK1583"
+        },
+        {
+          "name": "白酒Ⅲ",
+          "type": "industry",
+          "code": "BK1575"
+        },
+        {
+          "name": "白酒Ⅱ",
+          "type": "industry",
+          "code": "BK1277"
+        },
+        {
+          "name": "食品及饲料添加剂",
+          "type": "industry",
+          "code": "BK1429"
+        },
+        {
+          "name": "体育Ⅲ",
+          "type": "industry",
+          "code": "BK1564"
+        },
+        {
+          "name": "体育Ⅱ",
+          "type": "industry",
+          "code": "BK1273"
+        },
+        {
+          "name": "旅游零售Ⅲ",
+          "type": "industry",
+          "code": "BK1549"
+        },
+        {
+          "name": "旅游零售Ⅱ",
+          "type": "industry",
+          "code": "BK1269"
+        },
+        {
+          "name": "保健品",
+          "type": "industry",
+          "code": "BK1579"
+        },
+        {
+          "name": "超市",
+          "type": "industry",
+          "code": "BK1552"
+        },
+        {
+          "name": "其他农产品加工",
+          "type": "industry",
+          "code": "BK1505"
+        },
+        {
+          "name": "专业连锁Ⅲ",
+          "type": "industry",
+          "code": "BK1555"
+        },
+        {
+          "name": "专业连锁Ⅱ",
+          "type": "industry",
+          "code": "BK1270"
+        },
+        {
+          "name": "印刷",
+          "type": "industry",
+          "code": "BK1534"
+        },
+        {
+          "name": "鸡肉概念",
+          "type": "concept",
+          "code": "BK0887"
+        },
+        {
+          "name": "猪肉概念",
+          "type": "concept",
+          "code": "BK0882"
+        },
+        {
+          "name": "水产概念",
+          "type": "concept",
+          "code": "BK0967"
+        },
+        {
+          "name": "乳业",
+          "type": "concept",
+          "code": "BK0892"
+        },
+        {
+          "name": "预制菜概念",
+          "type": "concept",
+          "code": "BK1025"
+        },
+        {
+          "name": "消费风格",
+          "type": "concept",
+          "code": "BK1711"
+        },
+        {
+          "name": "体育产业",
+          "type": "concept",
+          "code": "BK0708"
+        },
+        {
+          "name": "食品安全",
+          "type": "concept",
+          "code": "BK0614"
+        },
+        {
+          "name": "调味品概念",
+          "type": "concept",
+          "code": "BK1026"
+        },
+        {
+          "name": "旅游概念",
+          "type": "concept",
+          "code": "BK0692"
+        },
+        {
+          "name": "免税概念",
+          "type": "concept",
+          "code": "BK0927"
+        },
+        {
+          "name": "旅游酒店",
+          "type": "concept",
+          "code": "BK0485"
+        },
+        {
+          "name": "跨境电商",
+          "type": "concept",
+          "code": "BK1115"
+        },
+        {
+          "name": "户外露营",
+          "type": "concept",
+          "code": "BK1079"
+        },
+        {
+          "name": "新零售",
+          "type": "concept",
+          "code": "BK0825"
+        },
+        {
+          "name": "白酒",
+          "type": "concept",
+          "code": "BK0896"
+        },
+        {
+          "name": "电商概念",
+          "type": "concept",
+          "code": "BK0665"
+        },
+        {
+          "name": "零售概念",
+          "type": "concept",
+          "code": "BK1655"
+        },
+        {
+          "name": "中俄贸易概念",
+          "type": "concept",
+          "code": "BK1072"
+        },
+        {
+          "name": "造纸印刷",
+          "type": "concept",
+          "code": "BK0470"
+        },
+        {
+          "name": "宠物经济",
+          "type": "concept",
+          "code": "BK0993"
+        },
+        {
+          "name": "啤酒概念",
+          "type": "concept",
+          "code": "BK1073"
+        },
+        {
+          "name": "文娱消费",
+          "type": "concept",
+          "code": "BK1654"
+        },
+        {
+          "name": "化妆品概念",
+          "type": "concept",
+          "code": "BK0974"
+        },
+        {
+          "name": "新消费",
+          "type": "concept",
+          "code": "BK1652"
+        },
+        {
+          "name": "人造肉",
+          "type": "concept",
+          "code": "BK0866"
+        }
+      ]
+    },
+    {
+      "name": "农林牧渔",
+      "boards": [
+        {
+          "name": "生猪养殖",
+          "type": "industry",
+          "code": "BK1512"
+        },
+        {
+          "name": "养殖业",
+          "type": "industry",
+          "code": "BK1259"
+        },
+        {
+          "name": "粮食种植",
+          "type": "industry",
+          "code": "BK1515"
+        },
+        {
+          "name": "农业综合Ⅲ",
+          "type": "industry",
+          "code": "BK1506"
+        },
+        {
+          "name": "农业综合Ⅱ",
+          "type": "industry",
+          "code": "BK1257"
+        },
+        {
+          "name": "果蔬加工",
+          "type": "industry",
+          "code": "BK1503"
+        },
+        {
+          "name": "畜禽饲料",
+          "type": "industry",
+          "code": "BK1508"
+        },
+        {
+          "name": "饲料",
+          "type": "industry",
+          "code": "BK1258"
+        },
+        {
+          "name": "其他养殖",
+          "type": "industry",
+          "code": "BK1510"
+        },
+        {
+          "name": "种子",
+          "type": "industry",
+          "code": "BK1518"
+        },
+        {
+          "name": "农林牧渔",
+          "type": "industry",
+          "code": "BK0433"
+        },
+        {
+          "name": "林业Ⅲ",
+          "type": "industry",
+          "code": "BK1502"
+        },
+        {
+          "name": "林业Ⅱ",
+          "type": "industry",
+          "code": "BK1255"
+        },
+        {
+          "name": "海洋捕捞",
+          "type": "industry",
+          "code": "BK1513"
+        },
+        {
+          "name": "动物保健Ⅲ",
+          "type": "industry",
+          "code": "BK1501"
+        },
+        {
+          "name": "动物保健Ⅱ",
+          "type": "industry",
+          "code": "BK1254"
+        },
+        {
+          "name": "渔业",
+          "type": "industry",
+          "code": "BK1260"
+        },
+        {
+          "name": "种植业",
+          "type": "industry",
+          "code": "BK1261"
+        },
+        {
+          "name": "农化制品",
+          "type": "industry",
+          "code": "BK0731"
+        },
+        {
+          "name": "其他种植业",
+          "type": "industry",
+          "code": "BK1516"
+        },
+        {
+          "name": "食用菌",
+          "type": "industry",
+          "code": "BK1517"
+        },
+        {
+          "name": "生态农业",
+          "type": "concept",
+          "code": "BK0669"
+        },
+        {
+          "name": "粮食概念",
+          "type": "concept",
+          "code": "BK1086"
+        },
+        {
+          "name": "农业种植",
+          "type": "concept",
+          "code": "BK0888"
+        },
+        {
+          "name": "土地流转",
+          "type": "concept",
+          "code": "BK0632"
+        },
+        {
+          "name": "乡村振兴",
+          "type": "concept",
+          "code": "BK0834"
+        }
+      ]
+    },
+    {
+      "name": "基建交通",
+      "boards": [
+        {
+          "name": "仓储物流",
+          "type": "industry",
+          "code": "BK1486"
+        },
+        {
+          "name": "钢结构",
+          "type": "industry",
+          "code": "BK1474"
+        },
+        {
+          "name": "高速公路",
+          "type": "industry",
+          "code": "BK1483"
+        },
+        {
+          "name": "物流",
+          "type": "industry",
+          "code": "BK0422"
+        },
+        {
+          "name": "端到端供应链服务",
+          "type": "industry",
+          "code": "BK1491"
+        },
+        {
+          "name": "机场",
+          "type": "industry",
+          "code": "BK1480"
+        },
+        {
+          "name": "公路货运",
+          "type": "industry",
+          "code": "BK1487"
+        },
+        {
+          "name": "港口",
+          "type": "industry",
+          "code": "BK1481"
+        },
+        {
+          "name": "快递",
+          "type": "industry",
+          "code": "BK1489"
+        },
+        {
+          "name": "交通运输",
+          "type": "industry",
+          "code": "BK1210"
+        },
+        {
+          "name": "公交",
+          "type": "industry",
+          "code": "BK1484"
+        },
+        {
+          "name": "跨境物流",
+          "type": "industry",
+          "code": "BK1488"
+        },
+        {
+          "name": "基础建设",
+          "type": "industry",
+          "code": "BK1247"
+        },
+        {
+          "name": "航运港口",
+          "type": "industry",
+          "code": "BK0450"
+        },
+        {
+          "name": "房屋建设Ⅲ",
+          "type": "industry",
+          "code": "BK1470"
+        },
+        {
+          "name": "房屋建设Ⅱ",
+          "type": "industry",
+          "code": "BK1246"
+        },
+        {
+          "name": "航运",
+          "type": "industry",
+          "code": "BK1482"
+        },
+        {
+          "name": "快递概念",
+          "type": "concept",
+          "code": "BK0990"
+        },
+        {
+          "name": "冷链物流",
+          "type": "concept",
+          "code": "BK0852"
+        }
+      ]
+    },
+    {
+      "name": "教育传媒",
+      "boards": [
+        {
+          "name": "培训教育",
+          "type": "industry",
+          "code": "BK1557"
+        },
+        {
+          "name": "教育",
+          "type": "industry",
+          "code": "BK0740"
+        },
+        {
+          "name": "教育运营及其他",
+          "type": "industry",
+          "code": "BK1556"
+        },
+        {
+          "name": "教育出版",
+          "type": "industry",
+          "code": "BK1290"
+        },
+        {
+          "name": "广告媒体",
+          "type": "industry",
+          "code": "BK1292"
+        },
+        {
+          "name": "出版",
+          "type": "industry",
+          "code": "BK1218"
+        },
+        {
+          "name": "娱乐用品",
+          "type": "industry",
+          "code": "BK1543"
+        },
+        {
+          "name": "大众出版",
+          "type": "industry",
+          "code": "BK1289"
+        },
+        {
+          "name": "文娱用品",
+          "type": "industry",
+          "code": "BK1266"
+        },
+        {
+          "name": "会展服务",
+          "type": "industry",
+          "code": "BK1565"
+        },
+        {
+          "name": "学历教育",
+          "type": "industry",
+          "code": "BK1558"
+        },
+        {
+          "name": "广告营销",
+          "type": "industry",
+          "code": "BK1220"
+        },
+        {
+          "name": "营销代理",
+          "type": "industry",
+          "code": "BK1293"
+        },
+        {
+          "name": "传媒",
+          "type": "industry",
+          "code": "BK0486"
+        },
+        {
+          "name": "电视广播Ⅲ",
+          "type": "industry",
+          "code": "BK1291"
+        },
+        {
+          "name": "电视广播Ⅱ",
+          "type": "industry",
+          "code": "BK1219"
+        },
+        {
+          "name": "视频媒体",
+          "type": "industry",
+          "code": "BK1296"
+        },
+        {
+          "name": "文化用品",
+          "type": "industry",
+          "code": "BK1542"
+        },
+        {
+          "name": "影视动漫制作",
+          "type": "industry",
+          "code": "BK1299"
+        },
+        {
+          "name": "图片媒体",
+          "type": "industry",
+          "code": "BK1297"
+        },
+        {
+          "name": "文字媒体",
+          "type": "industry",
+          "code": "BK1298"
+        },
+        {
+          "name": "职业教育",
+          "type": "concept",
+          "code": "BK1022"
+        },
+        {
+          "name": "在线教育",
+          "type": "concept",
+          "code": "BK0662"
+        },
+        {
+          "name": "超清视频",
+          "type": "concept",
+          "code": "BK0859"
+        },
+        {
+          "name": "影视概念",
+          "type": "concept",
+          "code": "BK0847"
+        },
+        {
+          "name": "彩票概念",
+          "type": "concept",
+          "code": "BK0671"
+        },
+        {
+          "name": "知识产权",
+          "type": "concept",
+          "code": "BK0839"
+        }
+      ]
+    },
+    {
+      "name": "区域经济",
+      "boards": [
+        {
+          "name": "东北振兴",
+          "type": "concept",
+          "code": "BK0838"
+        },
+        {
+          "name": "上海自贸",
+          "type": "concept",
+          "code": "BK0643"
+        },
+        {
+          "name": "雄安新区",
+          "type": "concept",
+          "code": "BK0813"
+        },
+        {
+          "name": "一带一路",
+          "type": "concept",
+          "code": "BK0712"
+        },
+        {
+          "name": "滨海新区",
+          "type": "concept",
+          "code": "BK0566"
+        },
+        {
+          "name": "京津冀",
+          "type": "concept",
+          "code": "BK0684"
+        },
+        {
+          "name": "西部大开发",
+          "type": "concept",
+          "code": "BK0590"
+        },
+        {
+          "name": "深圳特区",
+          "type": "concept",
+          "code": "BK0549"
+        },
+        {
+          "name": "海南自贸",
+          "type": "concept",
+          "code": "BK1193"
+        },
+        {
+          "name": "成渝特区",
+          "type": "concept",
+          "code": "BK0534"
+        }
+      ]
+    },
+    {
+      "name": "指数/基准",
+      "boards": [
+        {
+          "name": "租售同权",
+          "type": "concept",
+          "code": "BK0822"
+        },
+        {
+          "name": "B股",
+          "type": "concept",
+          "code": "BK0636"
+        },
+        {
+          "name": "红利破净股",
+          "type": "concept",
+          "code": "BK1636"
+        },
+        {
+          "name": "红利股",
+          "type": "concept",
+          "code": "BK1641"
+        },
+        {
+          "name": "大盘价值",
+          "type": "concept",
+          "code": "BK1666"
+        },
+        {
+          "name": "上证50_",
+          "type": "concept",
+          "code": "BK0611"
+        },
+        {
+          "name": "社保重仓",
+          "type": "concept",
+          "code": "BK0520"
+        },
+        {
+          "name": "上证180_",
+          "type": "concept",
+          "code": "BK0612"
+        },
+        {
+          "name": "AB股",
+          "type": "concept",
+          "code": "BK0498"
+        },
+        {
+          "name": "价值股",
+          "type": "concept",
+          "code": "BK1640"
+        },
+        {
+          "name": "证金持股",
+          "type": "concept",
+          "code": "BK0718"
+        },
+        {
+          "name": "中盘价值",
+          "type": "concept",
+          "code": "BK1670"
+        },
+        {
+          "name": "QFII重仓",
+          "type": "concept",
+          "code": "BK0535"
+        },
+        {
+          "name": "权重股",
+          "type": "concept",
+          "code": "BK1662"
+        },
+        {
+          "name": "大盘股",
+          "type": "concept",
+          "code": "BK1663"
+        },
+        {
+          "name": "上证380",
+          "type": "concept",
+          "code": "BK0705"
+        },
+        {
+          "name": "小盘价值",
+          "type": "concept",
+          "code": "BK1668"
+        },
+        {
+          "name": "HS300_",
+          "type": "concept",
+          "code": "BK0500"
+        },
+        {
+          "name": "行业龙头",
+          "type": "concept",
+          "code": "BK1661"
+        },
+        {
+          "name": "小盘股",
+          "type": "concept",
+          "code": "BK1643"
+        },
+        {
+          "name": "富时罗素",
+          "type": "concept",
+          "code": "BK0867"
+        },
+        {
+          "name": "MSCI中国",
+          "type": "concept",
+          "code": "BK0821"
+        },
+        {
+          "name": "小盘成长",
+          "type": "concept",
+          "code": "BK1667"
+        },
+        {
+          "name": "AH股",
+          "type": "concept",
+          "code": "BK0499"
+        },
+        {
+          "name": "茅指数",
+          "type": "concept",
+          "code": "BK0999"
+        },
+        {
+          "name": "中证500",
+          "type": "concept",
+          "code": "BK0701"
+        },
+        {
+          "name": "创业板综",
+          "type": "concept",
+          "code": "BK0742"
+        },
+        {
+          "name": "中盘股",
+          "type": "concept",
+          "code": "BK1664"
+        },
+        {
+          "name": "深证100R",
+          "type": "concept",
+          "code": "BK0743"
+        },
+        {
+          "name": "科创板做市股",
+          "type": "concept",
+          "code": "BK1108"
+        },
+        {
+          "name": "中盘成长",
+          "type": "concept",
+          "code": "BK1669"
+        },
+        {
+          "name": "科创板做市商",
+          "type": "concept",
+          "code": "BK1107"
+        },
+        {
+          "name": "大盘成长",
+          "type": "concept",
+          "code": "BK1665"
+        },
+        {
+          "name": "反转股",
+          "type": "concept",
+          "code": "BK1716"
+        },
+        {
+          "name": "GDR",
+          "type": "concept",
+          "code": "BK0868"
+        }
+      ]
+    },
+    {
+      "name": "事件/概念",
+      "boards": [
+        {
+          "name": "昨日连板_含一字",
+          "type": "concept",
+          "code": "BK1051"
+        },
+        {
+          "name": "昨日连板",
+          "type": "concept",
+          "code": "BK0816"
+        },
+        {
+          "name": "昨日涨停_含一字",
+          "type": "concept",
+          "code": "BK1050"
+        },
+        {
+          "name": "昨日涨停",
+          "type": "concept",
+          "code": "BK0815"
+        },
+        {
+          "name": "百日新高",
+          "type": "concept",
+          "code": "BK1676"
+        },
+        {
+          "name": "历史新高",
+          "type": "concept",
+          "code": "BK1675"
+        },
+        {
+          "name": "近期新高",
+          "type": "concept",
+          "code": "BK1674"
+        },
+        {
+          "name": "ST股",
+          "type": "concept",
+          "code": "BK0511"
+        },
+        {
+          "name": "昨日首板",
+          "type": "concept",
+          "code": "BK1630"
+        },
+        {
+          "name": "2025三季报预减",
+          "type": "concept",
+          "code": "BK1199"
+        },
+        {
+          "name": "长期破净",
+          "type": "concept",
+          "code": "BK1635"
+        },
+        {
+          "name": "昨日炸板",
+          "type": "concept",
+          "code": "BK1631"
+        },
+        {
+          "name": "破净股",
+          "type": "concept",
+          "code": "BK1112"
+        },
+        {
+          "name": "破发股",
+          "type": "concept",
+          "code": "BK1672"
+        },
+        {
+          "name": "并购重组概念",
+          "type": "concept",
+          "code": "BK1181"
+        },
+        {
+          "name": "2025年报预减",
+          "type": "concept",
+          "code": "BK1678"
+        },
+        {
+          "name": "股权激励",
+          "type": "concept",
+          "code": "BK0567"
+        },
+        {
+          "name": "股权转让",
+          "type": "concept",
+          "code": "BK0803"
+        },
+        {
+          "name": "2025年报扭亏",
+          "type": "concept",
+          "code": "BK1679"
+        },
+        {
+          "name": "2025三季报预增",
+          "type": "concept",
+          "code": "BK1198"
+        },
+        {
+          "name": "2025年报预增",
+          "type": "concept",
+          "code": "BK1677"
+        },
+        {
+          "name": "举牌",
+          "type": "concept",
+          "code": "BK0685"
+        },
+        {
+          "name": "2025三季报扭亏",
+          "type": "concept",
+          "code": "BK1628"
+        },
+        {
+          "name": "2026一季报预减",
+          "type": "concept",
+          "code": "BK1681"
+        },
+        {
+          "name": "2026一季报预增",
+          "type": "concept",
+          "code": "BK1680"
+        },
+        {
+          "name": "次新股",
+          "type": "concept",
+          "code": "BK0501"
+        },
+        {
+          "name": "重组蛋白",
+          "type": "concept",
+          "code": "BK1063"
+        },
+        {
+          "name": "2026一季报扭亏",
+          "type": "concept",
+          "code": "BK1682"
+        }
+      ]
+    },
+    {
+      "name": "其他",
+      "boards": [
+        {
+          "name": "社会服务",
+          "type": "industry",
+          "code": "BK1214"
+        },
+        {
+          "name": "综合Ⅲ",
+          "type": "industry",
+          "code": "BK1627"
+        },
+        {
+          "name": "综合",
+          "type": "industry",
+          "code": "BK1217"
+        },
+        {
+          "name": "综合Ⅱ",
+          "type": "industry",
+          "code": "BK0539"
+        },
+        {
+          "name": "专业服务",
+          "type": "industry",
+          "code": "BK1043"
+        },
+        {
+          "name": "其他专业服务",
+          "type": "industry",
+          "code": "BK1567"
+        },
+        {
+          "name": "人力资源服务",
+          "type": "industry",
+          "code": "BK1568"
+        },
+        {
+          "name": "昨日打二板以上表现",
+          "type": "concept",
+          "code": "BK1645"
+        },
+        {
+          "name": "植物照明",
+          "type": "concept",
+          "code": "BK1007"
+        },
+        {
+          "name": "中芯概念",
+          "type": "concept",
+          "code": "BK0935"
+        },
+        {
+          "name": "裸眼3D",
+          "type": "concept",
+          "code": "BK1142"
+        },
+        {
+          "name": "高带宽内存",
+          "type": "concept",
+          "code": "BK1152"
+        },
+        {
+          "name": "3D摄像头",
+          "type": "concept",
+          "code": "BK0901"
+        },
+        {
+          "name": "氦气概念",
+          "type": "concept",
+          "code": "BK0949"
+        },
+        {
+          "name": "空间站概念",
+          "type": "concept",
+          "code": "BK0994"
+        },
+        {
+          "name": "屏下摄像",
+          "type": "concept",
+          "code": "BK0947"
+        },
+        {
+          "name": "蓝宝石",
+          "type": "concept",
+          "code": "BK0674"
+        },
+        {
+          "name": "题材股",
+          "type": "concept",
+          "code": "BK1717"
+        },
+        {
+          "name": "净水概念",
+          "type": "concept",
+          "code": "BK1068"
+        },
+        {
+          "name": "东方财富热股",
+          "type": "concept",
+          "code": "BK1637"
+        },
+        {
+          "name": "可燃冰",
+          "type": "concept",
+          "code": "BK0818"
+        },
+        {
+          "name": "最近多板",
+          "type": "concept",
+          "code": "BK1638"
+        },
+        {
+          "name": "柔性屏(折叠屏)",
+          "type": "concept",
+          "code": "BK1160"
+        },
+        {
+          "name": "混合现实",
+          "type": "concept",
+          "code": "BK1141"
+        },
+        {
+          "name": "空气能热泵",
+          "type": "concept",
+          "code": "BK1102"
+        },
+        {
+          "name": "草甘膦",
+          "type": "concept",
+          "code": "BK0950"
+        },
+        {
+          "name": "页岩气",
+          "type": "concept",
+          "code": "BK0603"
+        },
+        {
+          "name": "趋势股",
+          "type": "concept",
+          "code": "BK1715"
+        },
+        {
+          "name": "低价股",
+          "type": "concept",
+          "code": "BK1053"
+        },
+        {
+          "name": "增强现实",
+          "type": "concept",
+          "code": "BK0801"
+        },
+        {
+          "name": "超级品牌",
+          "type": "concept",
+          "code": "BK0811"
+        },
+        {
+          "name": "智慧灯杆",
+          "type": "concept",
+          "code": "BK1069"
+        },
+        {
+          "name": "复合集流体",
+          "type": "concept",
+          "code": "BK1113"
+        },
+        {
+          "name": "供销社概念",
+          "type": "concept",
+          "code": "BK1109"
+        },
+        {
+          "name": "昨日高换手",
+          "type": "concept",
+          "code": "BK1632"
+        },
+        {
+          "name": "虚拟现实",
+          "type": "concept",
+          "code": "BK0722"
+        },
+        {
+          "name": "昨日触板",
+          "type": "concept",
+          "code": "BK0817"
+        },
+        {
+          "name": "北交所概念",
+          "type": "concept",
+          "code": "BK0925"
+        },
+        {
+          "name": "环氧丙烷",
+          "type": "concept",
+          "code": "BK1011"
+        },
+        {
+          "name": "转债标的",
+          "type": "concept",
+          "code": "BK0528"
+        },
+        {
+          "name": "尾气治理",
+          "type": "concept",
+          "code": "BK0932"
+        },
+        {
+          "name": "沪企改革",
+          "type": "concept",
+          "code": "BK0672"
+        },
+        {
+          "name": "地摊经济",
+          "type": "concept",
+          "code": "BK0924"
+        },
+        {
+          "name": "水利建设",
+          "type": "concept",
+          "code": "BK0597"
+        },
+        {
+          "name": "C2M概念",
+          "type": "concept",
+          "code": "BK0955"
+        },
+        {
+          "name": "代糖概念",
+          "type": "concept",
+          "code": "BK0938"
+        },
+        {
+          "name": "微盘股",
+          "type": "concept",
+          "code": "BK1158"
+        },
+        {
+          "name": "中特估",
+          "type": "concept",
+          "code": "BK1139"
+        },
+        {
+          "name": "PPP模式",
+          "type": "concept",
+          "code": "BK0721"
+        },
+        {
+          "name": "宁组合",
+          "type": "concept",
+          "code": "BK1000"
+        },
+        {
+          "name": "央视50_",
+          "type": "concept",
+          "code": "BK0610"
+        },
+        {
+          "name": "反内卷概念",
+          "type": "concept",
+          "code": "BK1197"
+        },
+        {
+          "name": "土壤修复",
+          "type": "concept",
+          "code": "BK1070"
+        },
+        {
+          "name": "微利股",
+          "type": "concept",
+          "code": "BK1642"
+        },
+        {
+          "name": "央国企改革",
+          "type": "concept",
+          "code": "BK0683"
+        },
+        {
+          "name": "统一大市场",
+          "type": "concept",
+          "code": "BK1077"
+        },
+        {
+          "name": "资源开采概念",
+          "type": "concept",
+          "code": "BK1017"
+        },
+        {
+          "name": "微盘精选",
+          "type": "concept",
+          "code": "BK1644"
+        },
+        {
+          "name": "机构重仓",
+          "type": "concept",
+          "code": "BK0552"
+        },
+        {
+          "name": "空间计算",
+          "type": "concept",
+          "code": "BK1143"
+        },
+        {
+          "name": "抽水蓄能",
+          "type": "concept",
+          "code": "BK1003"
+        },
+        {
+          "name": "沪股通",
+          "type": "concept",
+          "code": "BK0707"
+        },
+        {
+          "name": "海绵城市",
+          "type": "concept",
+          "code": "BK0724"
+        },
+        {
+          "name": "酿酒概念",
+          "type": "concept",
+          "code": "BK0477"
+        },
+        {
+          "name": "味蕾经济",
+          "type": "concept",
+          "code": "BK1653"
+        },
+        {
+          "name": "昨日高振幅",
+          "type": "concept",
+          "code": "BK1633"
+        },
+        {
+          "name": "冰雪经济",
+          "type": "concept",
+          "code": "BK1185"
+        },
+        {
+          "name": "专精特新",
+          "type": "concept",
+          "code": "BK1005"
+        },
+        {
+          "name": "破增发价股",
+          "type": "concept",
+          "code": "BK1673"
+        },
+        {
+          "name": "退税商店",
+          "type": "concept",
+          "code": "BK0933"
+        },
+        {
+          "name": "共享经济",
+          "type": "concept",
+          "code": "BK0807"
+        },
+        {
+          "name": "可控核聚变",
+          "type": "concept",
+          "code": "BK1163"
+        },
+        {
+          "name": "PVDF概念",
+          "type": "concept",
+          "code": "BK1012"
+        },
+        {
+          "name": "贬值受益",
+          "type": "concept",
+          "code": "BK0812"
+        },
+        {
+          "name": "粤港自贸",
+          "type": "concept",
+          "code": "BK0677"
+        },
+        {
+          "name": "海洋经济",
+          "type": "concept",
+          "code": "BK0623"
+        },
+        {
+          "name": "海工装备",
+          "type": "concept",
+          "code": "BK0601"
+        },
+        {
+          "name": "中字头",
+          "type": "concept",
+          "code": "BK0505"
+        },
+        {
+          "name": "标准普尔",
+          "type": "concept",
+          "code": "BK0879"
+        },
+        {
+          "name": "工业大麻",
+          "type": "concept",
+          "code": "BK0856"
+        },
+        {
+          "name": "首发经济",
+          "type": "concept",
+          "code": "BK1186"
+        },
+        {
+          "name": "超跌股",
+          "type": "concept",
+          "code": "BK1671"
+        },
+        {
+          "name": "独角兽",
+          "type": "concept",
+          "code": "BK0835"
+        },
+        {
+          "name": "长江三角",
+          "type": "concept",
+          "code": "BK0594"
+        },
+        {
+          "name": "换电概念",
+          "type": "concept",
+          "code": "BK0985"
+        },
+        {
+          "name": "地下管网",
+          "type": "concept",
+          "code": "BK1058"
+        },
+        {
+          "name": "新型城镇化",
+          "type": "concept",
+          "code": "BK1080"
+        },
+        {
+          "name": "百元股",
+          "type": "concept",
+          "code": "BK1059"
+        },
+        {
+          "name": "参股新三板",
+          "type": "concept",
+          "code": "BK0600"
+        },
+        {
+          "name": "婴童概念",
+          "type": "concept",
+          "code": "BK0664"
+        },
+        {
+          "name": "内贸流通",
+          "type": "concept",
+          "code": "BK1001"
+        },
+        {
+          "name": "社区团购",
+          "type": "concept",
+          "code": "BK0965"
+        },
+        {
+          "name": "荣耀概念",
+          "type": "concept",
+          "code": "BK1177"
+        },
+        {
+          "name": "托育服务",
+          "type": "concept",
+          "code": "BK1074"
+        },
+        {
+          "name": "磁悬浮概念",
+          "type": "concept",
+          "code": "BK0975"
+        },
+        {
+          "name": "IPO受益",
+          "type": "concept",
+          "code": "BK0697"
+        },
+        {
+          "name": "网红经济",
+          "type": "concept",
+          "code": "BK0940"
+        },
+        {
+          "name": "培育钻石",
+          "type": "concept",
+          "code": "BK1023"
+        },
+        {
+          "name": "小红书概念",
+          "type": "concept",
+          "code": "BK1187"
+        },
+        {
+          "name": "核污染防治",
+          "type": "concept",
+          "code": "BK0983"
+        },
+        {
+          "name": "谷子经济",
+          "type": "concept",
+          "code": "BK1183"
+        },
+        {
+          "name": "虚拟电厂",
+          "type": "concept",
+          "code": "BK0958"
+        },
+        {
+          "name": "智慧城市",
+          "type": "concept",
+          "code": "BK0628"
+        },
+        {
+          "name": "深股通",
+          "type": "concept",
+          "code": "BK0804"
+        },
+        {
+          "name": "深成500",
+          "type": "concept",
+          "code": "BK0568"
+        },
+        {
+          "name": "盲盒经济",
+          "type": "concept",
+          "code": "BK0954"
+        },
+        {
+          "name": "医废处理",
+          "type": "concept",
+          "code": "BK0914"
+        },
+        {
+          "name": "科技风格",
+          "type": "concept",
+          "code": "BK1713"
+        },
+        {
+          "name": "抗菌面料",
+          "type": "concept",
+          "code": "BK1116"
+        },
+        {
+          "name": "超级电容",
+          "type": "concept",
+          "code": "BK0703"
+        },
+        {
+          "name": "WiFi",
+          "type": "concept",
+          "code": "BK0915"
+        },
+        {
+          "name": "胎压监测",
+          "type": "concept",
+          "code": "BK0898"
+        },
+        {
+          "name": "创业成份",
+          "type": "concept",
+          "code": "BK0638"
+        },
+        {
+          "name": "周期股",
+          "type": "concept",
+          "code": "BK1639"
+        },
+        {
+          "name": "新型工业化",
+          "type": "concept",
+          "code": "BK1150"
+        },
+        {
+          "name": "湖北自贸",
+          "type": "concept",
+          "code": "BK0926"
+        },
+        {
+          "name": "拼多多概念",
+          "type": "concept",
+          "code": "BK0957"
+        },
+        {
+          "name": "青蒿素",
+          "type": "concept",
+          "code": "BK0872"
+        },
+        {
+          "name": "无线耳机",
+          "type": "concept",
+          "code": "BK0893"
+        },
+        {
+          "name": "蚂蚁概念",
+          "type": "concept",
+          "code": "BK0937"
+        },
+        {
+          "name": "百度概念",
+          "type": "concept",
+          "code": "BK0845"
+        },
+        {
+          "name": "病毒防治",
+          "type": "concept",
+          "code": "BK0675"
+        },
+        {
+          "name": "智慧政务",
+          "type": "concept",
+          "code": "BK0886"
+        },
+        {
+          "name": "高压快充",
+          "type": "concept",
+          "code": "BK1144"
+        },
+        {
+          "name": "跨境支付",
+          "type": "concept",
+          "code": "BK1071"
+        },
+        {
+          "name": "EDR概念",
+          "type": "concept",
+          "code": "BK1049"
+        },
+        {
+          "name": "ERP概念",
+          "type": "concept",
+          "code": "BK1133"
+        },
+        {
+          "name": "抖音概念(字节概念)",
+          "type": "concept",
+          "code": "BK0923"
+        },
+        {
+          "name": "快手概念",
+          "type": "concept",
+          "code": "BK0972"
+        },
+        {
+          "name": "辅助生殖",
+          "type": "concept",
+          "code": "BK0939"
+        },
+        {
+          "name": "阿里概念",
+          "type": "concept",
+          "code": "BK0689"
+        },
+        {
+          "name": "幽门螺杆菌概念",
+          "type": "concept",
+          "code": "BK1056"
+        },
+        {
+          "name": "肝炎概念",
+          "type": "concept",
+          "code": "BK1078"
+        },
+        {
+          "name": "病原体防治",
+          "type": "concept",
+          "code": "BK1657"
+        },
+        {
+          "name": "鸿蒙概念",
+          "type": "concept",
+          "code": "BK0953"
+        },
+        {
+          "name": "维生素",
+          "type": "concept",
+          "code": "BK0895"
+        },
+        {
+          "name": "噪声防治",
+          "type": "concept",
+          "code": "BK1082"
+        },
+        {
+          "name": "地热能",
+          "type": "concept",
+          "code": "BK0622"
+        },
+        {
+          "name": "移动支付",
+          "type": "concept",
+          "code": "BK0556"
+        },
+        {
+          "name": "单抗概念",
+          "type": "concept",
+          "code": "BK0870"
+        },
+        {
+          "name": "肝素概念",
+          "type": "concept",
+          "code": "BK0944"
+        },
+        {
+          "name": "阿兹海默",
+          "type": "concept",
+          "code": "BK0894"
+        }
+      ]
+    }
+  ]
+}

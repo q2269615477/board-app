@@ -1,0 +1,80 @@
+Exception in thread Thread-3 (_prewarm_indices):
+Traceback (most recent call last):
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 1044, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 995, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\.workbuddy\2026-06-27-21-35-52\board-app\core\lifecycle.py", line 311, in _prewarm_indices
+    from data_loader import load_index_kline, load_hk_index_kline, load_board_kline
+  File "D:\.workbuddy\2026-06-27-21-35-52\board-app\data_loader.py", line 20, in <module>
+    import tushare as ts
+ModuleNotFoundError: No module named 'tushare'
+--- Logging error ---
+Traceback (most recent call last):
+  File "D:\.workbuddy\2026-06-27-21-35-52\board-app\data_update_manager.py", line 698, in _is_trading_day
+    from data_loader import _tushare_pro
+  File "D:\.workbuddy\2026-06-27-21-35-52\board-app\data_loader.py", line 20, in <module>
+    import tushare as ts
+ModuleNotFoundError: No module named 'tushare'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: I/O operation on closed file.
+Call stack:
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 1015, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 1044, in _bootstrap_inner
+    self.run()
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 995, in run
+    self._target(*self._args, **self._kwargs)
+  File "D:\.workbuddy\2026-06-27-21-35-52\board-app\data_update_manager.py", line 747, in _scheduler_loop
+    is_trade = _is_trading_day()
+  File "D:\.workbuddy\2026-06-27-21-35-52\board-app\data_update_manager.py", line 709, in _is_trading_day
+    logger.warning(f"[交易日] 查询失败({e})，默认是交易日")
+Message: "[交易日] 查询失败(No module named 'tushare')，默认是交易日"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: I/O operation on closed file.
+Call stack:
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 1015, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 1044, in _bootstrap_inner
+    self.run()
+  File "C:\Users\Admin\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 995, in run
+    self._target(*self._args, **self._kwargs)
+  File "D:\.workbuddy\2026-06-27-21-35-52\board-app\data_update_manager.py", line 764, in _scheduler_loop
+    logger.info(f"[调度器] 尚未开盘，{wait_sec}s后检查")
+Message: '[调度器] 尚未开盘，300s后检查'
+Arguments: ()
+Traceback (most recent call last):
+  File "D:\.workbuddy\2026-06-27-21-35-52\board-app\run_server.py", line 22, in <module>
+    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=DEBUG)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\.workbuddy\binaries\python\envs\default\Lib\site-packages\flask\app.py", line 657, in run
+    cli.show_server_banner(self.debug, self.name)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\.workbuddy\binaries\python\envs\default\Lib\site-packages\flask\cli.py", line 782, in show_server_banner
+    click.echo(f" * Serving Flask app '{app_import_path}'")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\.workbuddy\binaries\python\envs\default\Lib\site-packages\click\utils.py", line 283, in echo
+    file = _default_text_stdout()
+  File "C:\Users\Admin\.workbuddy\binaries\python\envs\default\Lib\site-packages\click\_compat.py", line 602, in func
+    rv = wrapper_func()
+  File "C:\Users\Admin\.workbuddy\binaries\python\envs\default\Lib\site-packages\click\_compat.py", line 346, in get_text_stdout
+    rv = _get_windows_console_stream(sys.stdout, encoding, errors)
+  File "C:\Users\Admin\.workbuddy\binaries\python\envs\default\Lib\site-packages\click\_winconsole.py", line 284, in _get_windows_console_stream
+    or not _is_console(f)
+           ~~~~~~~~~~~^^^
+  File "C:\Users\Admin\.workbuddy\binaries\python\envs\default\Lib\site-packages\click\_winconsole.py", line 269, in _is_console
+    fileno = f.fileno()
+ValueError: I/O operation on closed file

@@ -1,0 +1,1541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Stock Canvas</title>
+<link rel="stylesheet" href="https://unpkg.com/@klinecharts/pro/dist/klinecharts-pro.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif;background:#131722;color:#d1d4dc;height:100vh;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%}
+#toolbar{display:flex;align-items:center;gap:10px;padding:6px 14px;border-bottom:1px solid #2a2e39;background:#1a1e29;flex-shrink:0;font-size:12px}
+#main{display:flex;flex:1;overflow:hidden}
+/* 左侧 */
+#nav-panel{width:280px;min-width:200px;max-width:400px;border-right:1px solid #2a2e39;overflow-y:auto;flex-shrink:0}
+.nav-header{padding:7px 10px;font-size:11px;font-weight:500;border-bottom:1px solid #2a2e39;background:#1a1e29;position:sticky;top:0;z-index:1}
+.cat-item{padding:5px 10px;display:flex;align-items:center;border-bottom:1px solid #1e2230;cursor:pointer;font-size:12px;user-select:none}
+.cat-item:hover{background:#1e2230}
+.cat-item .arrow{width:14px;font-size:9px;color:#434651;margin-right:4px}
+.cat-item .count{font-size:10px;color:#434651;margin-left:auto}
+.cat-item.active{background:#2962ff;color:#fff}
+.cat-item.active .count{color:#a0b4ff}
+.collapsed{display:none}
+.board-item{padding:4px 10px 4px 22px;font-size:11px;border-bottom:1px solid #1a1e2e;cursor:pointer;display:flex;justify-content:space-between;user-select:none}
+.board-item:hover{background:#1e2230}
+.board-item.active{background:#2a2e39}
+.board-item .cons-wrap{display:none}
+.board-item.expanded .cons-wrap{display:block}
+.cons-list{background:#161a23;padding:2px 0}
+.cons-item{display:flex;padding:2px 24px 2px 30px;font-size:10px;color:#787b86;gap:8px;cursor:pointer}
+.cons-item:hover{color:#d1d4dc;background:#1e222d}
+.cons-item .cons-code{color:#434651;min-width:56px}
+.cons-item .cons-name{flex:1;overflow:hidden;text-overflow:ellipsis}
+.board-item .code{font-size:9px;color:#434651}
+.board-item.type-i{color:#4fc3f7}
+.board-item.type-c{color:#ffb74d}
+.board-item.type-i:hover{background:#0d2b45}
+.board-item.type-c:hover{background:#2a1f0a}
+.board-item .board-chg{font-size:9px;margin-left:auto;padding-left:4px;font-weight:500;min-width:36px;text-align:right}
+.board-item .board-chg.up{color:#ef5350}.board-item .board-chg.down{color:#26a69a}
+.sort-btn{font-size:9px;padding:1px 6px;border:1px solid #2a2e39;border-radius:3px;cursor:pointer;color:#787b86;margin-left:6px;background:transparent}
+.sort-btn:hover{color:#d1d4dc;border-color:#787b86}
+.sort-btn.active{color:#2962ff;border-color:#2962ff}
+.fcons-pct{font-size:9px;text-align:right;min-width:36px;font-weight:500}
+.fcons-pct.up{color:#ef5350}.fcons-pct.down{color:#26a69a}
+#splitter{cursor:col-resize}
+#splitter:hover{background:#2962ff}
+/* 右侧 */
+#content{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#price-bar{display:flex;align-items:center;gap:12px;padding:5px 14px;border-bottom:1px solid #2a2e39;font-size:11px;flex-shrink:0;color:#787b86}
+#price-bar .name{font-size:13px;font-weight:500;color:#d1d4dc}
+#price-bar .price{font-size:20px;font-weight:400}
+#price-bar .price.up{color:#ef5350}#price-bar .price.down{color:#26a69a}
+/* 图表工具栏 — 常驻样式 */
+#chart-bar{display:flex;align-items:center;gap:3px;padding:2px 8px;border-bottom:1px solid #2a2e39;background:#1a1e29;flex-shrink:0;font-size:10px;flex-wrap:wrap}
+.chart-bar-btn{padding:2px 6px;border:1px solid #2a2e39;border-radius:3px;cursor:pointer;background:transparent;color:#787b86;font-size:10px;white-space:nowrap}
+.chart-bar-btn:hover,.chart-bar-btn.active{background:#2962ff;color:#fff;border-color:#2962ff}
+.chart-bar-btn.drawing{color:#f39c12;border-color:#5a4410}
+.chart-bar-btn.drawing:hover,.chart-bar-btn.drawing.active{background:#f39c12;color:#000;border-color:#f39c12}
+.chart-bar-btn.vol-on{color:#26a69a;border-color:#1a5a4e}
+.chart-bar-btn.vol-on:hover{background:#26a69a;color:#fff}
+.chart-bar-sep{width:1px;height:18px;background:#2a2e39;margin:0 4px}
+.chart-bar-label{color:#434651;font-size:10px;margin-right:2px}
+#chart-box{flex:1;min-height:0;position:relative}
+#chart-box .placeholder{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#434651;font-size:14px;text-align:center}
+/* 指标浮层 — 图表右上角 */
+#indicator-float{position:absolute;top:6px;right:8px;z-index:10;display:flex;gap:4px;flex-wrap:wrap;max-width:50%;justify-content:flex-end}
+.ind-float-btn{display:inline-flex;align-items:center;gap:2px;padding:2px 6px 2px 8px;border-radius:3px;font-size:9px;color:#d1d4dc;background:rgba(26,30,41,0.85);border:1px solid #2a2e39;cursor:default;white-space:nowrap}
+.ind-float-btn .ind-close{color:#ef5350;cursor:pointer;margin-left:3px;padding:0 2px;font-size:11px}
+.ind-float-btn .ind-close:hover{color:#ff4444}
+/* 搜索 */
+#search-wrap{position:fixed;bottom:16px;right:16px;z-index:100;width:140px;height:28px}
+#search-input{width:100%;height:100%;border:none;background:#1e222d;color:#d1d4dc;font-size:11px;padding:0 8px;outline:none;border-radius:3px}
+#search-input:focus{background:#252a36}
+#search-results{position:absolute;bottom:100%;right:0;width:320px;background:#1e222d;border:1px solid #2a2e39;border-radius:6px;max-height:360px;overflow-y:auto;display:none;z-index:999;margin-bottom:6px;padding:4px 0}
+#search-results.show{display:block}
+.search-item{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;font-size:12px;line-height:1.4}
+.search-item:hover,.search-item.selected{background:#2a2e39}
+.search-tag{font-size:9px;padding:1px 5px;border-radius:3px;flex-shrink:0;font-weight:500}
+.search-name{color:#d1d4dc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.search-code{color:#787b86;font-size:10px;flex-shrink:0}
+.search-history-header{padding:6px 10px 4px;color:#434651;font-size:10px;border-bottom:1px solid #2a2e39;margin-bottom:2px}
+#search-input{width:240px;padding:6px 10px;border:1px solid #2a2e39;border-radius:4px;background:#1a1e29;color:#d1d4dc;font-size:12px;outline:none}
+#search-input:focus{border-color:#2962ff}
+#search-results{position:absolute;bottom:36px;right:0;width:280px;max-height:320px;overflow-y:auto;background:#1a1e29;border:1px solid #2a2e39;border-radius:4px;display:none}
+#search-results.show{display:block}
+.search-item{padding:4px 10px;cursor:pointer;font-size:11px;display:flex;justify-content:space-between}
+.search-item:hover,.search-item.selected{background:#2962ff}
+/* KLineChart Pro 容器高度 */
+.klinecharts-pro{height:100%!important;}
+.klinecharts-pro-content{height:calc(100% - 38px)!important;}
+#pro-container{width:100%;height:100%;position:relative;}
+/* 指数快捷栏 */
+#index-bar{display:flex;align-items:stretch;gap:0;overflow-x:auto;overflow-y:hidden;flex:1;scrollbar-width:none;cursor:grab;user-select:none}
+#index-bar::-webkit-scrollbar{display:none}
+#index-bar:active{cursor:grabbing}
+.idx-group{display:flex;align-items:stretch;border-right:1px solid #2a2e39;padding:0 2px}
+.idx-group:last-child{border-right:none}
+.idx-label{display:flex;align-items:center;padding:0 3px;color:#434651;font-size:9px;font-weight:600;white-space:nowrap}
+.idx-item{display:flex;align-items:center;gap:2px;padding:0 5px;cursor:pointer;border-radius:2px;position:relative;transition:all 0.1s;white-space:nowrap;font-size:10px;height:100%}
+.idx-item:hover{background:#2a2e39}
+.idx-item.active{background:#2962ff}
+.idx-item .name{color:#d1d4dc;font-size:10px}
+.idx-item .price{font-size:10px;font-weight:600;min-width:38px;text-align:right;font-variant-numeric:tabular-nums}
+.idx-item .price.up{color:#ef5350}.idx-item .price.down{color:#26a69a}.idx-item .price.flat{color:#787b86}
+.idx-del{position:absolute;top:-2px;right:-2px;width:12px;height:12px;border-radius:50%;background:#ef5350;color:#fff;font-size:7px;line-height:12px;text-align:center;cursor:pointer;display:none;z-index:10;border:1px solid #131722}
+.idx-item:hover .idx-del{display:block}
+/* 右键菜单 */
+#ctx-menu{display:none;position:fixed;background:#1a1e29;border:1px solid #2a2e39;border-radius:4px;z-index:200;min-width:160px;padding:4px 0}
+#ctx-menu.show{display:block}
+.ctx-item{padding:5px 12px;font-size:11px;color:#d1d4dc;cursor:pointer}
+.ctx-item:hover{background:#2962ff}
+.ctx-sep{height:1px;background:#2a2e39;margin:3px 8px}
+/* 弹窗 */
+#modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:300}
+#modal-overlay.show{display:flex;align-items:center;justify-content:center}
+#modal-box{background:#1a1e29;border:1px solid #2a2e39;border-radius:8px;padding:20px;min-width:320px;max-width:480px;max-height:80vh;overflow-y:auto}
+#modal-box h3{font-size:14px;margin-bottom:12px;color:#d1d4dc}
+#modal-box label{display:block;font-size:11px;color:#787b86;margin:8px 0 4px}
+#modal-box input[type=color]{width:40px;height:28px;border:1px solid #2a2e39;border-radius:3px;background:transparent;cursor:pointer;vertical-align:middle}
+#modal-box input[type=number]{width:60px;padding:4px 6px;border:1px solid #2a2e39;border-radius:3px;background:#131722;color:#d1d4dc;font-size:11px}
+#modal-box .modal-btn{padding:5px 14px;border:1px solid #2962ff;border-radius:3px;cursor:pointer;background:#2962ff;color:#fff;font-size:11px;margin-top:12px}
+#modal-box .modal-btn:hover{background:#1a4fbf}
+/* 右侧栏 */
+#skill-panel{width:180px;min-width:180px;border-left:1px solid #2a2e39;overflow-y:auto;flex-shrink:0;font-size:12px;max-width:320px;transition:width .3s}
+#skill-panel.expanded{width:320px;min-width:320px}
+.skill-cat{padding:7px 10px;font-size:11px;font-weight:500;border-bottom:1px solid #2a2e39;background:#1a1e29;display:flex;justify-content:space-between;align-items:center}
+.skill-cat .add-btn{color:#2962ff;cursor:pointer;font-size:14px;padding:0 4px}
+.skill-cat .add-btn:hover{color:#4fc3f7}
+.skill-item{padding:5px 10px;border-bottom:1px solid #1e2230}
+.skill-item .skill-label{font-size:11px;display:block;margin-bottom:4px}
+.skill-btn{width:100%;padding:4px;border:1px solid #2962ff;border-radius:3px;background:transparent;color:#2962ff;font-size:11px;cursor:pointer;text-align:left;padding-left:8px;transition:all .2s;position:relative}
+.skill-btn:hover{background:#2962ff;color:#fff}
+.skill-btn.analyzing{border-color:#f39c12;color:#f39c12;background:rgba(243,156,18,.1)}
+.skill-btn.done{border-color:#26a69a;color:#26a69a;background:rgba(38,166,154,.1)}
+.skill-btn .skill-status{font-size:9px;float:right;margin-top:2px}
+
+/* AI结果面板扩展 */
+#ai-result-panel{padding:8px 10px;border-top:2px solid #2962ff;background:#1a1e29}
+#ai-result-panel .ai-result-summary{font-size:11px;color:#d1d4dc;line-height:1.5;max-height:200px;overflow-y:auto;margin-bottom:8px;white-space:pre-wrap;word-wrap:break-word}
+#ai-result-panel .ai-result-direction{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-right:4px}
+#ai-result-panel .ai-result-direction.bullish{background:#ef5350;color:#fff}
+#ai-result-panel .ai-result-direction.bearish{background:#26a69a;color:#fff}
+#ai-result-panel .ai-result-direction.neutral{background:#434651;color:#fff}
+#ai-result-panel .ai-result-confidence{font-size:10px;color:#787b86}
+#ai-result-panel .ai-result-levels{display:flex;gap:6px;margin-top:6px;font-size:10px}
+#ai-result-panel .ai-level-box{flex:1;padding:4px 6px;border-radius:3px;text-align:center}
+#ai-result-panel .ai-level-box.support{background:rgba(38,166,154,.15);color:#26a69a}
+#ai-result-panel .ai-level-box.resistance{background:rgba(239,83,80,.15);color:#ef5350}
+#ai-result-panel .ai-result-operation{font-size:11px;color:#d1d4dc;margin-top:6px;padding:6px;background:#131722;border-radius:3px;line-height:1.4}
+#ai-result-panel .ai-result-risk{font-size:10px;color:#787b86;margin-top:4px}
+#ai-result-panel .ai-annotation-badge{display:inline-block;padding:1px 4px;border-radius:2px;font-size:9px;margin-right:2px}
+#ai-result-panel .ai-annotation-badge.support{background:#26a69a;color:#fff}
+#ai-result-panel .ai-annotation-badge.resistance{background:#ef5350;color:#fff}
+#ai-result-panel .ai-annotation-badge.signal{background:#f39c12;color:#fff}
+
+/* 分析历史 */
+#ai-history-list{font-size:10px}
+.ai-history-item:hover{background:#1e2230}
+#ai-result-panel{padding:8px 10px;border-top:2px solid #2962ff;background:#1a1e29}
+#ai-result-panel .ai-result-summary{font-size:11px;color:#d1d4dc;line-height:1.5;max-height:200px;overflow-y:auto;margin-bottom:8px;white-space:pre-wrap;word-wrap:break-word}
+#ai-result-panel .ai-result-direction{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-right:4px}
+#ai-result-panel .ai-result-direction.bullish{background:#ef5350;color:#fff}
+#ai-result-panel .ai-result-direction.bearish{background:#26a69a;color:#fff}
+#ai-result-panel .ai-result-direction.neutral{background:#434651;color:#fff}
+#ai-result-panel .ai-result-confidence{font-size:10px;color:#787b86}
+#ai-result-panel .ai-result-levels{display:flex;gap:6px;margin-top:6px;font-size:10px}
+#ai-result-panel .ai-level-box{flex:1;padding:4px 6px;border-radius:3px;text-align:center}
+#ai-result-panel .ai-level-box.support{background:rgba(38,166,154,.15);color:#26a69a}
+#ai-result-panel .ai-level-box.resistance{background:rgba(239,83,80,.15);color:#ef5350}
+#ai-result-panel .ai-result-operation{font-size:11px;color:#d1d4dc;margin-top:6px;padding:6px;background:#131722;border-radius:3px;line-height:1.4}
+#ai-result-panel .ai-result-risk{font-size:10px;color:#787b86;margin-top:4px}
+#ai-result-panel .ai-annotation-badge{display:inline-block;padding:1px 4px;border-radius:2px;font-size:9px;margin-right:2px}
+#ai-result-panel .ai-annotation-badge.support{background:#26a69a;color:#fff}
+#ai-result-panel .ai-annotation-badge.resistance{background:#ef5350;color:#fff}
+#ai-result-panel .ai-annotation-badge.signal{background:#f39c12;color:#fff}
+.signal-row{padding:3px 10px;font-size:11px;border-bottom:1px solid #1e2230}
+.signal-date{color:#434651}
+.signal-badge{padding:0 4px;border-radius:2px;font-size:10px;margin:0 4px}
+.signal-badge.buy{background:#ef5350;color:#fff}
+.signal-badge.sell{background:#26a69a;color:#fff}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#2962ff;color:#fff;padding:8px 20px;border-radius:4px;font-size:12px;z-index:500;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+.toast-bar{position:fixed;top:36px;left:50%;transform:translateX(-50%);background:#1e222d;border:1px solid #ef5350;border-radius:4px;color:#d1d4dc;font-size:11px;padding:4px 12px;z-index:999;display:none}
+.toast-bar.show{display:block}
+.toast-bar a{color:#2962ff;cursor:pointer;text-decoration:underline}
+/* 二级浮层面板 */
+#floating-cons{position:fixed;left:280px;top:36px;width:240px;max-height:calc(100vh - 60px);overflow-y:auto;background:#161a23;border:1px solid #2a2e39;border-radius:4px;z-index:200;display:none;font-size:11px;box-shadow:2px 2px 12px rgba(0,0,0,.4)}
+#floating-cons.show{display:block}
+#floating-cons .fcons-header{padding:6px 10px;color:#434651;font-size:10px;border-bottom:1px solid #2a2e39;position:sticky;top:0;background:#161a23;z-index:1}
+#floating-cons .fcons-item{display:flex;padding:5px 10px;cursor:pointer;gap:6px;align-items:center}
+#floating-cons .fcons-item:hover{background:#1e222d}
+#floating-cons .fcons-item .fcons-code{color:#434651;min-width:56px}
+#floating-cons .fcons-item .fcons-name{flex:1;overflow:hidden;text-overflow:ellipsis;color:#d1d4dc}
+#floating-cons .fcons-item .fcons-cap{color:#434651;font-size:9px;text-align:right;min-width:40px}
+#floating-cons .fcons-item .fcons-pct{color:#434651;font-size:9px;text-align:right;min-width:36px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+  <button class="tab-btn active" id="tab-classify">分类导航</button>
+  <div id="index-bar"></div>
+</div>
+
+  <div id="main">
+    <div id="nav-panel"><div class="nav-header">加载分类...</div></div>
+    <div id="splitter"></div>
+    <div id="content">
+      <div id="pro-container">
+        <div class="placeholder" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#434651;font-size:14px;text-align:center">点击左侧板块查看K线</div>
+      </div>
+    </div>
+<div id="skill-panel">
+  <div class="skill-cat">技能市场 <span class="add-btn" onclick="showAddSkill()">＋</span></div>
+  <div id="skill-list"></div>
+  <div id="ai-result-panel" style="display:none">
+    <div class="skill-cat">AI 分析结论 <span style="font-size:9px;color:#434651;cursor:pointer" onclick="clearAiResult()">清除</span></div>
+    <div id="ai-result-content"></div>
+  </div>
+  <div class="skill-cat">分析历史 <span style="font-size:9px;color:#434651;cursor:pointer" onclick="loadAnalysisHistory()">刷新</span></div>
+  <div id="ai-history-list" style="background:#131722;padding:6px 10px;color:#434651;font-size:11px">暂无分析记录</div>
+  <div class="skill-cat">信号记录</div>
+  <div id="signal-list" style="padding:6px 10px;color:#434651;font-size:11px">选中板块后显示</div>
+</div>
+  </div>
+</div>
+<div id="search-wrap">
+  <input id="search-input" placeholder="搜索板块/代码">
+  <div id="search-results"></div>
+</div>
+<div id="floating-cons"></div>
+<div id="ctx-menu"></div>
+<div id="modal-overlay"><div id="modal-box"></div></div>
+<div id="toast" class="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/klinecharts@9.6.0/dist/klinecharts.min.js" onerror="injectCDNScripts()"></script>
+<script src="https://cdn.jsdelivr.net/npm/@klinecharts/pro/dist/klinecharts-pro.umd.js" onerror="injectCDNScripts()"></script>
+<script>
+const store = { activeCat:null, selected:null, categoryData:null, _seq:0, _skills:[] };
+let pro = null;
+const API = '';
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2500);}
+/* 预先声明所有可能被初始化函数引用的变量（避免TDZ） */
+let _analysisHistory = [];
+const _historyKey = 'ai_analysis_history';
+let _lastClickBoard=null;
+let _lastClickTime=0;
+let _pendingSym=0;
+let _preloadDone = {};
+let _currentReqId = 0;
+let _aiPanelCache = null;
+let _navPanelScroll = 0;
+let _idxBarDragEl = null;
+let _pinyinData = {};
+let _sm = null;
+// 类型样式（顶部已定义，这里只引用）
+const _chartLoadingTimers = {};
+function showToastBar(html){let el=document.getElementById('toast-bar');if(!el){el=document.createElement('div');el.id='toast-bar';el.className='toast-bar';document.body.appendChild(el);}el.innerHTML=html;el.classList.add('show');clearTimeout(el._bt);el._bt=setTimeout(()=>el.classList.remove('show'),15000);}
+
+// ===== 1. 分类（支持持久化+拼音排序） =====
+async function loadClassification() {
+  const p=document.getElementById('nav-panel');
+  try {
+    // 优先加载用户保存的分类，失败则回退到静态文件
+    const r=await fetch(API+'/api/classification/load');
+    store.categoryData=(await r.json()).categories;
+    renderNav();
+  } catch(e){p.innerHTML='<div class="nav-header" style="color:#ef5350">加载失败</div><div class="nav-item" onclick="loadClassification()">点此重试</div>';}
+}
+
+// 获取板块拼音排序键：取每个字的拼音首字母拼接
+function _boardSortKey(name){
+  if(!_pinyinData)return name;
+  // 从本地搜索索引映射中查找
+  const found = window._sm ? window._sm.find(s => s.name === name) : null;
+  if(found && found.initials) return found.initials;
+  // 从拼音数据中找任意匹配（旧版缓存兼容）
+  for(const info of Object.values(_pinyinData)){
+    if(info.name===name){
+      return (info.initials||[]).join('');
+    }
+  }
+  return name;
+}
+
+function renderNav(){
+  const p=document.getElementById('nav-panel');
+  let total=0; store.categoryData.forEach(c=>total+=c.boards.length);
+  let h='<div class="nav-header">板块分类 <span style="font-size:10px;color:#434651">('+total+'个)</span><span class="sort-btn'+(store._sortBoardByChg?' active':'')+'" onclick="toggleBoardSort()">涨幅排序</span></div>';
+  store.categoryData.forEach(cat=>{
+    const id='cat_'+cat.name.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g,'_');
+    const active=store.activeCat===cat.name?'active':'';
+    // 按拼音首字母排序：行业内按行业排序，概念内按概念排序
+    const sorted=[...cat.boards].sort((a,b)=>{
+      const ka=_boardSortKey(a.name), kb=_boardSortKey(b.name);
+      return ka<kb?-1:ka>kb?1:0;
+    });
+    h+='<div class="cat-item '+active+'" onclick="toggleCat(\''+id+'\',\''+escAttr(cat.name)+'\')"><span class="arrow">▶</span> '+escHtml(cat.name)+'<span class="count">'+cat.boards.length+'</span></div>';
+    h+='<div class="collapsed" id="'+id+'">';
+    sorted.forEach(b=>{
+      const cls=b.type==='industry'?'type-i':'type-c';
+      h+='<div class="board-item '+cls+'" data-code="'+b.code+'" data-type="'+b.type+'" data-name="'+escAttr(b.name)+'" data-chg="0" onclick="selectBoard(\''+escAttr(b.name)+'\',\''+b.code+'\',\''+b.type+'\',event)" onmouseenter="showConsPanel(\''+escAttr(b.name)+'\',\''+b.code+'\',\''+b.type+'\',event)" oncontextmenu="showBoardCtx(event,\''+escAttr(b.name)+'\',\''+b.code+'\',\''+b.type+'\')"><span>'+escHtml(b.name)+'</span><span class="board-chg" data-bchg="'+b.code+'"></span><span class="code">'+b.code+'</span></div>';
+    });
+    h+='</div>';
+  });
+  p.innerHTML=h;
+}
+function toggleCat(id,name){
+  const el=document.getElementById(id); if(!el)return;
+  const arrow=el.previousElementSibling.querySelector('.arrow');
+  el.classList.toggle('collapsed');
+  arrow.textContent=el.classList.contains('collapsed')?'▶':'▼';
+  if(!el.classList.contains('collapsed')){
+    store.activeCat=name;
+    document.querySelectorAll('.cat-item.active').forEach(e=>e.classList.remove('active'));
+    el.previousElementSibling.classList.add('active');
+  } else store.activeCat=null;
+}
+
+// ===== 2. 右键菜单：板块分类 =====
+let _ctxBoard=null;
+function showBoardCtx(e,name,code,type){
+  e.preventDefault();
+  _ctxBoard={name,code,type};
+  const cats=store.categoryData.filter(c=>c.name!=='其他');
+  let h='<div class="ctx-item" style="color:#434651;cursor:default">移到分类:</div>';
+  cats.forEach(c=>{h+='<div class="ctx-item" onclick="moveBoardToCat(\''+escAttr(c.name)+'\')">'+escHtml(c.name)+'</div>';});
+  h+='<div class="ctx-sep"></div>';
+  h+='<div class="ctx-item" onclick="closeCtx();addCurrentToIndexBar()">添加到指数导航栏</div>';
+  h+='<div class="ctx-sep"></div>';
+  h+='<div class="ctx-item" onclick="closeCtx()">取消</div>';
+  showCtxMenu(e.clientX,e.clientY,h);
+}
+function moveBoardToCat(catName){
+  if(!_ctxBoard)return;
+  const cats=store.categoryData;
+  let srcCat=null,srcIdx=-1;
+  for(const c of cats){
+    const i=c.boards.findIndex(b=>b.code===_ctxBoard.code&&b.type===_ctxBoard.type);
+    if(i>=0){srcCat=c;srcIdx=i;break;}
+  }
+  if(!srcCat)return;
+  const board=srcCat.boards.splice(srcIdx,1)[0];
+  const dst=cats.find(c=>c.name===catName);
+  if(dst)dst.boards.push(board);
+  renderNav();closeCtx();toast('已移到「'+catName+'」');
+  // 持久化到服务器
+  _saveClassification();
+}
+
+async function _saveClassification(){
+  try{
+    await fetch(API+'/api/classification/save', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({categories:store.categoryData})
+    });
+  }catch(e){console.warn('分类保存失败',e);}
+}
+function showCtxMenu(x,y,h){const m=document.getElementById('ctx-menu');m.innerHTML=h;m.style.left=x+'px';m.style.top=y+'px';m.classList.add('show');}
+function closeCtx(){document.getElementById('ctx-menu').classList.remove('show');_ctxBoard=null;}
+document.addEventListener('click',e=>{if(!e.target.closest('#ctx-menu'))closeCtx();});
+document.addEventListener('contextmenu',e=>{if(!e.target.closest('#nav-panel'))closeCtx();});
+
+// ===== 3. KLineChart Pro Datafeed（带请求取消+超时控制） =====
+class BoardDatafeed {
+  constructor(){this._timer=null;this._activeReqs=new Map();this._seq=0;}
+  async searchSymbols(search) {
+    if(!store.categoryData) return [];
+    const results = [];
+    store.categoryData.forEach(cat => {
+      cat.boards.forEach(b => {
+        if (!search || b.name.includes(search) || b.code.includes(search)) {
+          results.push({
+            ticker: b.code, name: b.name, shortName: b.name,
+            type: b.type, market: 'A', exchange: '中国', priceCurrency: 'CNY'
+          });
+        }
+      });
+    });
+    return results;
+  }
+  async getHistoryKLineData(symbol, period, from, to) {
+    const mySeq = ++this._seq;
+    // 取消同symbol+period的旧请求
+    const symKey = symbol.ticker+':'+period.timespan+':'+period.multiplier;
+    if(this._activeReqs.has(symKey)){this._activeReqs.get(symKey).abort();}
+    const ctrl = new AbortController();
+    this._activeReqs.set(symKey, ctrl);
+    function periodToApi(p) {
+      const t=p.timespan, m=p.multiplier;
+      if(t==='minute') return m+'m';
+      if(t==='hour') return (m*60)+'m';
+      if(t==='day') return 'daily';
+      if(t==='week') return 'weekly';
+      if(t==='month'){if(m===1)return 'monthly';if(m===3)return 'quarterly';if(m===12)return 'yearly';return 'monthly';}
+      return 'daily';
+    }
+    const p = periodToApi(period);
+    const tid = setTimeout(()=>ctrl.abort(), 15000);
+    try {
+      const r = await fetch(API+'/api/kline/'+(symbol.type||'industry')+'/'+symbol.ticker
+        +'?name='+encodeURIComponent(symbol.name||symbol.shortName)+'&period='+p+'&timeout=15', {signal:ctrl.signal});
+      clearTimeout(tid);
+      this._activeReqs.delete(symKey);
+      if(this._seq!==mySeq) return [];  // 已有更新的请求，丢弃当前结果
+      const j = await r.json();
+      if(j.loading) return [];
+      if(j.error){console.warn('kline data error:',j.error);return [];}
+      return (j.data||[]).map(d=>({timestamp:d.timestamp,open:d.open,high:d.high,low:d.low,close:d.close,volume:d.volume||0}));
+    } catch(e) {
+      clearTimeout(tid);
+      this._activeReqs.delete(symKey);
+      if(e.name==='AbortError'){console.warn('kline fetch timeout for',symbol.ticker);return [];}
+      throw e;
+    }
+  }
+  subscribe(symbol, period, callback) {
+    clearInterval(this._timer);
+    this._timer = setInterval(async () => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(()=>ctrl.abort(), 10000);
+        const r = await fetch(API+'/api/spot/'+(symbol.type||'industry')+'/'+symbol.ticker,{signal:ctrl.signal});
+        clearTimeout(t);
+        if(!r.ok) return;
+        const j = await r.json();
+        const data = j.data && j.data.price ? j.data : null;
+        if(data) {
+          const now = Date.now();
+          callback({timestamp:now,close:data.price,open:data.open||data.price,high:data.high||data.price,low:data.low||data.price,volume:data.volume||0});
+        }
+      } catch(e) { if(e.name!=='AbortError') console.warn('spot poll err:',e); }
+    }, 30000);
+  }
+  unsubscribe(symbol, period) { clearInterval(this._timer); }
+}
+const _datafeed = new BoardDatafeed();
+
+// ===== 4. 初始化 KLineChart Pro（带CDN重试机制） =====
+let _pendingSymbol = null; // 等待pro初始化后应用的symbol
+let _initProAttempts = 0;
+const MAX_INIT_ATTEMPTS = 20; // 最多重试20次（约10秒）
+
+function initPro() {
+  const container = document.getElementById('pro-container');
+  if (!container) return false;
+  
+  // CDN未加载 → 显示等待UI并自动重试
+  if (!window.klinechartspro) {
+    _initProAttempts++;
+    if (_initProAttempts >= MAX_INIT_ATTEMPTS) {
+      // 最终失败：显示错误UI + 重试按钮
+      container.innerHTML = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:#ef5350;font-size:13px">'+
+        '<div style="font-size:28px;margin-bottom:12px">📊</div>'+
+        '<div>KLineChart Pro 加载失败</div>'+
+        '<div style="font-size:11px;color:#787b86;margin:8px 0">CDN资源可能被网络代理拦截</div>'+
+        '<button onclick="forceReloadPro()" style="padding:6px 16px;border:1px solid #ef5350;border-radius:4px;background:transparent;color:#ef5350;cursor:pointer;font-size:12px">重新加载</button>'+
+        '</div>';
+      console.error('[Pro] CDN加载失败，已重试', MAX_INIT_ATTEMPTS, '次');
+      return false;
+    }
+    // 显示等待状态
+    if (_initProAttempts <= 3) {
+      container.innerHTML = '<div class="placeholder" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#434651;font-size:14px;text-align:center">'+
+        '<div style="font-size:24px;margin-bottom:8px">⏳</div>'+
+        '正在加载KLineChart Pro...<br><span style="font-size:10px">('+_initProAttempts+'/'+MAX_INIT_ATTEMPTS+')</span>'+
+        '</div>';
+    }
+    // 500ms后重试
+    setTimeout(initPro, 500);
+    return false;
+  }
+  
+  // CDN已加载 → 初始化
+  try {
+    // 移除 placeholder
+    const ph = container.querySelector('.placeholder');
+    if (ph) ph.remove();
+    
+    pro = new window.klinechartspro.KLineChartPro({
+      container: container,
+      theme: 'dark',
+      locale: 'zh-CN',
+      drawingBarVisible: true,
+      watermark: null, // 去除水印
+      // 蜡烛图：红涨绿跌（中国习惯）
+      styles: {
+        candle: {
+          bar: {
+            upColor: '#ef5350', upBorderColor: '#ef5350', upWickColor: '#ef5350',
+            downColor: '#26a69a', downBorderColor: '#26a69a', downWickColor: '#26a69a'
+          }
+        },
+        // 等间距K线，避免周末/节假日断点
+        timeAxis: { type: 'bar' },
+        // 成交量颜色跟随K线：红涨绿跌
+        indicator: {
+          bars: [{ upColor: 'rgba(239,83,80,0.7)', downColor: 'rgba(38,166,154,0.7)' }]
+        }
+      },
+      // 默认加载上证指数
+      symbol: { ticker: 'sh000001', name: '上证指数', shortName: '上证指数', type: 'index', market: 'A', priceCurrency: 'CNY' },
+      period: { multiplier: 1, timespan: 'day', text: '日' },
+      periods: [
+        { multiplier: 1, timespan: 'minute', text: '1m' },
+        { multiplier: 5, timespan: 'minute', text: '5m' },
+        { multiplier: 15, timespan: 'minute', text: '15m' },
+        { multiplier: 1, timespan: 'hour', text: '1H' },
+        { multiplier: 2, timespan: 'hour', text: '2H' },
+        { multiplier: 4, timespan: 'hour', text: '4H' },
+        { multiplier: 1, timespan: 'day', text: '日' },
+        { multiplier: 1, timespan: 'week', text: '周' },
+        { multiplier: 1, timespan: 'month', text: '月' },
+        { multiplier: 3, timespan: 'month', text: '季' },
+        { multiplier: 12, timespan: 'month', text: '年' },
+      ],
+      timezone: 'Asia/Shanghai',
+      mainIndicators: ['MA'],
+      subIndicators: ['VOL'],
+      datafeed: _datafeed
+    });
+    toast('KLineChart Pro 就绪');
+    _initProAttempts = 0;
+    
+    // 应用等待中的symbol
+    if (_pendingSymbol) {
+      setTimeout(() => {
+        if (pro && pro.setSymbol) {
+          pro.setSymbol(_pendingSymbol);
+          loadSignals(_pendingSymbol.ticker);
+        }
+        _pendingSymbol = null;
+      }, 100);
+    }
+    return true;
+  } catch(e) {
+    console.error('Pro init error:', e);
+    toast('Pro 初始化失败: '+e.message);
+    return false;
+  }
+}
+
+// 强制重新加载Pro（用户点击重试按钮）
+function forceReloadPro() {
+  _initProAttempts = 0;
+  // 尝试重新注入CDN脚本
+  if (!window.klinechartspro) {
+    injectCDNScripts();
+  }
+  setTimeout(initPro, 300);
+}
+
+// CDN脚本注入（带fallback）
+function injectCDNScripts() {
+  const cdnBase = 'https://cdn.jsdelivr.net/npm';
+  const altCdnBase = 'https://unpkg.com';
+  
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  
+  // 尝试主CDN，失败则用备用
+  loadScript(`${cdnBase}/klinecharts@9.6.0/dist/klinecharts.min.js`)
+    .then(() => loadScript(`${cdnBase}/@klinecharts/pro/dist/klinecharts-pro.umd.js`))
+    .catch(() => {
+      console.warn('[CDN] 主CDN失败，尝试备用');
+      return loadScript(`${altCdnBase}/klinecharts@9.6.0/dist/klinecharts.min.js`)
+        .then(() => loadScript(`${altCdnBase}/@klinecharts/pro/dist/klinecharts-pro.umd.js`));
+    })
+    .then(() => { console.log('[CDN] 脚本加载成功'); })
+    .catch((e) => { console.error('[CDN] 所有CDN失败:', e); });
+}
+
+// ===== 5. 板块选择 -> 交给 Pro（带防卡死保护+预加载+请求状态管理） =====
+
+// 页面加载后预加载第一个板块
+function preloadFirstBoard(){
+  const first = document.querySelector('.board-item');
+  if(first){
+    const name = first.dataset.name;
+    const code = first.dataset.code;
+    const type = first.dataset.type;
+    if(!_preloadDone[code+type]){
+      _preloadDone[code+type] = true;
+      fetch(API+'/api/kline/'+type+'/'+code+'?name='+encodeURIComponent(name)+'&period=daily&timeout=15').catch(()=>{});
+    }
+  }
+}
+setTimeout(preloadFirstBoard, 500);
+
+// 初始化：加载分析历史
+loadAnalysisHistory();
+renderAnalysisHistory();
+// 初始化：检测WorkBuddy Hook
+detectWorkBuddyHook();
+
+function selectBoard(name,code,type,ev){
+  // 点击去重：200ms内重复点击忽略
+  if(_lastClickBoard && _lastClickBoard.code===code && _lastClickBoard.type===type
+     && Date.now()-_lastClickTime < 200) return;
+  _lastClickTime = Date.now();
+  const reqId = ++_currentRequestId;
+
+  if(ev) document.querySelectorAll('.board-item.active').forEach(e=>e.classList.remove('active'));
+  if(ev && ev.target.closest('.board-item')) ev.target.closest('.board-item').classList.add('active');
+  store.selected={name,code,type};
+  _lastClickBoard={name,code,type};
+  
+  showLoading();
+
+  const symbol = { ticker: code, name: name, shortName: name, type: type, market: 'A', priceCurrency: 'CNY' };
+  const seq = ++_pendingSym;
+  if (_datafeed && _datafeed.unsubscribe) _datafeed.unsubscribe();
+  
+  if (pro && pro.setSymbol) {
+    pro.setSymbol(symbol);
+    hideLoading();
+  } else {
+    // pro未就绪 → 存入pending，等initPro完成后应用
+    _pendingSymbol = symbol;
+    console.warn('pro not ready, queued symbol:', symbol.ticker);
+  }
+  
+  loadSignals(code);
+}
+
+// 二级导航栏：悬浮显示成分股
+const _consPanel = document.getElementById('floating-cons');
+let _consPanelTimer = null;
+
+function showConsPanel(name, code, type, ev){
+  clearTimeout(_consPanelTimer);
+  
+  // 从board-item取定位
+  const item = ev.target.closest('.board-item');
+  if(!item) return;
+  
+  // 构建浮动面板内容
+  const boardType = type === 'industry' ? 'industry' : 'concept';
+  
+  // 显示加载状态
+  _consPanel.innerHTML = '<div class="fcons-header">'+escHtml(name)+' 成分股 <span style="float:right">加载中...</span></div>';
+  
+  // 定位到item右侧
+  const rect = item.getBoundingClientRect();
+  _consPanel.style.left = '280px';  // 导航栏宽度
+  _consPanel.style.top = Math.max(36, rect.top) + 'px';
+  _consPanel.style.display = 'block';
+  _consPanel.classList.add('show');
+  
+  // 获取数据
+  fetch(API+'/api/board-cons-sorted/'+boardType+'/'+code)
+    .then(r=>r.json())
+    .then(resp=>{
+      const items = resp.data || [];
+      let h = '<div class="fcons-header">'+escHtml(name)+' 成分股 <span style="float:right">'+items.length+'只</span></div>';
+      if(!items.length){
+        h += '<div class="fcons-item" style="color:#434651;cursor:default">无数据</div>';
+      } else {
+        items.forEach(function(s){
+          const capStr = s.mkt_cap >= 10000 ? (s.mkt_cap/10000).toFixed(2)+'万亿' : s.mkt_cap.toFixed(0)+'亿';
+          const chg = s.change_pct || 0;
+          const chgCls = chg > 0 ? 'up' : (chg < 0 ? 'down' : '');
+          const chgStr = (chg > 0 ? '+' : '') + chg.toFixed(2) + '%';
+          h += '<div class="fcons-item" onclick="closeConsPanel();selectBoard(\''+escAttr(s.name)+'\',\''+s.code+'\',\'stock\',null)">'+
+            '<span class="fcons-code">'+s.code+'</span>'+
+            '<span class="fcons-name">'+escHtml(s.name)+'</span>'+
+            '<span class="fcons-pct '+chgCls+'">'+chgStr+'</span>'+
+            '<span class="fcons-cap">'+capStr+'</span></div>';
+        });
+      }
+      _consPanel.innerHTML = h;
+    })
+    .catch(function(){_consPanel.innerHTML = '<div class="fcons-header">加载失败</div>';});
+}
+
+function closeConsPanel(){
+  _consPanel.classList.remove('show');
+  _consPanel.style.display = 'none';
+}
+
+// 点击面板外部关闭
+document.addEventListener('click', function(e){
+  if(!e.target.closest('#floating-cons') && !e.target.closest('.board-item')){
+    closeConsPanel();
+  }
+});
+
+// 板块涨幅排序切换
+function toggleBoardSort(){
+  store._sortBoardByChg = !store._sortBoardByChg;
+  renderNav();
+  if(store._sortBoardByChg) loadBoardChanges();
+}
+
+// 加载所有板块涨跌幅
+let _boardChgData = null;
+async function loadBoardChanges(){
+  try{
+    const r = await fetch(API+'/api/board-changes');
+    const resp = await r.json();
+    _boardChgData = resp.data || {};
+    // 填充到所有board-item上
+    document.querySelectorAll('.board-item').forEach(function(el){
+      const code = el.dataset.code;
+      const type = el.dataset.type;
+      const key = type + ':' + code;
+      const chg = _boardChgData[key];
+      const span = el.querySelector('.board-chg');
+      if(span && chg !== undefined){
+        const cls = chg > 0 ? 'up' : (chg < 0 ? 'down' : '');
+        span.className = 'board-chg ' + cls;
+        span.textContent = (chg > 0 ? '+' : '') + chg.toFixed(2) + '%';
+        el.dataset.chg = chg;
+      }
+    });
+    // 如果启用了涨幅排序，重新排序
+    if(store._sortBoardByChg) sortBoardItemsByChg();
+  } catch(e){}
+}
+
+function sortBoardItemsByChg(){
+  document.querySelectorAll('.collapsed').forEach(function(col){
+    const items = Array.from(col.querySelectorAll('.board-item'));
+    items.sort(function(a,b){
+      return (parseFloat(b.dataset.chg) || 0) - (parseFloat(a.dataset.chg) || 0);
+    });
+    items.forEach(function(el){ col.appendChild(el); });
+  });
+}
+
+// 初始化加载涨跌幅
+setTimeout(loadBoardChanges, 1500);
+
+// 加载提示动画
+function showLoading(){
+  const plc = document.querySelector('#pro-container .placeholder');
+  if(plc) plc.innerHTML = '加载中...';
+}
+function hideLoading(){
+  const plc = document.querySelector('#pro-container .placeholder');
+  if(plc && plc.parentElement.querySelector('.klinecharts-pro')) plc.remove();
+}
+
+// ===== 5B. 指数导航栏（分组+价格+拖动+增删） =====
+const INDEX_GROUPS = [
+  {name:'A股',items:[
+    {ticker:'sh000001',type:'index',name:'上证指数',price:'─'},
+    {ticker:'sz399006',type:'index',name:'创业板指',price:'─'},
+    {ticker:'sh000688',type:'index',name:'科创50',price:'─'},
+    {ticker:'sh000300',type:'index',name:'沪深300',price:'─'},
+    {ticker:'sh000016',type:'index',name:'上证50',price:'─'},
+    {ticker:'sh000852',type:'index',name:'中证1000',price:'─'},
+    {ticker:'sh000853',type:'index',name:'中证2000',price:'─'},
+  ]},
+  {name:'港股',items:[
+    {ticker:'HSI',type:'hk_index',name:'恒生指数',price:'─'},
+    {ticker:'HSTECH',type:'hk_index',name:'恒生科技',price:'─'},
+  ]},
+  {name:'东财',items:[
+    {ticker:'BK1158',type:'concept',name:'微盘股',price:'─'},
+    {ticker:'800000',type:'index',name:'全A指数',price:'─'},
+  ]},
+  {name:'亚太',items:[
+    {ticker:'^KS11',type:'us',name:'KOSPI',price:'─'},
+    {ticker:'^TWII',type:'us',name:'台湾加权',price:'─'},
+    {ticker:'^N225',type:'us',name:'日经225',price:'─'},
+  ]},
+  {name:'美股',items:[
+    {ticker:'SPX',type:'us',name:'标普500',price:'─'},
+    {ticker:'IXIC',type:'us',name:'纳斯达克',price:'─'},
+    {ticker:'DJI',type:'us',name:'道琼斯',price:'─'},
+  ]},
+];
+function renderIndexBar(){
+  const bar = document.getElementById('index-bar');
+  let h = '';
+  INDEX_GROUPS.forEach(g => {
+    h += '<div class="idx-group">';
+    h += '<span class="idx-label">'+g.name+'</span>';
+    g.items.forEach(it => {
+      h += '<div class="idx-item" draggable="true" data-sym=\''+escAttr(JSON.stringify(it))+'\''
+        + ' onclick="clickIdxItem(this)" oncontextmenu="ctxIdxItem(event,this)">'
+        + '<span class="name">'+escHtml(it.name)+'</span>'
+        + '<span class="price flat" id="prc_'+it.ticker+'">'+it.price+'</span>'
+        + '<span class="idx-del" onclick="delIdxItem(event,this)" title="移除">✕</span>'
+        + '</div>';
+    });
+    h += '</div>';
+  });
+  bar.innerHTML = h;
+  const first = bar.querySelector('.idx-item');
+  if(first) first.classList.add('active');
+  // 拖动
+  bar.querySelectorAll('.idx-item').forEach(it => {
+    it.addEventListener('dragstart', e => { _idxBarDragEl = it; setTimeout(() => it.style.opacity='0.3',0); });
+    it.addEventListener('dragend', () => { if(_idxBarDragEl) _idxBarDragEl.style.opacity='1'; _idxBarDragEl=null; });
+    it.addEventListener('dragover', e => {
+      e.preventDefault(); if(!_idxBarDragEl || _idxBarDragEl===it) return;
+      const r = it.getBoundingClientRect(), mid = r.left + r.width/2, p = it.parentNode;
+      p.insertBefore(_idxBarDragEl, e.clientX<mid ? it : it.nextSibling);
+    });
+  });
+}
+function clickIdxItem(el){
+  document.querySelectorAll('.idx-item.active').forEach(e=>e.classList.remove('active'));
+  el.classList.add('active');
+  const sym = JSON.parse(el.dataset.sym);
+  selectBoard(sym.name, sym.ticker, sym.type, null);
+}
+function ctxIdxItem(ev, el){
+  ev.preventDefault();
+  const sym = JSON.parse(el.dataset.sym);
+  window._ctxIdx = sym;
+  showCtxMenu(ev.clientX, ev.clientY,
+    '<div class="ctx-item" style="color:#434651;cursor:default">'+escHtml(sym.name)+'</div>'
+    + '<div class="ctx-sep"></div>'
+    + '<div class="ctx-item" onclick="delIdxItem(null,document.querySelector(\'#prc_'+sym.ticker+'\').closest(\'.idx-item\').querySelector(\'.idx-del\'))">移除</div>'
+    + '<div class="ctx-item" onclick="closeCtx()">取消</div>');
+}
+function delIdxItem(ev, delBtn){
+  if(ev) ev.stopPropagation();
+  const item = delBtn.closest('.idx-item');
+  if(item) { item.remove(); toast('已移除'); }
+  closeCtx();
+}
+async function refreshIdxPrices(){
+  try{
+    const r = await fetch(API+'/api/spot/indices');
+    const j = await r.json();
+    if(j.data){
+      Object.entries(j.data).forEach(([code, v]) => {
+        const el = document.getElementById('prc_'+code);
+        if(!el) return;
+        const price = (v.price||0).toFixed(code.match(/^HSI$|HSTECH|N225/) ? 0 : 2);
+        el.textContent = price;
+        el.className = 'price ' + ((v.change_pct||0)>0?'up':(v.change_pct||0)<0?'down':'flat');
+      });
+    }
+  }catch(e){}
+}
+function addCurrentToIndexBar(){
+  if(!store.selected) return;
+  const s = store.selected;
+  if(document.getElementById('prc_'+s.code)) { toast('已在导航栏中'); return; }
+  const lastGroup = document.querySelector('.idx-group:last-child');
+  const it = {ticker:s.code, type:s.type, name:s.name, price:'─'};
+  const div = document.createElement('div');
+  div.className = 'idx-item'; div.draggable = true;
+  div.dataset.sym = JSON.stringify(it);
+  div.innerHTML = '<span class="name">'+escHtml(s.name)+'</span><span class="price flat" id="prc_'+s.code+'">─</span><span class="idx-del" onclick="delIdxItem(event,this)">✕</span>';
+  div.onclick = function(){clickIdxItem(this);};
+  lastGroup.appendChild(div);
+  toast('已添加到导航栏');
+}
+renderIndexBar();
+setInterval(refreshIdxPrices, 30000);
+setTimeout(refreshIdxPrices, 1000);
+
+// ===== 6. 信号 =====
+async function loadSignals(code){
+  const list=document.getElementById('signal-list');
+  try{
+    const r=await fetch(API+'/api/signals/'+code);const s=await r.json();
+    let h='';
+    Object.entries(s).forEach(([sk,sigs])=>{
+      if(!Array.isArray(sigs))return;
+      sigs.slice(-5).forEach(sg=>{
+        const c=(sg.type||'').toLowerCase().includes('sos')?'buy':'sell';
+        h+='<div class="signal-row"><span class="signal-date">'+(sg.date||'').slice(5)+'</span><span class="signal-badge '+c+'">'+(sg.type||'?')+'</span>'+(sg.note||'')+'</div>';
+      });
+    });
+    list.innerHTML=h||'<span style="color:#434651">暂无信号</span>';
+  }catch(e){list.innerHTML='<span style="color:#ef5350">加载失败</span>';}
+}
+
+// ===== 7. AI 技能（双向集成：按钮→API调用→AI结论回写面板） =====
+// 预置默认技能
+const _defaultSkills = [
+  {
+    id: 'default_bar_analysis',
+    name: '逐K量价分析',
+    label: '逐K量价分析(威科夫)',
+    prompt: '请对{name}({code})进行逐K量价分析。\n要求：\n1. 逐根分析最近20根日K线\n2. 标注WRB长柱和NR短柱\n3. 识别威科夫关键事件（SC/BC/SOS/JOC/SOW/Spring等）\n4. 判断当前市场阶段（吸筹/上涨/派发/下跌）\n5. 给出支撑/阻力价位\n6. 评估趋势健康度',
+    workbuddy: '逐K分析器'
+  },
+  {
+    id: 'default_top_warning',
+    name: '顶部预警',
+    label: '顶部预警',
+    prompt: '请对{name}({code})进行顶部预警分析。\n要求：\n1. 检查是否存在派发迹象（BC/ST/UT/SOW等）\n2. 评估顶部形成的概率\n3. 如果正在派发，估算下跌目标\n4. 给出止损价位建议',
+    workbuddy: '量价顶部预警'
+  },
+  {
+    id: 'default_bottom_confirm',
+    name: '底部确认',
+    label: '底部确认',
+    prompt: '请对{name}({code})进行底部确认分析。\n要求：\n1. 检查是否存在吸筹迹象（SC/ST/SOS/JOC/Spring等）\n2. 评估底部形成的概率\n3. 如果正在吸筹，估算上涨目标\n4. 给出入场价位建议',
+    workbuddy: '量价底部确认'
+  }
+];
+
+function ensureDefaultSkills(){
+  // 读取已保存的技能
+  let saved = [];
+  try{
+    const raw = localStorage.getItem('ai_skills');
+    if(raw) saved = JSON.parse(raw) || [];
+  }catch(e){ saved = []; }
+  
+  // 合并：保留用户自定义技能，补充缺失的预置技能
+  const existingIds = new Set(saved.map(s => s.id));
+  let modified = false;
+  for(const ds of _defaultSkills){
+    if(!existingIds.has(ds.id)){
+      saved.push(ds);
+      modified = true;
+    }
+  }
+  // 如果没有保存任何技能，使用全部预置技能
+  if(saved.length === 0){
+    saved = [..._defaultSkills];
+    modified = true;
+  }
+  store._skills = saved;
+  if(modified){
+    try{ localStorage.setItem('ai_skills', JSON.stringify(store._skills)); }catch(e){}
+  }
+}
+
+function renderSkills(){
+  const list=document.getElementById('skill-list');
+  let h='<div style="padding:4px 10px;font-size:10px;color:#434651;border-bottom:1px solid #1e2230">点击技能→自动分析→结论回写面板</div>';
+  store._skills.forEach(s=>{
+    h+='<div class="skill-item"><span class="skill-label">'+escHtml(s.label)+'</span><button class="skill-btn" data-sid="'+escAttr(s.id||'')+'" data-prompt="'+escAttr(s.prompt)+'" data-wb="'+escAttr(s.workbuddy||'')+'"><span class="skill-btn-text">'+escHtml(s.name||s.label)+'</span><span class="skill-status"></span></button></div>';
+  });
+  if(!store._skills.length)h='<div style="padding:8px 10px;font-size:11px;color:#434651">暂无技能，点击＋从市场添加</div>';
+  list.innerHTML=h;
+  list.querySelectorAll('.skill-btn').forEach(b=>b.onclick=function(){
+    if(!store.selected){toast('请先选择板块或个股');return;}
+    triggerAiAnalysis(this, store.selected);
+  });
+}
+
+// 触发AI分析：调用面板后端 → 后端推SSE → 前端监听并回写结论
+async function triggerAiAnalysis(btn, board){
+  const sid = btn.dataset.sid || ('sk_'+Date.now());
+  const prompt = btn.dataset.prompt;
+  const wbSkill = btn.dataset.wb;
+  btn.classList.add('analyzing');
+  btn.querySelector('.skill-status').textContent='⏳';
+  try{
+    const r = await fetch(API+'/mcp/call', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tool:'trigger_ai_analysis', arguments:{
+        board_code: board.code, board_name: board.name, board_type: board.type,
+        skill_id: sid, skill_name: wbSkill || board.name,
+        prompt_template: prompt, callback_id: ''
+      }})
+    });
+    const j = await r.json();
+    if(j.prompt){
+      try{ await navigator.clipboard.writeText(j.prompt); toast('已复制分析prompt，粘贴到WorkBuddy'); }catch(e){}
+    }
+    waitForAiResult(board.code, sid);
+  }catch(e){
+    btn.classList.remove('analyzing');
+    btn.querySelector('.skill-status').textContent='❌';
+    toast('触发失败: '+e.message);
+  }
+}
+
+// 等待AI分析结果
+let _aiWaiting = {};
+function waitForAiResult(code, skillId){
+  const key = code+':'+skillId;
+  const panel = document.getElementById('ai-result-panel');
+  const content = document.getElementById('ai-result-content');
+  panel.style.display='block';
+  content.innerHTML='<div style="padding:8px;color:#f39c12;font-size:11px">🔄 AI 分析中...</div>';
+  let tries = 0;
+  const poll = setInterval(async()=>{
+    tries++;
+    if(tries > 30){ clearInterval(poll); content.innerHTML+='<div style="color:#ef5350;font-size:10px">超时未收到结果</div>'; return; }
+    try{
+      const r = await fetch(API+'/api/ai/result/'+code);
+      const j = await r.json();
+      if(j.summary){
+        clearInterval(poll);
+        renderAiResult(j);
+        document.querySelectorAll('.skill-btn').forEach(b=>{
+          if(b.dataset.sid===skillId){ b.classList.remove('analyzing'); b.classList.add('done'); b.querySelector('.skill-status').textContent='✅'; }
+        });
+      }
+    }catch(e){}
+  }, 2000);
+  _aiWaiting[key] = poll;
+}
+
+// SSE推送的AI结果直接渲染
+function renderAiResultAiEvent(data){
+  const result = typeof data === 'string' ? JSON.parse(data) : data;
+  renderAiResult(result);
+  document.querySelectorAll('.skill-btn').forEach(b=>{
+    if(b.dataset.sid===result.skill_id){
+      b.classList.remove('analyzing'); b.classList.add('done');
+      b.querySelector('.skill-status').textContent='✅';
+    }
+  });
+}
+
+// 渲染AI结论到右侧面板
+function renderAiResult(r){
+  const panel = document.getElementById('ai-result-panel');
+  const content = document.getElementById('ai-result-content');
+  if(!r || !r.summary){ return; }
+  panel.style.display='block';
+  const dir = r.direction || 'neutral';
+  const dirLabel = dir==='bullish'?'看涨🐂':dir==='bearish'?'看跌🐻':'中性➡️';
+  const confidence = Math.round((r.confidence||0.5)*100);
+  let h = '';
+  h += '<div style="margin-bottom:6px"><span class="ai-result-direction '+dir+'">'+dirLabel+'</span><span class="ai-result-confidence">置信度 '+confidence+'%</span></div>';
+  h += '<div class="ai-result-summary">'+escHtml(r.summary)+'</div>';
+  if((r.key_levels && (r.key_levels.support?.length || r.key_levels.resistance?.length)) || (r.annotations && r.annotations.length)){
+    h += '<div class="ai-result-levels">';
+    if(r.key_levels){
+      if(r.key_levels.support?.length) h += '<div class="ai-level-box support">支撑<br><b>'+r.key_levels.support.join(', ')+'</b></div>';
+      if(r.key_levels.resistance?.length) h += '<div class="ai-level-box resistance">阻力<br><b>'+r.key_levels.resistance.join(', ')+'</b></div>';
+    }
+    h += '</div>';
+  }
+  if(r.operation && r.operation.suggestion){
+    h += '<div class="ai-result-operation"><b>操作建议:</b> '+escHtml(r.operation.suggestion);
+    if(r.operation.entry) h += '<br>入场: ¥'+r.operation.entry;
+    if(r.operation.stop_loss) h += ' | 止损: ¥'+r.operation.stop_loss;
+    if(r.operation.target) h += ' | 目标: ¥'+r.operation.target;
+    h += '</div>';
+  }
+  if(r.risk_warning){
+    h += '<div class="ai-result-risk">⚠️ '+escHtml(r.risk_warning)+'</div>';
+  }
+  if(r.annotations && r.annotations.length){
+    h += '<div style="margin-top:6px;font-size:10px;color:#787b86">已标注 '+r.annotations.length+' 个信号到K线图</div>';
+  }
+  content.innerHTML=h;
+  const sp=document.getElementById('skill-panel'); sp.classList.add('expanded');
+  // 保存到历史
+  saveAnalysisRecord(r);
+  if(r.annotations && pro && pro.createOverlay){
+    drawAiAnnotations(r.annotations);
+  }
+}
+
+// 保存分析记录
+function saveAnalysisRecord(record){
+  record.id = 'ar_' + Date.now();
+  record.createdAt = new Date().toISOString();
+  _analysisHistory.unshift(record);
+  if(_analysisHistory.length > 50) _analysisHistory = _analysisHistory.slice(0, 50);
+  try{ localStorage.setItem(_historyKey, JSON.stringify(_analysisHistory)); }catch(e){}
+  renderAnalysisHistory();
+}
+
+function clearAiResult(){
+  if(!store.selected) return;
+  fetch(API+'/api/ai/result/'+store.selected.code,{method:'POST'}).catch(()=>{});
+  document.getElementById('ai-result-panel').style.display='none';
+  if(pro && pro.removeOverlay){ pro.removeOverlay({name:'ai_signals'}); }
+}
+
+// K线图AI标注
+function drawAiAnnotations(annotations){
+  if(!pro || !pro.createOverlay) return;
+  const points = annotations.map(a => ({
+    timestamp: a.timestamp || (a.date ? new Date(a.date).getTime() : Date.now()),
+    value: a.price || a.value || 0,
+    text: a.note || a.type || '',
+    type: a.type || 'signal'
+  }));
+  try{
+    pro.removeOverlay({name:'ai_signals'});
+    pro.createOverlay({name:'ai_signals', points:points, styles:{color:'#f39c12',textColor:'#fff',size:6}});
+  }catch(e){ console.warn('createOverlay failed:', e); }
+}
+function showAddSkill(){
+  const box=document.getElementById('modal-box');
+  box.innerHTML='<h3>添加AI技能</h3>'+
+    '<label>技能名称 <input id="skill-name" style="width:100%;padding:6px;border:1px solid #2a2e39;border-radius:3px;background:#131722;color:#d1d4dc;font-size:12px" placeholder="如：逐K分析"/></label>'+
+    '<label>分析提示词 <textarea id="skill-prompt" rows="4" style="width:100%;padding:6px;border:1px solid #2a2e39;border-radius:3px;background:#131722;color:#d1d4dc;font-size:11px" placeholder="支持 {name} {code} 变量，如：请分析{name}板块({code})的走势和信号"></textarea></label>'+
+    '<label>关联WorkBuddy技能 <input id="skill-workbuddy" style="width:100%;padding:6px;border:1px solid #2a2e39;border-radius:3px;background:#131722;color:#d1d4dc;font-size:12px" placeholder="如：量价顶部预警（留空则仅复制提示词）"/></label>'+
+    '<div><button class="modal-btn" onclick="doAddSkill()">添加</button><button class="modal-btn" style="margin-left:8px;background:#434651;border-color:#434651" onclick="closeModal()">取消</button></div>';
+  showModal();
+}
+function doAddSkill(){
+  const name=document.getElementById('skill-name').value.trim();
+  const prompt=document.getElementById('skill-prompt').value.trim()||'请分析{name}板块({code})';
+  const wb=document.getElementById('skill-workbuddy').value.trim();
+  if(!name){toast('请输入技能名称');return;}
+  const id='sk_'+Date.now();
+  store._skills.push({id:id, name:name, label:name+(wb?'('+wb+')':''), prompt:prompt.replace('{name}','{name}').replace('{code}','{code}'), workbuddy:wb});
+  localStorage.setItem('ai_skills',JSON.stringify(store._skills));
+  renderSkills();closeModal();toast('已添加技能: '+name);
+}
+// WorkBuddy Hook 可用性检测
+async function detectWorkBuddyHook(){
+  try{
+    // 尝试调用 WorkBuddy Hook 配置检测端点
+    // WorkBuddy Hooks 通过 HTTP 推送到面板的 /api/ai/result
+    // 这里检测本地5000端口是否可达（实际部署时WorkBuddy和面板在同一台机器）
+    const r = await fetch('/api/health', {method:'GET'});
+    if(r.ok){
+      console.log('[WorkBuddy] 面板运行正常');
+      // 尝试读取WorkBuddy配置文件中的hooks设置
+      try{
+        const hooksResp = await fetch('/api/hooks/status', {method:'GET'});
+        if(hooksResp.ok){
+          const hooksData = await hooksResp.json();
+          if(hooksData.hook_url){
+            console.log('[WorkBuddy] Hook目标:', hooksData.hook_url);
+            return { available: true, hookUrl: hooksData.hook_url };
+          }
+        }
+      }catch(e){}
+      return { available: true, hookUrl: null };
+    }
+  }catch(e){
+    console.warn('[WorkBuddy] 面板连接失败:', e);
+  }
+  return { available: false, hookUrl: null };
+}
+
+// 分析历史记录
+function loadAnalysisHistory(){
+  try{
+    const s = localStorage.getItem(_historyKey);
+    _analysisHistory = s ? JSON.parse(s) : [];
+  }catch(e){ _analysisHistory = []; }
+}
+
+function renderAnalysisHistory(){
+  const container = document.getElementById('ai-history-list');
+  if(!container) return;
+  if(_analysisHistory.length === 0){
+    container.innerHTML = '<div style="padding:6px 10px;color:#434651;font-size:11px">暂无分析记录</div>';
+    return;
+  }
+  let h = '<div style="font-size:9px;color:#434651;margin-bottom:4px">最近分析: ' + _analysisHistory.length + '条</div>';
+  _analysisHistory.slice(0, 10).forEach(r => {
+    const dir = r.direction || 'neutral';
+    const dirIcon = dir === 'bullish' ? '🐂' : dir === 'bearish' ? '🐻' : '➡️';
+    const conf = Math.round((r.confidence || 0) * 100);
+    h += '<div class="ai-history-item" style="padding:4px 10px;border-bottom:1px solid #1e2230;cursor:pointer" onclick="replayAnalysisRecord(\''+r.id+'\')">'+
+      '<span style="font-size:10px">'+dirIcon+' '+r.board_name+'</span>'+
+      '<span style="font-size:9px;color:#787b86;float:right">'+r.createdAt.slice(5,16)+'</span>'+
+      '<span style="font-size:9px;color:'+(dir==='bullish'?'#ef5350':dir==='bearish'?'#26a69a':'#787b86')+'">'+conf+'%</span>'+
+      '</div>';
+  });
+  container.innerHTML = h;
+}
+
+function replayAnalysisRecord(id){
+  const record = _analysisHistory.find(r => r.id === id);
+  if(!record) return;
+  // 重新渲染结论
+  renderAiResult(record);
+  // 如果有K线数据，加载对应板块
+  if(record.board_code && store.selected && store.selected.code === record.board_code){
+    drawAiAnnotations(record.annotations || []);
+  }
+}
+
+// ===== 搜索相关变量定义（不重复声明，在顶部已定义） =====
+let _searchIndex = [];
+
+// ===== 8. 增强搜索（个股+指数+板块，拼音匹配，搜索历史） =====
+
+// 搜索历史（localStorage）
+const _searchHistoryKey = 'board_app_search_history';
+let _searchHistory = [];
+
+function loadSearchHistory(){
+  try{
+    const s = localStorage.getItem(_searchHistoryKey);
+    _searchHistory = s ? JSON.parse(s) : [];
+  }catch(e){ _searchHistory=[]; }
+}
+function saveSearchHistory(){
+  try{
+    localStorage.setItem(_searchHistoryKey, JSON.stringify(_searchHistory.slice(0,30)));
+  }catch(e){}
+}
+function addSearchHistory(code, name, type, category){
+  _searchHistory = _searchHistory.filter(h => h.code !== code);
+  _searchHistory.unshift({code, name, type, category, time: Date.now()});
+  _searchHistory = _searchHistory.slice(0,30);
+  saveSearchHistory();
+}
+
+// 类型颜色/标签映射
+const _typeStyles = {
+  'stock':    {color:'#26a69a', label:'个股'},
+  'index':    {color:'#42a5f5', label:'指数'},
+  'hk_index': {color:'#7e57c2', label:'港股'},
+  'industry': {color:'#ff7043', label:'行业'},
+  'concept':  {color:'#ffb74d', label:'概念'},
+};
+
+// 类型 → datafeed type 映射
+function searchTypeToFeedType(type){
+  return type || 'index';
+}
+
+// 类型 → selectBoard 所需 type
+function searchTypeToBoardType(type, code){
+  if(type === 'stock') return 'stock';
+  if(type === 'hk_index') return 'hk_index';
+  if(type === 'index') return 'index';
+  // BK代码的板块
+  if(code && code.startsWith('BK')) return type || 'concept';
+  return type || 'concept';
+}
+
+const si=document.getElementById('search-input'), sr=document.getElementById('search-results');
+let sIdx=-1, _searchTimer=null;
+
+// 渲染搜索项 HTML
+function renderSearchItem(item, i){
+  const ts = _typeStyles[item.type] || {color:'#787b86', label:item.category||'其它'};
+  const dc = item.display_code || item.code;
+  return '<div class="search-item" data-idx="'+i+'">'+
+    '<span class="search-tag" style="background:'+ts.color+'20;color:'+ts.color+';border:1px solid '+ts.color+'40">'+ts.label+'</span>'+
+    '<span class="search-name">'+escHtml(item.name)+'</span>'+
+    '<span class="search-code">'+escHtml(dc)+'</span>'+
+    '<span class="search-pinyin" style="color:#434651;font-size:10px;margin-left:auto">'+escHtml(item.initials||'')+'</span>'+
+    '</div>';
+}
+
+// 渲染搜索历史
+function renderSearchHistory(){
+  loadSearchHistory();
+  if(!_searchHistory.length) return '';
+  return '<div class="search-history-header">最近搜索</div>'+
+    _searchHistory.slice(0,8).map((h,i) => {
+      const ts = _typeStyles[h.type] || {color:'#787b86', label:h.category||'其它'};
+      return '<div class="search-item search-history-item" data-history="'+i+'">'+
+        '<span class="search-tag" style="background:'+ts.color+'20;color:'+ts.color+';border:1px solid '+ts.color+'40">'+ts.label+'</span>'+
+        '<span class="search-name">'+escHtml(h.name)+'</span>'+
+        '<span class="search-code">'+escHtml(h.display_code||h.code)+'</span>'+
+        '<span style="color:#434651;font-size:10px;margin-left:auto">⌛</span></div>';
+    }).join('');
+}
+
+si.onfocus = function(){
+  if(!si.value.trim()){
+    // 显示搜索历史
+    sr.innerHTML = renderSearchHistory();
+    if(_searchHistory.length) sr.classList.add('show');
+    else sr.classList.remove('show');
+  }
+};
+
+si.oninput = function(){
+  const q = si.value.trim();
+  if(!q){
+    sr.innerHTML = renderSearchHistory();
+    if(_searchHistory.length) sr.classList.add('show');
+    else sr.classList.remove('show');
+    sIdx = -1;
+    return;
+  }
+  
+  // 清除旧定时器
+  if(_searchTimer) clearTimeout(_searchTimer);
+  
+  // 防抖 150ms
+  _searchTimer = setTimeout(async () => {
+    try {
+      // 构建历史code列表用于置顶
+      const historyCodes = _searchHistory.map(h => h.code).join(',');
+      const r = await fetch(API+'/api/search?q='+encodeURIComponent(q)+
+        (historyCodes ? '&history='+encodeURIComponent(historyCodes) : ''));
+      const resp = await r.json();
+      const matches = resp.data || [];
+      
+      if(!matches.length){
+        sr.innerHTML = '<div style="padding:10px;color:#434651;font-size:11px;text-align:center">无匹配结果</div>';
+        sr.classList.add('show');
+        sIdx = -1;
+        window._sm = [];
+        return;
+      }
+      
+      sr.innerHTML = matches.map((m,i) => renderSearchItem(m,i)).join('');
+      sr.classList.add('show');
+      sIdx = -1;
+      window._sm = matches;
+    } catch(e) {
+      console.warn('[搜索] 请求失败:', e);
+      sr.classList.remove('show');
+    }
+  }, 150);
+};
+
+function searchPick(i){
+  const items = window._sm;
+  if(!items || i < 0 || i >= items.length) return;
+  const m = items[i];
+  if(!m) return;
+  
+  // 记录搜索历史
+  addSearchHistory(m.code, m.name, m.type, m.category);
+  
+  // 加载对应数据
+  const boardType = searchTypeToBoardType(m.type, m.code);
+  selectBoard(m.name, m.code, boardType, null);
+  sr.classList.remove('show');
+  si.value = '';
+}
+
+// 点击历史项
+function searchPickHistory(i){
+  loadSearchHistory();
+  const h = _searchHistory[i];
+  if(!h) return;
+  const boardType = searchTypeToBoardType(h.type, h.code);
+  selectBoard(h.name, h.code, boardType, null);
+  sr.classList.remove('show');
+  si.value = '';
+}
+
+// 委托点击事件（搜索项和历史项）
+sr.addEventListener('mousedown', function(e){
+  const item = e.target.closest('.search-item');
+  if(!item) return;
+  const idx = item.dataset.idx;
+  const histIdx = item.dataset.history;
+  if(idx !== undefined) searchPick(parseInt(idx));
+  else if(histIdx !== undefined) searchPickHistory(parseInt(histIdx));
+});
+
+si.onkeydown = function(e){
+  const items = sr.querySelectorAll('.search-item');
+  if(!sr.classList.contains('show') || items.length === 0) return;
+  
+  if(e.key === 'ArrowDown'){
+    e.preventDefault();
+    if(sIdx < items.length - 1){
+      if(sIdx >= 0) items[sIdx].classList.remove('selected');
+      sIdx++;
+      items[sIdx].classList.add('selected');
+      const t = items[sIdx].offsetTop, bh = sr.clientHeight;
+      if(t + items[sIdx].offsetHeight > sr.scrollTop + bh) sr.scrollTop = t + items[sIdx].offsetHeight - bh;
+      else if(t < sr.scrollTop) sr.scrollTop = t;
+    }
+  } else if(e.key === 'ArrowUp'){
+    e.preventDefault();
+    if(sIdx > 0){
+      items[sIdx].classList.remove('selected');
+      sIdx--;
+      items[sIdx].classList.add('selected');
+      const t = items[sIdx].offsetTop;
+      if(t < sr.scrollTop) sr.scrollTop = t;
+      else if(t + items[sIdx].offsetHeight > sr.scrollTop + sr.clientHeight)
+        sr.scrollTop = t + items[sIdx].offsetHeight - sr.clientHeight;
+    }
+  } else if(e.key === 'Enter'){
+    e.preventDefault();
+    if(sIdx >= 0 && items[sIdx]){
+      items[sIdx].click();
+    } else if(items.length > 0){
+      items[0].click();
+    }
+  } else if(e.key === 'Escape'){
+    sr.classList.remove('show');
+    si.blur();
+  }
+};
+
+document.addEventListener('click', function(e){
+  if(!e.target.closest('#search-wrap')) sr.classList.remove('show');
+});
+
+// 初始化搜索历史
+loadSearchHistory();
+
+// ==== SSE 自动刷新（数据更新+AI分析+防抖） ====
+(function(){
+  const es = new EventSource('/api/events');
+  let _sseRefreshTimer = null;
+  
+  // 数据更新
+  es.addEventListener('data_updated', () => {
+    console.log('[SSE] 数据已更新');
+    toast('数据已更新');
+    clearTimeout(_sseRefreshTimer);
+    _sseRefreshTimer = setTimeout(() => {
+      if (store.selected && pro && pro.setSymbol) {
+        pro.setSymbol({
+          ticker: store.selected.code, name: store.selected.name,
+          type: store.selected.type, market: 'A', priceCurrency: 'CNY'
+        });
+      }
+    }, 500);
+  });
+  
+  es.addEventListener('data_updating', () => { toast('数据更新中...'); });
+  
+  // AI分析开始
+  es.addEventListener('ai_analyzing', (e) => {
+    try{
+      const d = JSON.parse(e.data);
+      toast('AI开始分析: ' + d.board_name);
+      document.querySelectorAll('.skill-btn').forEach(b=>{
+        if(b.dataset.sid===d.skill_id){
+          b.classList.add('analyzing');
+          b.querySelector('.skill-status').textContent='⏳';
+        }
+      });
+    }catch(e){}
+  });
+  
+  // AI分析完成
+  es.addEventListener('ai_result', (e) => {
+    try{
+      const d = JSON.parse(e.data);
+      renderAiResult(d);
+    }catch(e){ console.warn('ai_result parse error:', e); }
+  });
+  
+  // 信号更新
+  es.addEventListener('signals_updated', (e) => {
+    try{
+      const d = JSON.parse(e.data);
+      if(store.selected && store.selected.code===d.board_code){
+        loadSignals(d.board_code);
+      }
+    }catch(e){}
+  });
+  
+  es.onerror = () => console.warn('[SSE] 连接断开');
+  setTimeout(() => { if (store.selected) checkDataFreshness(); }, 2000);
+})();
+
+// ==== 数据新鲜度检查 ====
+async function checkDataFreshness(){
+  if (!store.selected) return;
+  try {
+    const r = await fetch(API+'/api/kline/'+store.selected.type+'/'+store.selected.code
+      +'?name='+encodeURIComponent(store.selected.name)+'&period=daily');
+    const j = await r.json();
+    if (j.last_date) {
+      const today = new Date();
+      const lastDate = new Date(j.last_date);
+      const diffDays = (today - lastDate) / 86400000;
+      if (diffDays > 3) {
+        toast('⚠️ 数据可能已过期（最后更新：'+j.last_date+'）');
+      } else if (j.last_date !== today.toISOString().slice(0,10) && today.getHours() >= 15) {
+        // 交易日已收盘但数据不是今天的，提示刷新
+        showToastBar('数据可能不是最新的，点击 <a href="#" onclick="forceRefresh()">强制刷新</a>');
+      }
+    }
+  } catch(e) {}
+}
+
+// ==== 强制刷新 ====
+function forceRefresh(){
+  closeCtx();
+  toast('正在强制刷新...');
+  fetch(API+'/api/update/force', {method:'POST'})
+    .then(r=>r.json())
+    .then(j=>{
+      if(j.ok) toast('全量更新已触发，请等待完成');
+      document.getElementById('refresh-btn') && (document.getElementById('refresh-btn').disabled = false);
+    })
+    .catch(()=>toast('触发失败'));
+}
+
+// 在工具栏添加刷新按钮
+(function(){
+  const tb = document.getElementById('toolbar');
+  if(!tb) return;
+  const btn = document.createElement('button');
+  btn.id = 'refresh-btn';
+  btn.innerHTML = '↻';
+  btn.title = '强制刷新数据';
+  btn.style.cssText = 'padding:0 8px;border:none;background:transparent;color:#787b86;font-size:14px;cursor:pointer;flex-shrink:0';
+  btn.onclick = forceRefresh;
+  btn.onmouseover = function(){this.style.color='#d1d4dc'};
+  btn.onmouseout = function(){this.style.color='#787b86'};
+  tb.appendChild(btn);
+})();
+
+// ===== 9. 分割条 =====
+let drg=false;
+document.getElementById('splitter').onmousedown=e=>{drg=true;e.preventDefault();};
+document.onmousemove=e=>{if(!drg)return;const w=Math.max(200,Math.min(400,e.clientX));document.getElementById('nav-panel').style.width=w+'px';};
+document.onmouseup=()=>{drg=false;};
+
+// ===== 10. 弹窗 =====
+function showModal(){document.getElementById('modal-overlay').classList.add('show');}
+function closeModal(){document.getElementById('modal-overlay').classList.remove('show');}
+document.getElementById('modal-overlay').addEventListener('click',function(e){if(e.target===this)closeModal();});
+
+// ===== 11. Utils =====
+function escHtml(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
+function escAttr(s){return (s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');}
+
+// ===== 启动（分类 → 拼音索引 + 技能 + Pro 常驻） =====
+// 1. 注入预置技能
+ensureDefaultSkills();
+// 2. 渲染技能列表
+renderSkills();
+// 3. 加载分析历史
+loadAnalysisHistory();
+renderAnalysisHistory();
+// 4. 检测WorkBuddy Hook
+detectWorkBuddyHook();
+// 5. 加载分类
+loadClassification().then(() => {
+  console.log('[启动] 板块分类加载完成');
+});
+// 页面加载后立即初始化 Pro（常驻显示）
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(initPro, 100);
+});
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  setTimeout(initPro, 200);
+}
+// 页面加载后预加载第一个板块
+setTimeout(preloadFirstBoard, 500);
+</script>
+</body>
+</html>

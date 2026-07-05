@@ -1,0 +1,139 @@
+2026-07-03 22:27:19,117 [app] ============================================================
+2026-07-03 22:27:19,118 [app] AI炒股面板 v3.0
+2026-07-03 22:27:19,118 [app] ============================================================
+[OK] 依赖检查通过
+2026-07-03 22:27:19,118 [lifecycle] === 应用启动 ===
+2026-07-03 22:27:19,118 [lifecycle] [OK] 依赖检查通过
+2026-07-03 22:27:19,118 [lifecycle] [QMT] 验证标准客户端RPC(58600)...
+2026-07-03 22:27:19,121 [lifecycle] === 启动完成 ===
+[启动] http://127.0.0.1:5000
+ * Serving Flask app 'app'
+ * Debug mode: off
+2026-07-03 22:27:19,346 [werkzeug] [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-07-03 22:27:19,346 [werkzeug] [33mPress CTRL+C to quit[0m
+2026-07-03 22:27:19,996 [lifecycle] [QMT] ✓ 标准客户端RPC就绪（数据服务正常）
+2026-07-03 22:27:20,593 [rate_limiter] [代理] 检测完成: 0个可用
+2026-07-03 22:27:20,607 [proxy_bypass] [环境] 已清除系统代理环境变量
+2026-07-03 22:27:33,260 [proxy_bypass] [诊断] 推荐使用 无可用方案
+2026-07-03 22:27:33,260 [proxy_bypass] [诊断] 无可用网络方案
+2026-07-03 22:27:33,261 [root] [QMT] xtquant模块不存在于当前Python环境
+2026-07-03 22:27:33,261 [root] [QMT] ⚠️ QMT行情不可用，将使用SQLite缓存数据
+2026-07-03 22:27:33,261 [lifecycle] [预热] 预加载顶部指数...
+2026-07-03 22:27:33,274 [lifecycle] [预热] 上证指数 完成 (0.0s)
+2026-07-03 22:27:33,279 [lifecycle] [预热] 创业板指 完成 (0.0s)
+2026-07-03 22:27:33,282 [lifecycle] [预热] 科创50 完成 (0.0s)
+2026-07-03 22:27:33,287 [lifecycle] [预热] 沪深300 完成 (0.0s)
+2026-07-03 22:27:33,297 [lifecycle] [预热] 上证50 完成 (0.0s)
+2026-07-03 22:27:33,312 [lifecycle] [预热] 中证1000 完成 (0.0s)
+2026-07-03 22:27:33,315 [lifecycle] [预热] 中证2000 完成 (0.0s)
+2026-07-03 22:27:33,321 [lifecycle] [预热] 中证全指 完成 (0.0s)
+2026-07-03 22:27:33,334 [lifecycle] [预热] 恒生指数 完成 (0.0s)
+2026-07-03 22:27:33,337 [lifecycle] [预热] 恒生科技 完成 (0.0s)
+2026-07-03 22:27:33,338 [lifecycle] [预热] 微盘股 完成 (0.0s)
+2026-07-03 22:27:33,339 [lifecycle] [预热] 东方财富全A 完成 (0.0s)
+2026-07-03 22:27:41,111 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:27:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:27:41,374 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:27:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:27:44,064 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:27:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:28:12,051 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:28:12] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:28:14,084 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:28:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:28:41,116 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:28:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:28:44,038 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:28:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:29:06,903 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:29:06] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:29:11,026 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:29:11] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:29:14,043 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:29:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:29:37,015 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:29:37] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:29:41,410 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:29:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:29:44,056 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:29:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:30:07,142 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:30:07] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:30:12,273 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:30:12] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:30:14,073 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:30:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:30:37,265 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:30:37] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:30:42,103 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:30:42] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:30:44,065 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:30:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:31:07,409 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:31:07] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:31:12,683 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:31:12] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:31:14,051 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:31:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:31:37,533 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:31:37] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:31:41,901 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:31:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:31:44,048 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:31:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:32:07,663 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:32:07] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:32:10,824 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:32:10] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:32:14,070 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:32:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:32:37,801 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:32:37] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:32:41,195 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:32:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:32:44,063 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:32:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:33:07,928 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:33:07] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:33:11,024 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:33:11] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:33:14,075 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:33:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:33:38,043 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:33:38] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:33:41,377 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:33:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:33:44,075 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:33:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:34:08,163 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:34:08] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:34:11,166 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:34:11] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:34:14,055 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:34:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:34:38,297 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:34:38] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:34:41,607 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:34:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:34:44,073 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:34:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:35:08,419 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:35:08] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:35:12,378 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:35:12] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:35:14,078 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:35:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:35:38,544 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:35:38] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:35:41,691 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:35:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:35:44,077 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:35:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:36:08,660 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:36:08] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:36:11,449 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:36:11] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:36:14,030 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:36:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:36:38,790 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:36:38] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:36:41,508 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:36:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:36:44,057 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:36:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:37:08,905 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:37:08] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:37:11,560 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:37:11] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:37:14,070 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:37:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:37:39,023 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:37:39] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:37:41,531 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:37:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:37:44,059 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:37:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:38:09,137 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:38:09] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:38:11,772 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:38:11] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:38:14,051 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:38:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:38:39,255 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:38:39] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:38:42,358 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:38:42] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:38:44,060 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:38:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:39:09,357 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:39:09] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:39:11,737 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:39:11] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:39:14,064 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:39:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:39:39,464 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:39:39] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:39:41,331 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:39:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:39:44,068 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:39:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:40:09,571 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:40:09] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:40:12,388 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:40:12] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:40:14,053 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:40:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:40:39,701 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:40:39] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:40:41,217 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:40:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:40:44,064 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:40:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:41:09,840 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:41:09] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:41:11,133 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:41:11] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:41:14,068 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:41:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:41:39,968 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:41:39] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:41:41,321 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:41:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:41:44,050 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:41:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:42:10,072 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:42:10] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:42:10,630 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:42:10] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:42:14,050 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:42:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:42:35,007 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:42:35] "GET /api/board-cons/concept/BK0837 HTTP/1.1" 200 -
+2026-07-03 22:42:35,055 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:42:35] "GET /api/board-cons/concept/BK0615 HTTP/1.1" 200 -
+2026-07-03 22:42:35,068 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:42:35] "GET /api/board-cons/industry/BK1608 HTTP/1.1" 200 -
+2026-07-03 22:42:40,183 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:42:40] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:42:41,692 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:42:41] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:42:44,068 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:42:44] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:43:10,301 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:10] "GET /mcp/tools HTTP/1.1" 200 -
+2026-07-03 22:43:12,468 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:12] "GET /api/spot/indices HTTP/1.1" 200 -
+2026-07-03 22:43:14,074 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:14] "GET /api/spot/index/sh000853 HTTP/1.1" 200 -
+2026-07-03 22:43:36,712 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:36] "GET / HTTP/1.1" 200 -
+2026-07-03 22:43:36,775 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:36] "GET /api/health HTTP/1.1" 200 -
+2026-07-03 22:43:36,778 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:36] "GET /api/health HTTP/1.1" 200 -
+2026-07-03 22:43:36,795 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:36] "GET /api/hooks/status HTTP/1.1" 200 -
+2026-07-03 22:43:36,796 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:36] "GET /api/hooks/status HTTP/1.1" 200 -
+2026-07-03 22:43:36,909 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:36] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-07-03 22:43:37,973 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:37] "GET /api/kline/concept/BK1170?name=AI制药（医疗）&period=daily&timeout=15 HTTP/1.1" 200 -
+2026-07-03 22:43:38,885 [werkzeug] 127.0.0.1 - - [03/Jul/2026 22:43:38] "GET /api/board-changes HTTP/1.1" 200 -

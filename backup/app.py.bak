@@ -1,0 +1,1718 @@
+"""
+app.py - 板块K线分析面板 Flask 后端
+v2.0：集成数据更新管理器（定时更新/按需更新/状态追踪）
+"""
+import os
+import sys
+import json
+import secrets
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
+
+# 检测本地依赖文件
+from pathlib import Path
+BASE_DIR = Path(__file__).parent
+REQUIRED_FILES = [
+    BASE_DIR / 'data/行业板块K线数据',
+    BASE_DIR / 'data/概念板块K线数据',
+]
+os.chdir(BASE_DIR)
+
+def check_dependencies():
+    missing = [str(f) for f in REQUIRED_FILES if not f.exists()]
+    if missing:
+        print("[ERROR] 缺少必要文件/目录：")
+        for m in missing:
+            print(f"  x {m}")
+        print("请先运行 setup.bat 或手动复制数据文件夹")
+        sys.exit(1)
+    print("[OK] 依赖检查通过")
+
+check_dependencies()
+
+# 启动数据更新管理器（调度器 + 状态追踪）
+from data_update_manager import start_scheduler, update_all_today, update_stock_if_needed, get_update_status, is_today_updated, get_sse_events, is_stock_cached, add_stock_to_ledger, get_all_cached_stocks
+start_scheduler()  # 后台线程启动每日定时更新
+
+# ============================================================
+# 后台线程池 — 用于K线数据异步加载和缓存预热
+# ============================================================
+from concurrent.futures import ThreadPoolExecutor, Future
+import threading as _tlk
+
+_kline_executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix='kline_loader')
+_board_chg_cache = {}      # 板块涨跌幅缓存
+_board_chg_lock = _tlk.Lock()
+_bg_refresh_tasks = {}      # 正在刷新的任务（去重）
+_bg_refresh_lock = _tlk.Lock()
+
+def _get_board_changes_cached():
+    """获取缓存的板块涨跌幅（后台每60秒更新一次）"""
+    with _board_chg_lock:
+        if _board_chg_cache:
+            return _board_chg_cache.copy()
+    # 首次未缓存，快速返回空（后台加载）
+    _kline_executor.submit(_reload_board_changes)
+    return {}
+
+def _reload_board_changes():
+    """后台重新加载板块涨跌幅（增量式，仅读最后两行）"""
+    import os as _os, csv as _csv, re as _re
+    result = {}
+    base = _os.path.join(_os.path.dirname(__file__), 'data')
+    for dirname in ['行业板块K线数据', '概念板块K线数据']:
+        dtype = 'industry' if '行业' in dirname else 'concept'
+        d = _os.path.join(base, dirname)
+        if not _os.path.exists(d):
+            continue
+        for fn in _os.listdir(d):
+            if not fn.endswith('.csv'):
+                continue
+            m = _re.match(r'.+_(BK\d+)\.csv$', fn)
+            if not m:
+                continue
+            code = m.group(1)
+            try:
+                with open(_os.path.join(d, fn), 'r', encoding='utf-8') as f:
+                    # 只读最后两行，用seek跳到文件末尾
+                    f.seek(0, 2)
+                    size = f.tell()
+                    if size < 50:
+                        continue
+                    # 读取最后400字节（足够覆盖两行）
+                    f.seek(max(0, size - 400))
+                    lines = f.read().strip().split('\n')
+                    if len(lines) >= 3:
+                        reader = csv.DictReader(lines[-3:])
+                        rows = list(reader)
+                        if len(rows) >= 2:
+                            c0 = float(rows[-1]['收盘'])
+                            c1 = float(rows[-2]['收盘'])
+                            chg = round((c0 / c1 - 1) * 100, 2)
+                            result[f'{dtype}:{code}'] = chg
+            except:
+                pass
+    with _board_chg_lock:
+        _board_chg_cache.clear()
+        _board_chg_cache.update(result)
+
+# 后台预加载板块涨跌幅（每60秒更新）
+def _board_chg_refresher():
+    evt = _tlk.Event()
+    while True:
+        _reload_board_changes()
+        evt.wait(60)  # 每60秒刷新一次
+
+_tlk.daemon = True
+_bg_board_chg_thread = _tlk.daemon  # 标记
+_tlk.Thread(target=_board_chg_refresher, daemon=True).start()
+
+# 后台预加载顶部指数（启动时+今日未更新则拉取）
+import threading as _t
+
+def _prewarm_indices():
+    from data_loader import load_index_kline, load_hk_index_kline, load_board_kline
+    import time
+    if is_today_updated():
+        print("[预热] 今日已更新，跳过", flush=True)
+        return
+    print("[预热] 预加载顶部指数...", flush=True)
+    for code, name, typ in [
+        ('sh000001','上证指数','index'),('sz399006','创业板指','index'),
+        ('sh000688','科创50','index'),('sh000300','沪深300','index'),
+        ('sh000016','上证50','index'),('sh000852','中证1000','index'),
+        ('sh000853','中证2000','index'),('sh000985','中证全指','index'),
+        ('HSI','恒生指数','hk_index'),('HSTECH','恒生科技','hk_index'),
+        ('BK1158','微盘股','concept'),('800000','东方财富全A','index'),
+    ]:
+        try:
+            t0=time.time()
+            {'hk_index':lambda:load_hk_index_kline(code),
+             'concept':lambda:load_board_kline('concept',name,code)
+            }.get(typ,lambda:load_index_kline(code))()
+            print(f"[预热] {name} 完成 ({time.time()-t0:.1f}s)", flush=True)
+        except Exception as e:
+            print(f"[预热] {name} 失败: {e}", flush=True)
+
+_t.Thread(target=_prewarm_indices, daemon=True).start()
+
+# ====== QMT 行情服务启动 ======
+import qmt_bridge
+QMT_AVAILABLE = False
+
+def _start_qmt():
+    global QMT_AVAILABLE
+    # 1. 启动miniquote(58610) - 长连接心跳保持在线
+    print("[QMT] 初始化行情服务...", flush=True)
+    if not qmt_bridge.ensure_runtime():
+        print("[QMT] ✗ miniquote 启动失败", flush=True)
+    else:
+        print("[QMT] ✓ miniquote 就绪", flush=True)
+    
+    # 2. 验证RPC直连(58600)
+    import subprocess as _sp, json as _js, os as _os
+    qmt_py = r'D:\迅投极速策略交易系统交易终端 大同证券QMT实盘\bin.x64\python.exe'
+    qmt_dir = r'D:\迅投极速策略交易系统交易终端 大同证券QMT实盘\bin.x64'
+    try:
+        proc = _sp.run([qmt_py, '-c', 'from xtquant import xtdata;r=xtdata.rpc_init("127.0.0.1:58600");print("RPC="+str(r))'],
+                       capture_output=True, timeout=10, text=True, cwd=qmt_dir)
+        if 'RPC=0' in proc.stdout:
+            QMT_AVAILABLE = True
+            print("[QMT] ✓ RPC直连就绪", flush=True)
+            # 后台同步今日数据
+            _t.Thread(target=_qmt_sync_all, daemon=True).start()
+            return
+    except: pass
+    print("[QMT] ⚠️ 使用缓存数据", flush=True)
+
+_t.Thread(target=_start_qmt, daemon=True).start()
+
+# 启动miniquote心跳守护（每60秒轻量查询保持连接活性，防止进程退出）
+def _miniquote_heartbeat():
+    import time as _time
+    while True:
+        _time.sleep(60)
+        try:
+            from xtquant import xtdata as _xt
+            _xt.connect(port=58610); _xt.enable_hello = False
+            _xt.get_instrument_detail('000001.SH')
+        except: pass
+_t.Thread(target=_miniquote_heartbeat, daemon=True).start()
+
+
+def _qmt_sync_all():
+    """后台同步常用标的到SQLite"""
+    import subprocess as _sp, json as _js, sqlite3 as _sql, os
+    from pathlib import Path
+    qmt_py = r'D:\迅投极速策略交易系统交易终端 大同证券QMT实盘\bin.x64\python.exe'
+    qmt_dir = r'D:\迅投极速策略交易系统交易终端 大同证券QMT实盘\bin.x64'
+    today = __import__('pandas').Timestamp.now().strftime('%Y%m%d')
+    
+    targets = [
+        ('sh000001','000001.SH'),('sz399006','399006.SZ'),('sh000688','000688.SH'),
+        ('sh000300','000300.SH'),('sh000016','000016.SH'),('sh000852','000852.SH'),
+        ('sh000853','000853.SH'),('sh000985','000985.SH'),('HSI','HSI.HK'),
+        ('HSTECH','HSTECH.HK'),('600519','600519.SH'),('600036','600036.SH'),
+    ]
+    
+    for code, qmt_code in targets:
+        try:
+            script = (
+                "from xtquant import xtdata; import pandas as pd, json\n"
+                f"xtdata.rpc_init('127.0.0.1:58600')\n"
+                f"xtdata.download_history_data('{qmt_code}','1d','{today}','{today}')\n"
+                f"d=xtdata.get_local_data(['time','open','high','low','close','volume'],['{qmt_code}'],'1d','{today}','{today}',count=2)\n"
+                f"if '{qmt_code}' in d and d['{qmt_code}'] is not None and not d['{qmt_code}'].empty:\n"
+                " df=d['{qmt_code}'];r=[]\n"
+                " for i,row in df.iterrows():\n"
+                "  t=int(i)if isinstance(i,(int,float))and i>1e9 else 0\n"
+                "  ds=pd.to_datetime(t,unit='ms').strftime('%Y-%m-%d')if t>1e9 else str(i)[:10]\n"
+                "  r.append({'date':ds,'open':round(float(row['open']),2),'high':round(float(row['high']),2),'low':round(float(row['low']),2),'close':round(float(row['close']),2),'volume':int(float(row['volume']))})\n"
+                " print(json.dumps({'ok':True,'data':r}))\n"
+                "else:\n"
+                " print(json.dumps({'ok':False}))"
+            )
+            proc = _sp.run([qmt_py, '-c', script], capture_output=True, timeout=15, text=True, cwd=qmt_dir)
+            result = _js.loads(proc.stdout.strip()) if proc.stdout.strip() else {}
+            if result.get('ok') and result.get('data'):
+                conn = _sql.connect(str(Path('data')/'kline.db'))
+                for row in result['data']:
+                    conn.execute('INSERT OR REPLACE INTO kline (code,period,date,open,high,low,close,volume) VALUES (?,?,?,?,?,?,?,?)',
+                        (code,'daily',row['date'],row['open'],row['high'],row['low'],row['close'],row['volume']))
+                conn.commit(); conn.close()
+        except: pass
+
+# 启动端口管理
+from port_manager import acquire_port
+port = acquire_port(5000)
+
+# Flask 应用
+app = Flask(__name__, static_folder='static')
+app.config['SECRET_KEY'] = secrets.token_hex(32)
+app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1MB
+CORS(app)
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+# --- 数据接口 ---
+
+from data_loader import *
+from data_loader import load_board_kline, load_stock_data, load_stock_kline, load_index_kline, load_hk_kline, load_hk_index_kline
+from data_loader import get_spot_board, get_spot_index, get_spot_stock
+
+# ---- 综合缓存管理（进程安全+健康监控+自动清理） ----
+from cache_manager import g_cache, g_monitor, ProcessManager, CacheManager, warmup_cache
+
+# 进程管理：清理旧实例
+ProcessManager.kill_orphaned()
+ProcessManager.write_pid()
+ProcessManager.register_cleanup()
+
+# 别名
+_kline_cache = {}
+_kline_meta = {}  # 缓存元数据（last_date等）
+_KLINE_PENDING = {}  # 去重集合
+_KLINE_PENDING_LOCK = __import__('threading').Lock()
+
+def _get_cached_kline(key):
+    return g_cache.get(key)
+def _get_kline_meta(key):
+    return _kline_meta.get(key, {})
+def _set_cached_kline(key, data, last_date=''):
+    g_cache.set(key, data)
+    if last_date:
+        _kline_meta[key] = {'last_date': last_date, 'cached_at': __import__('datetime').datetime.now().strftime('%H:%M:%S')}
+def _pop_pending(key):
+    v = _KLINE_PENDING.pop(key, None)
+    if isinstance(v, _tlk.Event):
+        v.set()  # 通知其他等待线程
+
+
+# SQLite快速读取 + 后台AKShare刷新（防卡死）
+def _db_read_kline_safe(code, period, board_name=''):
+    """从SQLite快速读取板块数据"""
+    import sqlite3
+    conn = sqlite3.connect('data/kline.db')
+    try:
+        cur = conn.execute(
+            'SELECT date, open, high, low, close, volume FROM kline WHERE code=? AND period=? ORDER BY date',
+            (code, period))
+        rows = cur.fetchall()
+        if rows:
+            import pandas as pd
+            return pd.DataFrame(rows, columns=['date','open','high','low','close','volume'])
+    finally:
+        conn.close()
+    # SQLite无数据，回退load_board_kline
+    from data_loader import load_board_kline as _lbk
+    return _lbk('industry' if board_name else 'concept', board_name, code, period)
+
+
+def _bg_board_refresh(data_type, board_name, code, period, cache_key):
+    """后台线程：尝试AKShare更新（超时3秒），成功后刷新缓存+推SSE"""
+    import time as _bt
+    _bt.sleep(0.5)  # 先让主响应返回
+    btype = 'industry' if data_type == 'industry' else 'concept'
+    from data_loader import load_board_kline as _lbk
+    try:
+        df = _lbk(btype, board_name, code, period)
+        if df is not None and not df.empty:
+            from cache_manager import g_cache as _gc
+            data = _format_kline(df)
+            last_date = df['date'].max() if not df.empty else ''
+            _gc.set(cache_key, data)
+            d = df['date'].max() if not df.empty else ''
+            print(f"[后台刷新] {board_name}({code}) 完成, 末日期={d}")
+            # 如果当前正在显示这个板块，通知前端刷新
+            _notify_event('data_updated', f'{code}')
+    except Exception as e:
+        pass  # 静默失败，已有SQLite数据
+
+def _format_kline(df, from_ms=0, to_ms=0):
+    """格式化K线数据（from/to 参数保留但不使用，前端一次性加载全部）"""
+    return [{
+        'timestamp': int(pd.Timestamp(r['date']).timestamp() * 1000),
+        'open': float(r['open']), 'high': float(r['high']),
+        'low': float(r['low']), 'close': float(r['close']),
+        'volume': float(r['volume'])
+    } for _, r in df.iterrows()]
+
+
+# ---- QMT 多周期数据加载 ----
+import pandas as _pd
+
+def _qmt_code(code: str, data_type: str) -> str:
+    """面板代码 → QMT 代码"""
+    idx_map = {
+        'sh000001': '000001.SH', 'sz399006': '399006.SZ',
+        'sh000688': '000688.SH', 'sh000300': '000300.SH',
+        'sh000016': '000016.SH', 'sh000852': '000852.SH',
+        'sh000853': '000853.SH', 'sh000985': '000985.SH',
+        'HSI': 'HSI.HK', 'HSTECH': 'HSTECH.HK',
+    }
+    if code in idx_map:
+        return idx_map[code]
+    # 通用指数微代码映射：sh000510 → 000510.SH, sz399001 → 399001.SZ
+    if code.startswith('sh') and code[2:].isdigit() and len(code) == 8:
+        return f'{code[2:]}.SH'
+    if code.startswith('sz') and code[2:].isdigit() and len(code) == 8:
+        return f'{code[2:]}.SZ'
+    if code.startswith('bj') and code[2:].isdigit() and len(code) == 8:
+        return f'{code[2:]}.BJ'
+    if data_type == 'stock' and len(code) == 6:
+        return f'{code}.SH' if code.startswith(('6','9')) else f'{code}.SZ'
+    if data_type in ('hk', 'hk_index') and len(code) <= 5:
+        return f'{code}.HK'
+    return code
+
+def _load_qmt_kline(code: str, data_type: str, period: str):
+    """QMT subprocess(58610) - 支持日线和分钟线K线"""
+    qmt_code = _qmt_code(code, data_type)
+    minute_map = {'1m':'1m','5m':'5m','15m':'15m','30m':'30m','60m':'60m','120m':'120m','240m':'240m'}
+    today = _pd.Timestamp.now().strftime('%Y%m%d')
+    if period == 'daily':
+        qmt_period = '1d'; start = '20200101'; date_fmt = '%Y-%m-%d'
+    elif period in minute_map:
+        qmt_period = minute_map[period]
+        start = (_pd.Timestamp.now() - _pd.Timedelta(days=7)).strftime('%Y%m%d')
+        date_fmt = '%Y-%m-%d %H:%M'
+    else:
+        return _pd.DataFrame()
+    import subprocess as _sp, tempfile as _tf, os as _os
+    qmt_py = r'D:\迅投极速策略交易系统交易终端 大同证券QMT实盘\bin.x64\python.exe'
+    qmt_dir = r'D:\迅投极速策略交易系统交易终端 大同证券QMT实盘\bin.x64'
+    script_path = _os.path.join(_tf.gettempdir(), f'_qk_{code}_{period}.py')
+    script_content = (
+        "from xtquant import xtdata\n"
+        "import json,sys,os\n"
+        f"os.chdir(r'{qmt_dir}')\n"
+        "for port in ['58600','58610']:\n"
+        "    try: xtdata.rpc_init('127.0.0.1:'+port); break\n"
+        "    except: pass\n"
+        f"c=sys.argv[1]; p='{qmt_period}'; s='{start}'; e='{today}'\n"
+        "is_min = p != '1d'\n"
+        "xtdata.download_history_data(c,p,s,e)\n"
+        "raw=xtdata.get_local_data(['time','open','high','low','close','volume'],[c],p,s,e,count=-1)\n"
+        "if isinstance(raw,dict) and c in raw and raw[c] is not None and not raw[c].empty:\n"
+        "    df=raw[c]; r=[]\n"
+        "    for idx,row in df.iterrows():\n"
+        "        idx_int=int(idx) if isinstance(idx,(int,float)) else 0\n"
+        "        if is_min and idx_int>1e13:\n"
+        "            si=str(idx_int)\n"
+        "            dt=f'{si[:4]}-{si[4:6]}-{si[6:8]} {si[8:10]}:{si[10:12]}'\n"
+        "        elif idx_int>1e12:\n"
+        "            from pandas import to_datetime\n"
+        "            dt=str(to_datetime(idx_int,unit='ms').date())\n"
+        "        else:\n"
+        "            dt=str(idx)\n"
+        "        vol=int(float(row['volume']))\n"
+        "        if vol==0: continue\n"
+        "        r.append({'date':dt,'open':round(float(row['open']),2),'high':round(float(row['high']),2),'low':round(float(row['low']),2),'close':round(float(row['close']),2),'volume':vol})\n"
+        "    print(json.dumps(r,ensure_ascii=False))\n"
+        "else:\n"
+        "    print('[]')\n"
+    )
+    with open(script_path, 'w', encoding='utf-8') as f:
+        f.write(script_content)
+    proc = _sp.run([qmt_py, script_path, qmt_code], capture_output=True, timeout=30, cwd=qmt_dir)
+    out_str = proc.stdout.decode('utf-8', errors='ignore').strip()
+    if not out_str:
+        out_str = '[]'
+    import json as _js
+    data = _js.loads(out_str)
+    if data:
+        print(f"[QMT] {code}({qmt_code}) {period}: {len(data)}条")
+        return _pd.DataFrame(data)
+    return _pd.DataFrame()
+
+
+def _load_qmt_daily(code: str, data_type: str) -> _pd.DataFrame:
+    """通过 QMT 获取日线数据并缓存到 SQLite"""
+    qmt_code = _qmt_code(code, data_type)
+    try:
+        from xtquant import xtdata as _xt
+        import sqlite3 as _sql
+        from pathlib import Path as _P
+        _xt.download_history_data(qmt_code, period='1d',
+            start_time='20200101', end_time=_pd.Timestamp.now().strftime('%Y%m%d'))
+        raw = _xt.get_local_data(
+            field_list=['time','open','high','low','close','volume'],
+            stock_list=[qmt_code], period='1d',
+            start_time='20200101', end_time=_pd.Timestamp.now().strftime('%Y%m%d'), count=0)
+        if isinstance(raw, dict) and qmt_code in raw:
+            qdf = raw[qmt_code]
+            if qdf is not None and not qdf.empty:
+                records = []
+                for _, r in qdf.iterrows():
+                    ts = r.get('time', 0)
+                    ds = _pd.to_datetime(ts, unit='ms').strftime('%Y-%m-%d') if isinstance(ts, (int, float)) and ts > 1e12 else str(ts)[:10]
+                    records.append({
+                        'date': ds,
+                        'open': float(r.get('open',0)), 'high': float(r.get('high',0)),
+                        'low': float(r.get('low',0)), 'close': float(r.get('close',0)),
+                        'volume': float(r.get('volume',0))
+                    })
+                df = _pd.DataFrame(records)
+                if not df.empty:
+                    conn = _sql.connect(str(_P('data')/'kline.db'))
+                    for _, r in df.iterrows():
+                        conn.execute(
+                            'INSERT OR REPLACE INTO kline (code,period,date,open,high,low,close,volume) '
+                            'VALUES (?,?,?,?,?,?,?,?)',
+                            (code, 'daily', r['date'], r['open'], r['high'], r['low'], r['close'], r['volume']))
+                    conn.commit(); conn.close()
+                    print(f"[QMT] 已缓存 {code} 日线 {len(df)}条到SQLite")
+                return df
+    except Exception as e:
+        print(f"[QMT] {code} 日线加载失败: {e}")
+    return _pd.DataFrame()
+
+
+def _load_kline_with_resample(data_type: str, code: str, period: str, board_name: str = '') -> _pd.DataFrame:
+    """从日线重采样获取月/季/年线"""
+    try:
+        from data_loader import load_stock_kline, load_index_kline, load_hk_index_kline, _resample
+        import sqlite3 as _sql
+        from pathlib import Path as _P
+        # 加载日线
+        if data_type in ('industry', 'concept'):
+            df = _db_read_kline_safe(code, 'daily', board_name)
+        elif data_type == 'stock':
+            df = load_stock_kline(code, 'daily')
+            if df.empty and QMT_AVAILABLE:
+                df = _load_qmt_daily(code, data_type)
+        elif data_type == 'index':
+            df = load_index_kline(code, 'daily')
+            if df.empty and QMT_AVAILABLE:
+                df = _load_qmt_daily(code, data_type)
+        elif data_type == 'hk_index':
+            df = load_hk_index_kline(code, 'daily')
+            if df.empty and QMT_AVAILABLE:
+                df = _load_qmt_daily(code, data_type)
+        else:
+            df = _pd.DataFrame()
+        if not df.empty:
+            return _resample(df, period)
+        return df
+    except Exception as e:
+        print(f"[重采样] {code} {period} 失败: {e}")
+        return _pd.DataFrame()
+
+
+def _qmt_background_sync(code: str, data_type: str, _: str = ''):
+    """后台异步从 QMT 更新个股/指数日线数据到 SQLite（已废弃，现用主动下载）"""
+    pass
+
+
+def _load_from_loader(data_type, code, period, board_name=''):
+    """从现有 loader 读取（SQLite → 空则 QMT 回退）"""
+    df = _pd.DataFrame()
+    if data_type in ('industry', 'concept'):
+        df = _db_read_kline_safe(code, period, board_name)
+    elif data_type == 'stock':
+        df = load_stock_kline(code, period)
+        if df.empty and QMT_AVAILABLE:
+            df = _load_qmt_kline(code, data_type, period)
+    elif data_type == 'index':
+        df = load_index_kline(code, period)
+        if df.empty and QMT_AVAILABLE:
+            df = _load_qmt_kline(code, data_type, period)
+    elif data_type == 'hk':
+        df = load_hk_kline(code, period)
+    elif data_type == 'hk_index':
+        df = load_hk_index_kline(code, period)
+        if df.empty and QMT_AVAILABLE:
+            df = _load_qmt_kline(code, 'hk_index', period)
+    elif data_type == 'us':
+        df = _db_read_kline(code, period)
+        if df.empty:
+            try:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+                    future = _ex.submit(_fetch_us_index, code)
+                    df = future.result(timeout=5)
+            except:
+                pass
+        return df
+
+
+def _write_to_sqlite(code: str, df: _pd.DataFrame):
+    """将 QMT 拉取的数据写入 SQLite"""
+    if df.empty:
+        return
+    try:
+        import sqlite3 as _sql
+        from pathlib import Path as _P
+        conn = _sql.connect(str(_P('data') / 'kline.db'))
+        for _, r in df.iterrows():
+            conn.execute(
+                'INSERT OR REPLACE INTO kline (code,period,date,open,high,low,close,volume) '
+                'VALUES (?,?,?,?,?,?,?,?)',
+                (code, 'daily', r['date'], r['open'], r['high'], r['low'], r['close'], r['volume']))
+        conn.commit()
+        conn.close()
+        print(f"[QMT→SQLite] {code}: {len(df)}条, 最新{r['date']}")
+    except Exception as e:
+        print(f"[QMT→SQLite] {code} 写入失败: {e}")
+
+
+def _clear_kline_cache(data_type: str, code: str):
+    """清除 g_cache 中的日线缓存"""
+    g_cache.delete(f'{data_type}:{code}:daily')
+    _kline_meta.pop(f'{data_type}:{code}:daily', None)
+
+
+def _load_kline_data(data_type, code, period, board_name):
+    """在线程池中执行的实际数据加载逻辑"""
+    try:
+        minute_periods = {'1m', '5m', '15m', '30m', '60m', '120m', '240m'}
+        # 分钟级（指数+个股都走QMT）
+        if period in minute_periods and QMT_AVAILABLE:
+            df = _load_qmt_kline(code, data_type, period)
+            if df.empty and data_type in ('index', 'stock', 'hk_index'):
+                df = _load_qmt_kline(code, 'hk_index', period)
+            return df
+        elif data_type in ('stock', 'index', 'hk_index') and QMT_AVAILABLE and period == 'daily':
+            df = _load_qmt_kline(code, data_type, period)
+            if not df.empty:
+                _write_to_sqlite(code, df)
+                _clear_kline_cache(data_type, code)
+            else:
+                df = _load_from_loader(data_type, code, period, board_name)
+        elif data_type == 'us':
+            df = _load_from_loader(data_type, code, period, board_name)
+        elif period in ('weekly', 'monthly', 'quarterly', 'yearly') and data_type == 'stock':
+            df = _load_kline_with_resample(data_type, code, period, board_name)
+        elif period in ('quarterly', 'yearly'):
+            df = _load_kline_with_resample(data_type, code, period, board_name)
+        elif data_type in ('industry', 'concept'):
+            df = _load_from_loader(data_type, code, period, board_name)
+        else:
+            df = _load_from_loader(data_type, code, period, board_name)
+            if df.empty and QMT_AVAILABLE:
+                df = _load_qmt_kline(code, 'hk_index', period)
+        return df
+    except Exception as e:
+        print(f"[KLine] 后台加载失败 {data_type}:{code}: {e}")
+        return None
+
+@app.route('/api/kline/<data_type>/<code>')
+def get_kline(data_type, code):
+    """统一的K线数据接口（异步化 + 超时控制 + 缓存优先）"""
+    t_start = __import__('time').time()
+    board_name = request.args.get('name', '')
+    period = request.args.get('period', 'daily')
+    force = request.args.get('force', '').lower() == 'true'
+    timeout = float(request.args.get('timeout', '15'))  # 默认15秒超时
+    cache_key = f'{data_type}:{code}:{period}'
+
+    # 强制刷新
+    if force:
+        g_cache.delete(cache_key)
+        _kline_meta.pop(cache_key, None)
+
+    # 缓存命中 → 立即返回
+    cached = _get_cached_kline(cache_key)
+    if cached is not None:
+        meta = _get_kline_meta(cache_key)
+        elapsed = (__import__('time').time() - t_start) * 1000
+        print(f"[耗时] {data_type}:{code} 缓存命中 {elapsed:.0f}ms ({len(cached)}条)")
+        return jsonify({'data': cached, 'count': len(cached), 'cached': True,
+                        'last_date': meta.get('last_date',''), 'cached_at': meta.get('cached_at','')})
+
+    # 正在加载中 → 等待
+    if cache_key in _KLINE_PENDING:
+        # 等待已有任务完成（最多等10秒）
+        evt = _KLINE_PENDING[cache_key]
+        if isinstance(evt, _tlk.Event):
+            evt.wait(min(timeout, 10))
+            # 再次检查缓存
+            cached = _get_cached_kline(cache_key)
+            if cached is not None:
+                meta = _get_kline_meta(cache_key)
+                return jsonify({'data': cached, 'count': len(cached), 'cached': True,
+                                'last_date': meta.get('last_date','')})
+            # 超时仍未完成，返回loading状态让前端重试
+            return jsonify({'loading': True, 'message': '数据加载中，请稍后重试'}), 202
+
+    # 提交到线程池异步加载
+    evt = _tlk.Event()
+    _KLINE_PENDING[cache_key] = evt
+
+    future = _kline_executor.submit(_load_kline_data, data_type, code, period, board_name)
+
+    try:
+        df = future.result(timeout=timeout)
+        if df is None:
+            raise Exception("加载超时或失败")
+        data = _format_kline(df)
+        last_date = df['date'].max() if not df.empty else ''
+        _set_cached_kline(cache_key, data, last_date)
+        elapsed = (__import__('time').time() - t_start) * 1000
+        print(f"[耗时] {data_type}:{code} {period} 加载完成 {elapsed:.0f}ms ({len(data)}条)")
+        _pop_pending(cache_key)
+        return jsonify({'data': data, 'count': len(data), 'last_date': last_date,
+                        'today': datetime.now().strftime('%Y-%m-%d'),
+                        'range': f'{data[0]["timestamp"]}~{data[-1]["timestamp"]}' if data else ''})
+    except Exception as e:
+        _pop_pending(cache_key)
+        elapsed = (__import__('time').time() - t_start) * 1000
+        is_timeout = 'timeout' in str(e).lower() or 'TimeoutError' in type(e).__name__
+        print(f"[耗时] {data_type}:{code} {'超时' if is_timeout else '异常'} {elapsed:.0f}ms: {e}")
+        return jsonify({'error': str(e), 'timeout': is_timeout, 'data': [], 'count': 0}), 408 if is_timeout else 500
+
+
+
+# --- 缓存管理 & 系统监控 API ---
+
+@app.route('/api/cache/status')
+def cache_status():
+    """缓存状态监控"""
+    return jsonify(g_cache.status())
+
+
+@app.route('/api/cache/health')
+def cache_health():
+    """系统健康检查"""
+    return jsonify({
+        'cache': g_cache.health_check(),
+        'monitor': g_monitor.health(),
+        'process': {
+            'pid': os.getpid(),
+            'pid_file': str(ProcessManager.read_pid()),
+        }
+    })
+
+
+@app.route('/api/cache/clear', methods=['POST'])
+def cache_clear():
+    """手动清除缓存"""
+    count = g_cache.clear()
+    return jsonify({'ok': True, 'cleared': count})
+
+
+@app.route('/api/cache/clear/<data_type>/<code>', methods=['POST'])
+def cache_clear_key(data_type, code):
+    """清除单个缓存项"""
+    period = request.args.get('period', 'daily')
+    key = f'{data_type}:{code}:{period}'
+    g_cache.delete(key)
+    return jsonify({'ok': True, 'deleted': key})
+
+
+@app.route('/api/system/health')
+def system_health():
+    """全系统健康检查"""
+    result = {
+        'status': 'ok',
+        'time': __import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'uptime': '',
+        'cache': g_cache.health_check(),
+        'monitor': g_monitor.health(),
+        'alerts': g_monitor.get_alerts(),
+        'today_updated': is_today_updated(),
+        'update_status': get_update_status(),
+    }
+    return jsonify(result)
+
+
+@app.route('/api/system/restart', methods=['POST'])
+def system_restart():
+    """清缓存+重新预热（不重启进程）"""
+    from data_loader import load_index_kline, load_hk_index_kline, load_board_kline
+    g_cache.clear()
+    # 关键指数预热
+    for code, name, typ in [
+        ('sh000001','上证指数','index'),('sz399006','创业板指','index'),
+        ('sh000688','科创50','index'),('HSI','恒生指数','hk_index'),
+        ('HSTECH','恒生科技','hk_index'),('BK1158','微盘股','concept'),
+    ]:
+        loader = {'index': load_index_kline, 'hk_index': load_hk_index_kline}.get(typ, None)
+        if loader:
+            warmup_cache(code, typ, loader)
+    return jsonify({'ok': True, 'message': '缓存已清除，关键数据已预热'})
+
+# --- 个股数据管理接口（独立文件夹+增量更新+时间范围） ---
+
+@app.route('/api/stock/data/<code>')
+def get_stock_data(code):
+    """获取个股日K线数据"""
+    start = request.args.get('start', '')
+    end = request.args.get('end', '')
+    period = request.args.get('period', 'daily')
+    try:
+        df = load_stock_data(code, start, end)
+        data = _format_kline(df)
+        return jsonify({
+            'data': data,
+            'count': len(data),
+            'start': data[0]['time'] if data else '',
+            'end': data[-1]['time'] if data else '',
+            'source': 'local' if not df.empty else 'none'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'fallback': True}), 500
+
+# --- 数据更新管理接口（定时+按需+状态查询） ---
+
+@app.route('/api/update/status')
+def update_status():
+    """获取更新状态"""
+    return jsonify(get_update_status())
+
+
+@app.route('/api/update/boards', methods=['POST'])
+def trigger_board_update():
+    """手动触发全量板块更新"""
+    if request.is_json:
+        force = request.get_json().get('force', False)
+    else:
+        force = request.args.get('force', 'false').lower() == 'true'
+    
+    # 在后台线程执行，避免阻塞HTTP响应
+    import threading
+    def _run():
+        result = update_all_boards()
+        print(f"[手动更新] 结果: {result}", flush=True)
+    threading.Thread(target=_run, daemon=True).start()
+    
+    return jsonify({'ok': True, 'message': '板块更新任务已触发，请查看状态'})
+
+
+@app.route('/api/update/force', methods=['POST'])
+def trigger_force_update():
+    """强制刷新所有数据：清缓存+全量更新"""
+    import threading as _tfu
+    def _run():
+        from data_update_manager import update_all_today
+        import json as _jfu
+        g_cache.clear()
+        logger = __import__('logging').getLogger('data_update')
+        logger.info("[强制更新] 清空缓存，开始全量刷新")
+        _notify_event('data_updating', '强制全量更新')
+        
+        # 重置今日标记，迫使调度器重新拉取
+        from pathlib import Path as _Pfu
+        sf = _Pfu('data') / 'update_status.json'
+        if sf.exists():
+            with open(sf, 'r', encoding='utf-8') as _ffu:
+                st = _jfu.load(_ffu)
+            st['today'] = ''
+            with open(sf, 'w', encoding='utf-8') as _ffu:
+                _jfu.dump(st, _ffu, ensure_ascii=False, indent=2)
+        
+        result = update_all_today()
+        _notify_event('data_updated', '强制更新完成')
+        logger.info(f"[强制更新] 完成: {result}")
+    _tfu.Thread(target=_run, daemon=True).start()
+    return jsonify({'ok': True, 'message': '全量强制更新已触发'})
+
+
+@app.route('/api/update/stock/<code>', methods=['POST'])
+def trigger_stock_update(code):
+    """手动触发单只个股更新"""
+    ok = update_stock_if_needed(code, force=True)
+    return jsonify({'ok': ok, 'code': code})
+
+
+# --- SSE 事件推送（数据更新后通知前端刷新） ---
+
+import time as _sse_time
+
+@app.route('/api/events')
+def sse_event_stream():
+    """SSE endpoint：推送数据更新 + AI分析事件给前端"""
+    def event_stream():
+        last_idx = 0
+        while True:
+            # 数据更新事件
+            events, last_idx = get_sse_events(last_idx)
+            for ev in events:
+                yield f"event: {ev['type']}\ndata: {ev['message']}\n\n"
+            # AI事件（存储在模块变量中，由_notify_event写入_ai_sse_queue）
+            while _ai_sse_event_queue:
+                ai_ev = _ai_sse_event_queue.pop(0)
+                yield f"event: {ai_ev['type']}\ndata: {ai_ev['data']}\n\n"
+            _sse_time.sleep(1)  # AI事件用1秒间隔更快响应
+    from flask import Response
+    return Response(
+        event_stream(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+        }
+    )
+
+def _notify_event(typ, msg):
+    """推送事件到SSE系统（内部事件+前端AI队列）"""
+    # 内部事件
+    try:
+        log_file = BASE_DIR / 'data' / 'sse_events.log'
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(json.dumps({'type': typ, 'message': msg, 'time': datetime.now().strftime('%H:%M:%S')}, ensure_ascii=False) + '\n')
+    except:
+        pass
+    # AI事件入队（供SSE推送）
+    if typ in ('ai_analyzing', 'ai_result', 'signals_updated', 'data_updated'):
+        try:
+            with _ai_sse_event_lock:
+                _ai_sse_event_queue.append({'type': typ, 'data': msg})
+        except:
+            pass
+
+
+# --- 批量指数行情接口（导航栏用） ---
+
+@app.route('/api/spot/indices')
+def spot_indices():
+    from data_loader import get_spot_index, get_spot_board, get_spot_stock
+    result = {}
+    for code, typ in [
+        ('sh000001','index'),('sz399006','index'),('sh000688','index'),
+        ('sh000300','index'),('sh000016','index'),('sh000852','index'),
+        ('sh000853','index'),('HSI','hk_index'),('HSTECH','hk_index'),
+        ('BK1158','concept'),('800000','index'),
+        ('^N225','stock'),('^KS11','stock'),('^TWII','stock'),
+        ('SPX','stock'),('IXIC','stock'),('DJI','stock'),
+    ]:
+        try:
+            d = get_spot_index(code) if typ in ('index','hk_index') else \
+                get_spot_board('concept',code) if typ=='concept' else \
+                get_spot_stock(code)
+            if d: result[code] = {'price':d.get('price',0),'change_pct':d.get('change_pct',0)}
+        except: pass
+    return jsonify({'data':result})
+
+
+# --- 板块分类持久化（右键重分类后保存） ---
+
+CLASSIFICATION_SAVE = BASE_DIR / 'static' / 'board_classification_saved.json'
+
+@app.route('/api/classification/save', methods=['POST'])
+def save_classification():
+    """保存用户重分类后的板块数据"""
+    try:
+        data = request.get_json()
+        if not data or 'categories' not in data:
+            return jsonify({'error': 'invalid data'}), 400
+        with open(CLASSIFICATION_SAVE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/classification/load')
+def load_classification():
+    """加载用户保存的板块分类（优先），失败则返回静态文件"""
+    try:
+        if CLASSIFICATION_SAVE.exists():
+            with open(CLASSIFICATION_SAVE, 'r', encoding='utf-8') as f:
+                return jsonify(json.load(f))
+    except Exception:
+        pass
+    # 回退到原始分类
+    try:
+        with open(BASE_DIR / 'static' / 'board_classification.json', 'r', encoding='utf-8') as f:
+            return jsonify(json.load(f))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# --- 实时行情接口 ---
+
+@app.route('/api/spot/<data_type>/<code>')
+def get_spot(data_type, code):
+    """获取实时行情（板块/指数/个股）"""
+    try:
+        if data_type in ('industry', 'concept'):
+            data = get_spot_board(data_type, code)
+        elif data_type == 'index':
+            data = get_spot_index(code)
+        elif data_type == 'stock':
+            data = get_spot_stock(code)
+        else:
+            return jsonify({'error': 'invalid type'}), 400
+        return jsonify({'data': data})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/stock/search')
+def stock_search():
+    """搜索个股"""
+    q = request.args.get('q', '')
+    if not q:
+        return jsonify({'data': []})
+    return jsonify({'data': search_stock(q)})
+
+
+# --- 板块列表接口 ---
+
+import akshare as ak
+
+# 拼音首字母服务（后端实现，避免前端CDN依赖，已废弃，保留兼容）
+from pypinyin import lazy_pinyin, Style
+
+@app.route('/api/pinyin/all')
+def get_pinyin_all():
+    """拼音数据（已废弃，保留兼容）"""
+    return jsonify({})
+
+
+# ====== 增强搜索 API（个股+指数+板块，拼音匹配，搜索历史） ======
+
+_SEARCH_INDEX = None  # 内存缓存
+_SEARCH_INDEX_MTIME = 0
+
+def _load_search_index() -> dict:
+    """加载搜索索引（带文件修改时间缓存）"""
+    global _SEARCH_INDEX, _SEARCH_INDEX_MTIME
+    idx_file = BASE_DIR / 'static' / 'search_index.json'
+    if not idx_file.exists():
+        print("[搜索] 索引文件不存在，尝试构建...")
+        try:
+            from build_search_index import build_index_json
+            build_index_json()
+        except Exception as e:
+            print(f"[搜索] 构建索引失败: {e}")
+            return {}
+    mtime = idx_file.stat().st_mtime
+    if _SEARCH_INDEX is None or mtime > _SEARCH_INDEX_MTIME:
+        with open(idx_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        _SEARCH_INDEX = data.get('items', {})
+        _SEARCH_INDEX_MTIME = mtime
+        print(f"[搜索] 索引已加载: {len(_SEARCH_INDEX)} 条")
+    return _SEARCH_INDEX
+
+
+@app.route('/api/search')
+def api_search():
+    """
+    全市场搜索 API
+    ?q=PFYH   → 拼音首字母匹配
+    ?q=浦发    → 名称包含匹配
+    ?q=600000 → 代码匹配
+    返回排序后的结果列表
+    """
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({'data': []})
+
+    idx = _load_search_index()
+    if not idx:
+        return jsonify({'data': [], 'error': '索引未加载'})
+
+    q_upper = q.upper()
+
+    # 判断是否纯 ASCII 字母数字（拼音或代码搜索）
+    is_ascii = bool(q_upper and all(ord(c) < 128 and (c.isalnum() or c in '-.') for c in q_upper))
+    is_pinyin = is_ascii and bool(q_upper and all(c.isalpha() or c.isdigit() for c in q_upper))
+
+    results = []
+    # 搜索历史优先（由前端传参，后端不维护）
+    priority_codes = set()
+    priority_str = request.args.get('history', '')
+    if priority_str:
+        for c in priority_str.split(','):
+            priority_codes.add(c.strip())
+
+    for code, info in idx.items():
+        name = info.get('name', '')
+        initials = info.get('initials', [])
+        initials_str = ''.join(initials).upper()
+        code_upper = code.upper()
+
+        score = 0  # 匹配度分数
+
+        # 拼音首字母前缀匹配（仅对纯ASCII输入）
+        if is_pinyin and initials and len(q_upper) <= len(initials):
+            match = True
+            for i, ch in enumerate(q_upper):
+                if i >= len(initials) or not initials[i] or not initials[i].upper().startswith(ch):
+                    match = False
+                    break
+            if match:
+                score = 100 + len(initials) - len(q_upper)  # 前缀匹配优先
+
+        # 名称包含匹配（对中文/英文输入都有效）
+        if q_upper in name.upper():
+            # 名字越短、匹配位置越靠前，分数越高
+            pos = name.upper().index(q_upper)
+            score = max(score, 80 - pos * 2 - len(name) * 0.5)
+
+        # 完整拼音首字母匹配（允许中间跳过）
+        if is_pinyin and initials_str and q_upper in initials_str:
+            score = max(score, 60)
+
+        # 代码精确匹配（最高优先级）
+        if code_upper == q_upper:
+            score = 200
+        elif code_upper.startswith(q_upper):
+            score = max(score, 70)
+        elif q_upper in code_upper:
+            score = max(score, 30)
+
+        if score > 0:
+            # 搜索历史置顶
+            if code in priority_codes:
+                score += 1000
+            # 生成显示用代码
+            display_code = code
+            if code.startswith('sh') and len(code) == 8:
+                display_code = code[2:] + '.SH'
+            elif code.startswith('sz') and len(code) == 8:
+                display_code = code[2:] + '.SZ'
+            elif code.startswith('bj') and len(code) == 8:
+                display_code = code[2:] + '.BJ'
+            results.append({
+                'code': code,
+                'display_code': display_code,
+                'name': name,
+                'type': info.get('type', ''),
+                'category': info.get('category', ''),
+                'initials': ''.join(initials),
+                'score': score,
+            })
+
+    # 按分数降序排序，取前20
+    results.sort(key=lambda x: -x['score'])
+    return jsonify({'data': results[:20]})
+
+
+@app.route('/api/search/history', methods=['POST'])
+def api_search_history():
+    """记录搜索历史（服务端持久化，备用）"""
+    data = request.get_json() or {}
+    code = data.get('code', '')
+    name = data.get('name', '')
+    if not code:
+        return jsonify({'ok': False})
+    try:
+        hist_file = BASE_DIR / 'data' / 'search_history.json'
+        if hist_file.exists():
+            with open(hist_file, 'r') as f:
+                hist = json.load(f)
+        else:
+            hist = []
+        # 去重，最新在前面
+        hist = [h for h in hist if h.get('code') != code]
+        hist.insert(0, {'code': code, 'name': name, 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
+        hist = hist[:50]  # 保留最多50条
+        with open(hist_file, 'w', encoding='utf-8') as f:
+            json.dump(hist, f, ensure_ascii=False, indent=1)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/api/search/history', methods=['GET'])
+def api_get_search_history():
+    """获取搜索历史"""
+    try:
+        hist_file = BASE_DIR / 'data' / 'search_history.json'
+        if hist_file.exists():
+            with open(hist_file, 'r') as f:
+                hist = json.load(f)
+            return jsonify({'data': hist})
+        return jsonify({'data': []})
+    except Exception as e:
+        return jsonify({'data': [], 'error': str(e)})
+
+
+@app.route('/api/board-cons/<board_type>/<code>')
+def get_board_constituents(board_type, code):
+    """从本地缓存的成分股JSON返回板块成分股"""
+    import os as _os
+    fname = f'data/{board_type}_constituents.json'
+    full = _os.path.join(_os.path.dirname(__file__), fname)
+    if not _os.path.exists(full):
+        return jsonify({'error': f'文件不存在:{full}'}), 404
+    try:
+        with open(full, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        key = f'{board_type}:{code}'
+        if key in data:
+            return jsonify({'data': data[key]['cons'], 'count': data[key]['n']})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'data': [], 'count': 0})
+
+
+_MARKET_CAP_CACHE = {}
+
+def _get_market_cap(code: str) -> float:
+    """从QMT计算总市值（缓存1小时）市值=昨收×总股本"""
+    import time as _t
+    now = _t.time()
+    if code in _MARKET_CAP_CACHE and now - _MARKET_CAP_CACHE[code].get('t', 0) < 3600:
+        return _MARKET_CAP_CACHE[code]['v']
+    try:
+        from xtquant import xtdata as _xt
+        _xt.connect(port=58610); _xt.enable_hello = False
+        suffix = '.SH' if code.startswith('6') else '.SZ'
+        d = _xt.get_instrument_detail(code + suffix)
+        if not d:
+            suffix = '.SZ' if suffix == '.SH' else '.SH'
+            d = _xt.get_instrument_detail(code + suffix)
+        if d:
+            v = (d.get('PreClose', 0) or 0) * (d.get('TotalVolume', 0) or 0)
+            _MARKET_CAP_CACHE[code] = {'v': v, 't': now}
+            return v
+    except: pass
+    return 0
+
+
+@app.route('/api/board-cons-sorted/<board_type>/<code>')
+def get_board_constituents_sorted(board_type, code):
+    """带市值排序的板块成分股"""
+    import os as _os, time as _t
+    fname = f'data/{board_type}_constituents.json'
+    full = _os.path.join(_os.path.dirname(__file__), fname)
+    if not _os.path.exists(full):
+        return jsonify({'error': 'not found'}), 404
+    with open(full, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    key = f'{board_type}:{code}'
+    if key not in data:
+        return jsonify({'data': [], 'count': 0})
+    
+    cons = data[key]['cons'][:]
+    # 批量获取市值
+    for c in cons:
+        _get_market_cap(c['code'])
+    # 排序
+    cons.sort(key=lambda x: _MARKET_CAP_CACHE.get(x['code'], {}).get('v', 0), reverse=True)
+    # 附上市值
+    for c in cons:
+        cap = _MARKET_CAP_CACHE.get(c['code'], {}).get('v', 0)
+        c['mkt_cap'] = round(cap / 1e8, 1) if cap else 0
+        c['change_pct'] = _get_stock_change(c['code'])
+    return jsonify({'data': cons, 'count': len(cons)})
+
+
+_STOCK_CHG_CACHE = {}
+
+def _get_stock_change(code: str) -> float:
+    """获取个股今日涨跌幅"""
+    import time as _t
+    now = _t.time()
+    if code in _STOCK_CHG_CACHE and now - _STOCK_CHG_CACHE[code].get('t', 0) < 300:
+        return _STOCK_CHG_CACHE[code]['v']
+    try:
+        from xtquant import xtdata as _xt
+        _xt.connect(port=58610); _xt.enable_hello = False
+        suffix = '.SH' if code.startswith('6') else '.SZ'
+        d = _xt.get_instrument_detail(code + suffix)
+        if not d:
+            suffix = '.SZ' if suffix == '.SH' else '.SH'
+            d = _xt.get_instrument_detail(code + suffix)
+        if d and d.get('PreClose', 0):
+            # 获取今日最新价
+            qmt_code = code + suffix
+            _xt.download_history_data(qmt_code, '1d', '20260701', '20260702')
+            ld = _xt.get_local_data(['close'], [qmt_code], '1d', '20260701', '20260702', count=1)
+            if qmt_code in ld and ld[qmt_code] is not None and not ld[qmt_code].empty:
+                latest = float(ld[qmt_code].iloc[0]['close'])
+                pre = d['PreClose']
+                chg = round((latest / pre - 1) * 100, 2)
+                _STOCK_CHG_CACHE[code] = {'v': chg, 't': now}
+                return chg
+    except: pass
+    return 0
+
+
+@app.route('/api/board-changes')
+def get_board_changes():
+    """获取所有板块最新涨跌幅（后台缓存，快速返回）"""
+    return jsonify({'data': _get_board_changes_cached()})
+
+
+@app.route('/api/boards/<board_type>')
+def get_boards(board_type):
+    """获取板块列表"""
+    try:
+        if board_type == 'industry':
+            df = ak.stock_board_industry_name_em()
+            return jsonify({'data': df[['板块名称','板块代码']].to_dict('records')})
+        elif board_type == 'concept':
+            df = ak.stock_board_concept_name_em()
+            return jsonify({'data': df[['板块名称','板块代码']].to_dict('records')})
+        elif board_type == 'index':
+            df = ak.stock_zh_index_spot_em()
+            return jsonify({'data': df[['代码','名称','最新价','涨跌幅']].to_dict('records')})
+        return jsonify({'error': 'invalid type'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# --- 成分股接口 ---
+
+@app.route('/api/cons/<board_type>/<code>')
+def get_constituents(board_type, code):
+    """获取板块成分股"""
+    name = request.args.get('name', '')
+    try:
+        if board_type == 'industry':
+            df = ak.stock_board_industry_cons_em(symbol=name)
+        else:
+            df = ak.stock_board_concept_cons_em(symbol=name)
+        return jsonify({'data': df[['代码','名称','最新价','涨跌幅']].to_dict('records') if '代码' in df.columns else df.head(30).to_dict('records')})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# --- 信号接口 ---
+
+from signals_store import load_signals, append_signals
+
+@app.route('/api/signals/<board_code>', methods=['GET'])
+def get_signals(board_code):
+    """获取板块信号"""
+    signals = load_signals()
+    return jsonify(signals.get(board_code, {}))
+
+@app.route('/api/signals/<board_code>', methods=['POST'])
+def post_signals(board_code):
+    """提交板块信号"""
+    data = request.get_json()
+    skill = data.get('skill')
+    new_signals = data.get('signals', [])
+    replace = data.get('replace', False)
+    if not skill or not new_signals:
+        return jsonify({'error': 'missing skill or signals'}), 400
+    append_signals(board_code, skill, new_signals, replace)
+    return jsonify({'ok': True, 'count': len(new_signals), 'mode': 'replace' if replace else 'append'})
+
+# ============================================================
+# Phase 1-2: AI 双向集成 —— MCP 工具 + Hook 推送 + SSE 事件
+# ============================================================
+import re
+import uuid
+from datetime import datetime as _dt
+
+# ---- AI 分析任务队列 ----
+_ai_result_store = {}      # {code: {result_json, timestamp, skill}}
+_ai_result_lock = _tlk.Lock()
+_ai_trigger_events = {}    # {code: _tlk.Event}  用于前端SSE等待
+_ai_sse_event_queue = []   # [data:msg_body, ...]  ← 缺少这行！
+_ai_sse_event_lock = _tlk.Lock()  # ← 缺少这行！
+
+# ---- MCP 工具清单（扩展版，Phase 2 完整启用） ----
+MCP_TOOLS = [
+    {"name": "analyze_board", "description": "对指定板块执行分析",
+     "inputSchema": {"type": "object", "properties": {
+         "board_code": {"type": "string"}, "board_name": {"type": "string"},
+         "board_type": {"type": "string", "enum": ["industry","concept"]},
+         "skill": {"type": "string", "enum": ["fundamental","technical","selection"]},
+         "start_date": {"type": "string"}, "end_date": {"type": "string"},
+         "return_raw": {"type": "boolean", "default": False}
+     }, "required": ["board_code","board_name","skill"]}},
+    {"name": "get_kline", "description": "获取板块/个股/指数/港股K线数据",
+     "inputSchema": {"type": "object", "properties": {
+         "code": {"type": "string"},
+         "type": {"type": "string", "enum": ["industry","concept","stock","index","hk"]},
+         "period": {"type": "string", "enum": ["daily","weekly","monthly"]},
+         "start_date": {"type": "string"}, "end_date": {"type": "string"}
+     }, "required": ["code","type"]}},
+    {"name": "get_kline_snapshot", "description": "获取K线快照（最多200条，快速响应）",
+     "inputSchema": {"type": "object", "properties": {
+         "code": {"type": "string"},
+         "type": {"type": "string", "enum": ["industry","concept","stock","index","hk"]},
+         "name": {"type": "string"},
+         "period": {"type": "string", "default": "daily"},
+         "count": {"type": "integer", "default": 200}
+     }, "required": ["code","type"]}},
+    {"name": "search", "description": "搜索股票/板块/指数（支持拼音首字母）",
+     "inputSchema": {"type": "object", "properties": {
+         "query": {"type": "string"},
+         "type": {"type": "string", "enum": ["all","industry","concept","stock","index","hk"]}
+     }, "required": ["query"]}},
+    {"name": "submit_signals", "description": "提交分析信号，标注到K线图",
+     "inputSchema": {"type": "object", "properties": {
+         "board_code": {"type": "string"}, "skill": {"type": "string"},
+         "replace": {"type": "boolean", "default": False},
+         "signals": {"type": "array", "items": {"type": "object"}}
+     }, "required": ["board_code","skill","signals"]}},
+    {"name": "get_signals", "description": "获取板块历史分析信号",
+     "inputSchema": {"type": "object", "properties": {
+         "board_code": {"type": "string"}, "skill": {"type": "string"},
+         "limit": {"type": "integer", "default": 20}
+     }, "required": ["board_code"]}},
+    {"name": "get_constituents", "description": "获取板块成分股列表（按市值排序）",
+     "inputSchema": {"type": "object", "properties": {
+         "board_code": {"type": "string"}, "board_name": {"type": "string"},
+         "sort_by": {"type": "string", "enum": ["change_pct","name","code"]}
+     }, "required": ["board_code"]}},
+    {"name": "list_boards", "description": "列出所有可用板块",
+     "inputSchema": {"type": "object", "properties": {
+         "type": {"type": "string", "enum": ["industry","concept","index","hk","all"]},
+         "keyword": {"type": "string"}
+     }}},
+    {"name": "trigger_ai_analysis", "description": "触发AI分析（面板点击技能按钮后调用）",
+     "inputSchema": {"type": "object", "properties": {
+         "board_code": {"type": "string"}, "board_name": {"type": "string"},
+         "board_type": {"type": "string", "enum": ["industry","concept"]},
+         "skill_id": {"type": "string"},
+         "skill_name": {"type": "string"},
+         "prompt_template": {"type": "string"},
+         "callback_id": {"type": "string"}
+     }, "required": ["board_code","board_name","board_type","skill_id"]}},
+    {"name": "submit_ai_result", "description": "提交AI分析结论（分析完成后由WorkBuddy调用）",
+     "inputSchema": {"type": "object", "properties": {
+         "callback_id": {"type": "string"},
+         "board_code": {"type": "string"}, "board_name": {"type": "string"},
+         "skill_id": {"type": "string"}, "summary": {"type": "string"},
+         "direction": {"type": "string", "enum": ["bullish","bearish","neutral"]},
+         "confidence": {"type": "number"},
+         "annotations": {"type": "array", "items": {"type": "object"}},
+         "operation": {"type": "object"}, "risk_warning": {"type": "string"}
+     }, "required": ["board_code","summary"]}}
+]
+
+# ============================================================
+# MCP 工具实现
+# ============================================================
+
+@app.route('/mcp/tools', methods=['GET'])
+def mcp_list_tools():
+    """列出所有可用MCP工具"""
+    return jsonify({"tools": MCP_TOOLS})
+
+@app.route('/mcp/call', methods=['POST'])
+def mcp_call_tool():
+    """统一MCP工具调用入口"""
+    data = request.get_json() or {}
+    tool = data.get('tool', '')
+    args = data.get('arguments', {})
+    handlers = {
+        'get_kline': _handle_mcp_get_kline,
+        'get_kline_snapshot': _handle_mcp_get_kline_snapshot,
+        'get_signals': _handle_mcp_get_signals,
+        'search': _handle_mcp_search,
+        'submit_signals': _handle_mcp_submit_signals,
+        'get_constituents': _handle_mcp_get_constituents,
+        'list_boards': _handle_mcp_list_boards,
+        'trigger_ai_analysis': _handle_mcp_trigger_ai,
+        'submit_ai_result': _handle_mcp_submit_ai_result,
+        'analyze_board': _handle_mcp_analyze_board,
+    }
+    handler = handlers.get(tool)
+    if not handler:
+        return jsonify({"error": f"Unknown tool: {tool}"}), 400
+    try:
+        return handler(args)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ---- MCP 工具实现函数 ----
+
+def _handle_mcp_get_kline(args):
+    """获取完整K线数据"""
+    code = args['code']
+    dtype = args.get('type', 'industry')
+    period = args.get('period', 'daily')
+    name = args.get('name', '')
+    start = args.get('start_date', '')
+    end = args.get('end_date', '')
+    cache_key = f'{dtype}:{code}:{period}'
+    cached = _get_cached_kline(cache_key)
+    if cached is not None:
+        return jsonify({'data': cached, 'count': len(cached), 'cached': True})
+    df = _load_from_loader(dtype, code, period, name)
+    if start:
+        df = df[df['date'] >= start]
+    if end:
+        df = df[df['date'] <= end]
+    data = _format_kline(df)
+    return jsonify({'data': data, 'count': len(data)})
+
+def _handle_mcp_get_kline_snapshot(args):
+    """获取K线快照（快速返回最近N条，优先缓存）"""
+    code = args['code']
+    dtype = args.get('type', 'industry')
+    period = args.get('period', 'daily')
+    name = args.get('name', '')
+    count = args.get('count', 200)
+    cache_key = f'{dtype}:{code}:{period}'
+    cached = _get_cached_kline(cache_key)
+    if cached is not None:
+        data = cached[-count:] if len(cached) > count else cached
+        return jsonify({'data': data, 'count': len(data), 'code': code, 'type': dtype, 'cached': True})
+    df = _load_from_loader(dtype, code, period, name)
+    if df is not None and not df.empty:
+        data = _format_kline(df)
+        data = data[-count:] if len(data) > count else data
+        return jsonify({'data': data, 'count': len(data), 'code': code, 'type': dtype})
+    return jsonify({'data': [], 'count': 0, 'code': code, 'type': dtype})
+
+def _handle_mcp_search(args):
+    """搜索股票/板块/指数"""
+    q = args['query']
+    idx = _load_search_index()
+    results = []
+    q_upper = q.upper()
+    for code, info in idx.items():
+        name = info.get('name', '')
+        initials = info.get('initials', [])
+        initials_str = ''.join(initials).upper()
+        if (q_upper in name.upper() or q_upper in code.upper() or
+            q_upper in initials_str or initials_str.startswith(q_upper)):
+            results.append({
+                'code': code, 'name': name, 'type': info.get('type',''),
+                'category': info.get('category','')
+            })
+        if len(results) >= 20:
+            break
+    return jsonify({'data': results, 'count': len(results)})
+
+def _handle_mcp_submit_signals(args):
+    """提交信号"""
+    board_code = args['board_code']
+    skill = args['skill']
+    signals = args.get('signals', [])
+    replace = args.get('replace', False)
+    append_signals(board_code, skill, signals, replace)
+    # 信号更新后推SSE
+    _notify_event('signals_updated', json.dumps({'board_code': board_code, 'skill': skill, 'count': len(signals)}))
+    return jsonify({'ok': True, 'count': len(signals)})
+
+def _handle_mcp_get_signals(args):
+    """获取指定板块的历史信号"""
+    board_code = args['board_code']
+    skill = args.get('skill')
+    limit = args.get('limit', 20)
+    signals = load_signals().get(board_code, {})
+    if skill:
+        result = signals.get(skill, [])[-limit:]
+    else:
+        result = []
+        for sk, sigs in signals.items():
+            result.extend([{**s, 'skill': sk} for s in sigs])
+        result = sorted(result, key=lambda x: x.get('date', ''), reverse=True)[:limit]
+    return jsonify({"board_code": board_code, "signals": result, "count": len(result)})
+
+def _handle_mcp_get_constituents(args):
+    """获取成分股"""
+    board_code = args['board_code']
+    board_name = args.get('board_name', '')
+    sort_by = args.get('sort_by', 'change_pct')
+    for dtype in ['industry', 'concept']:
+        fname = f'data/{dtype}_constituents.json'
+        if os.path.exists(fname):
+            with open(fname, 'r', encoding='utf-8') as f:
+                cdata = json.load(f)
+            key = f'{dtype}:{board_code}'
+            if key in cdata:
+                cons = cdata[key]['cons']
+                return jsonify({'data': cons, 'count': len(cons), 'board_type': dtype})
+    return jsonify({'data': [], 'count': 0})
+
+def _handle_mcp_list_boards(args):
+    """列出所有板块"""
+    btype = args.get('type', 'all')
+    keyword = args.get('keyword', '')
+    result = []
+    with open('static/board_classification.json', 'r', encoding='utf-8') as f:
+        cdata = json.load(f)
+    for cat in cdata:
+        for b in cat.get('boards', []):
+            bt = b.get('type', '')
+            if btype != 'all' and bt != btype:
+                continue
+            if keyword and keyword.lower() not in b.get('name','').lower():
+                continue
+            result.append(b)
+        if len(result) >= 200:
+            break
+    return jsonify({'data': result[:200], 'count': len(result[:200])})
+
+def _handle_mcp_trigger_ai(args):
+    """触发AI分析（前端技能按钮点击后调用）"""
+    board_code = args['board_code']
+    board_name = args['board_name']
+    board_type = args.get('board_type', 'concept')
+    skill_id = args.get('skill_id', '')
+    skill_name = args.get('skill_name', skill_id)
+    prompt_template = args.get('prompt_template', '')
+    callback_id = str(uuid.uuid4())[:8]
+    
+    # 获取K线数据快照用于AI上下文
+    cache_key = f'{board_type}:{board_code}:daily'
+    kline_data = _get_cached_kline(cache_key)
+    if kline_data is None:
+        df = _load_from_loader(board_type, board_code, 'daily', board_name)
+        if df is not None and not df.empty:
+            kline_data = _format_kline(df[-200:])
+    
+    # 构建AI分析prompt
+    prompt = prompt_template.replace('{name}', board_name).replace('{code}', board_code)
+    if kline_data:
+        last = kline_data[-1] if kline_data else {}
+        prompt += f"\n\n--- 最新K线数据 ---\n"
+        prompt += f"日期: {last.get('timestamp', '')}\n"
+        prompt += f"开盘: {last.get('open', '')} 最高: {last.get('high', '')} 最低: {last.get('low', '')} 收盘: {last.get('close', '')} 成交量: {last.get('volume', '')}\n"
+        prompt += f"\n共 {len(kline_data)} 条K线数据"
+    
+    # 创建等待事件
+    evt = _tlk.Event()
+    with _ai_result_lock:
+        _ai_trigger_events[f'{board_code}:{skill_id}'] = evt
+    
+    # 推SSE通知前端"AI正在分析"
+    _notify_event('ai_analyzing', json.dumps({
+        'board_code': board_code, 'board_name': board_name,
+        'skill_id': skill_id, 'skill_name': skill_name, 'callback_id': callback_id
+    }))
+    
+    return jsonify({
+        'callback_id': callback_id,
+        'prompt': prompt,
+        'kline_count': len(kline_data) if kline_data else 0,
+        'status': 'analyzing'
+    })
+
+def _handle_mcp_analyze_board(args):
+    """板块分析（占位，实际分析由AI技能触发）"""
+    return jsonify({'ok': True, 'note': '请使用 trigger_ai_analysis + submit_ai_result 两步流'})
+
+def _handle_mcp_submit_ai_result(args):
+    """提交AI分析结论（由 WorkBuddy Hook 调用）"""
+    return _submit_ai_result_internal(args)
+
+def _submit_ai_result_internal(args):
+    """内部：存储AI分析结论 + 推送SSE"""
+    board_code = args.get('board_code', '')
+    skill_id = args.get('skill_id', '')
+    result = {
+        'callback_id': args.get('callback_id', ''),
+        'board_code': board_code,
+        'board_name': args.get('board_name', ''),
+        'skill_id': skill_id,
+        'summary': args.get('summary', ''),
+        'direction': args.get('direction', 'neutral'),
+        'confidence': args.get('confidence', 0.5),
+        'annotations': args.get('annotations', []),
+        'key_levels': args.get('key_levels', {'support': [], 'resistance': []}),
+        'operation': args.get('operation', {}),
+        'risk_warning': args.get('risk_warning', ''),
+        'timestamp': _dt.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    # 持久化信号到本地
+    if result['annotations']:
+        append_signals(board_code, skill_id, result['annotations'])
+    
+    with _ai_result_lock:
+        _ai_result_store[board_code] = result
+        # 解除等待事件
+        trigger_key = f'{board_code}:{skill_id}'
+        if trigger_key in _ai_trigger_events:
+            _ai_trigger_events[trigger_key].set()
+            del _ai_trigger_events[trigger_key]
+    
+    # 推SSE事件给前端
+    _notify_event('ai_result', json.dumps(result, ensure_ascii=False))
+    
+    return jsonify({'ok': True, 'board_code': board_code, 'stored': True})
+
+# ============================================================
+# REST API：AI 分析结果（供前端轮询 + WorkBuddy Hook 推送）
+# ============================================================
+
+@app.route('/api/ai/result', methods=['POST'])
+def api_ai_result_post():
+    """POST /api/ai/result — WorkBuddy Hook 推送AI分析结论"""
+    data = request.get_json() or {}
+    if not data.get('board_code') or not data.get('summary'):
+        return jsonify({'error': 'missing board_code or summary'}), 400
+    return _submit_ai_result_internal(data)
+
+@app.route('/api/ai/result/<board_code>', methods=['GET'])
+def api_ai_result_get(board_code):
+    """GET /api/ai/result/<board_code> — 前端获取AI分析结论"""
+    with _ai_result_lock:
+        result = _ai_result_store.get(board_code)
+    if result:
+        return jsonify(result)
+    return jsonify({'board_code': board_code, 'status': 'no_data'})
+
+@app.route('/api/ai/result/<board_code>/clear', methods=['POST'])
+def api_ai_result_clear(board_code):
+    """清除指定板块的AI分析结论"""
+    with _ai_result_lock:
+        _ai_result_store.pop(board_code, None)
+    return jsonify({'ok': True})
+
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    """健康检查（WorkBuddy Hook 检测用）"""
+    return jsonify({'ok': True, 'service': 'board-app', 'ts': _dt.now().strftime('%Y-%m-%d %H:%M:%S')})
+
+@app.route('/api/hooks/status', methods=['GET'])
+def api_hooks_status():
+    """返回当前面板的Hook配置"""
+    return jsonify({
+        'panel_url': 'http://127.0.0.1:5000',
+        'hook_result_url': 'http://127.0.0.1:5000/api/ai/result',
+        'panel_status': 'running',
+        'instructions': '在 ~/.codebuddy/settings.json 中配置 PostToolUse Hook，target 设为 http://127.0.0.1:5000'
+    })
+
+# ============================================================
+# WorkBuddy Hook 接收端点（供 WorkBuddy 配置回调）
+# ============================================================
+
+@app.route('/api/ai/hooks/post-tool-use', methods=['POST'])
+def hook_post_tool_use():
+    """接收 WorkBuddy PostToolUse 事件（工具调用后触发）"""
+    data = request.get_json() or {}
+    # 仅处理AI分析技能的完成事件
+    # WorkBuddy 传来的消息可能是分析结论
+    content = str(data.get('content', '') or data.get('result', ''))
+    if not content:
+        return jsonify({'ok': False, 'reason': 'no content'}), 200
+    
+    # 尝试解析JSON格式的分析结论
+    try:
+        result = json.loads(content) if content.startswith('{') else None
+        if result and result.get('board_code') and result.get('summary'):
+            return _submit_ai_result_internal(result)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    
+    return jsonify({'ok': False, 'reason': 'not analysis result'}), 200
+
+
+@app.route('/api/ai/hooks/stop', methods=['POST'])
+def hook_stop():
+    """WorkBuddy Stop 事件回调"""
+    data = request.get_json() or {}
+    return jsonify({'ok': True, 'received': True})
+
+
+@app.route('/api/ai/hooks/subagent-stop', methods=['POST'])
+def hook_subagent_stop():
+    """WorkBuddy SubagentStop 事件回调"""
+    data = request.get_json() or {}
+    return jsonify({'ok': True, 'received': True})
+
+@app.route('/mcp/resource', methods=['GET'])
+def mcp_read_resource():
+    uri = request.args.get('uri', '')
+    match = re.match(r'^board://([^/]+)/(\w+)$', uri)
+    if not match:
+        return jsonify({"error": f"invalid uri: {uri}"}), 400
+    code = match.group(1)
+    signals = load_signals()
+    return jsonify(signals.get(code, {}))
+
+# --- 静态文件 ---
+
+@app.route('/')
+def index():
+    return send_from_directory('static', 'index.html')
+
+@app.route('/static/<path:path>')
+def static_files(path):
+    return send_from_directory('static', path)
+
+# --- 启动 ---
+
+if __name__ == '__main__':
+    print(f"\n{'='*50}")
+    print(f"  板块K线分析面板 v1.0")
+    print(f"  {'='*50}")
+    print(f"  面板已启动: http://localhost:{port}")
+    print(f"  MCP 端点: http://localhost:{port}/mcp/tools")
+    print(f"  {'='*50}")
+    print(f"  按 Ctrl+C 停止服务")
+    print(f"{'='*50}\n")
+    print(f"[启动] http://localhost:{port}")
+    print(f"[线程] 多线程模式: 已启用")
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
