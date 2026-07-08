@@ -12,6 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
+from flask_sock import Sock
+
+from services.realtime_websocket import realtime_websocket
 
 # ============================================================
 # 配置与基础设施
@@ -29,6 +32,10 @@ logging.basicConfig(
 )
 
 app = Flask(__name__, static_folder=Config.STATIC_DIR)
+
+# 初始化 WebSocket
+sock = Sock(app)
+realtime_websocket.init_app(app)
 
 # ============================================================
 # 安全配置（Phase 2.1 安全加固）
@@ -62,6 +69,10 @@ def add_security_headers(response):
 # ============================================================
 def _bootstrap():
     """应用启动时执行：依赖检查 → QMT启动 → 预热 → 后台服务"""
+    if os.environ.get('BOARD_APP_AUTO_BOOTSTRAP', '1') == '0':
+        logger.info("[BOOTSTRAP] BOARD_APP_AUTO_BOOTSTRAP=0，跳过启动初始化")
+        return None
+
     logger.info("=" * 60)
     logger.info("AI炒股面板 v3.0")
     logger.info("=" * 60)
@@ -71,6 +82,14 @@ def _bootstrap():
     else:
         logger.info("[OK] 依赖检查通过")
     ctx = start_app()
+    
+    # 启动 WebSocket 实时推送服务
+    try:
+        realtime_websocket.start()
+        logger.info("[BOOTSTRAP] WebSocket 实时推送服务已启动")
+    except Exception as e:
+        logger.error(f"[BOOTSTRAP] WebSocket 启动失败: {e}")
+    
     return ctx
 
 

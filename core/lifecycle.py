@@ -4,6 +4,7 @@ lifecycle.py — 应用生命周期管理
   - 58600: QMT标准客户端 rpc_init（公式/策略引擎）
 （MiniQMT 58610 已移除，所有数据走 58600 RPC）
 """
+import os
 import time
 import threading
 import subprocess
@@ -17,6 +18,7 @@ from core.config import (
     QMT_PYTHON_PATH, QMT_DIR, QMT_ENABLED, BASE_DIR, DATA_DIR,
     PREWARM_TARGETS, BOARD_CHG_REFRESH_INTERVAL
 )
+from services.data_update_scheduler import data_update_scheduler
 from core.cache import get_cache, kill_orphaned, write_pid, register_cleanup
 
 
@@ -195,6 +197,13 @@ class AppContext:
         t2 = threading.Thread(target=self._prewarm_indices, daemon=True)
         t2.start()
         self._threads.append(t2)
+
+        # 启动数据更新调度器
+        try:
+            data_update_scheduler.start()
+            logger.info("[生命周期] 数据更新调度器已启动")
+        except Exception as e:
+            logger.error(f"[生命周期] 调度器启动失败: {e}")
 
         # MiniQMT 已移除——所有分钟线/日线走 58600 RPC，无需 MiniQMT
 
