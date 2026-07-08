@@ -48,6 +48,22 @@ QMT_CACHE_MAX_CODES = 500  # 最大缓存标的数
 
 # 数据更新配置
 BOARD_CHG_REFRESH_INTERVAL = 60
+
+# 午休缓存配置
+NOON_CACHE_DIR = DATA_DIR / 'noon_cache'
+NOON_CACHE_FILE_PATTERN = 'noon_cache_{date}.json'  # date format: YYYYMMDD
+
+# 更新调度时间配置（混合模式：固定时间 + 状态检测）
+UPDATE_SCHEDULE_TIMES = {
+    'morning_prewarm': '09:25',   # 开盘前预热
+    'noon_update': '11:35',       # 午休更新
+    'afternoon_switch': '13:00',  # 下午开盘切换
+    'daily_close': '15:05',       # 盘后更新
+}
+
+# WebSocket 推送间隔（秒）
+WEBSOCKET_UPDATE_INTERVAL = 3  # 顶部指数导航栏推送间隔
+
 PREWARM_TARGETS = [
     ('sh000001', '上证指数', 'index'),
     ('sz399006', '创业板指', 'index'),

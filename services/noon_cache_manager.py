@@ -142,3 +142,7 @@ class NoonCacheManager:
             
         except Exception:
             return None
+
+
+# 全局实例
+noon_cache_manager = NoonCacheManager()

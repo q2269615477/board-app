@@ -130,24 +130,9 @@ def update_daily_close_data() -> bool:
     logger.info("[盘后更新] 开始更新盘后数据...")
     
     try:
-        # 1. 更新东财板块（Tushare）
-        try:
-            from data_update_manager import update_boards
-            update_boards()
-            logger.info("[盘后更新] 东财板块更新完成")
-        except Exception as e:
-            logger.error(f"[盘后更新] 东财板块更新失败: {e}")
-            return False
-        
-        # 2. 更新指数（QMT）
-        try:
-            from data_update_manager import update_indices
-            update_indices()
-            logger.info("[盘后更新] 指数更新完成")
-        except Exception as e:
-            logger.error(f"[盘后更新] 指数更新失败: {e}")
-            return False
-        
+        # 使用现有的 update_all_today 函数
+        from data_update_manager import update_all_today
+        update_all_today()
         logger.info("[盘后更新] 盘后数据更新完成")
         return True
         
