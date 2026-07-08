@@ -5,12 +5,28 @@ board_api.py — 板块数据 Tushare 客户端（完全洗除东财HTTP API直�
 """
 import time
 import logging
+import threading
 from typing import Optional
 from datetime import datetime
 import pandas as pd
 import tushare as ts
 
 logger = logging.getLogger('board_api')
+
+# ===== 线程安全限流器（令牌桶） =====
+_rate_lock = threading.Lock()
+_last_call_time = 0.0
+_MIN_INTERVAL = 0.35  # 最小调用间隔（秒），约 170次/分钟，低于 Tushare 200次/分钟限制
+
+def _rate_limit():
+    """线程安全的 Tushare API 限流"""
+    global _last_call_time
+    with _rate_lock:
+        now = time.time()
+        elapsed = now - _last_call_time
+        if elapsed < _MIN_INTERVAL:
+            time.sleep(_MIN_INTERVAL - elapsed)
+        _last_call_time = time.time()
 
 # ===== Tushare 初始化（复用 data_loader 的全局配置） =====
 _pro = None
@@ -19,13 +35,19 @@ try:
 except Exception:
     try:
         import os
-        _TOKEN = os.environ.get('TUSHARE_TOKEN', 'cbd6784d7c5e87d4e5c935983a17a56367bb1a4b589bbc7768c25590')
-        try:
-            ts.set_token(_TOKEN)
-            _pro = ts.pro_api()
-        except PermissionError:
-            logging.warning('[board_api] Tushare token写入被沙箱拦截')
-            _pro = None
+        _TOKEN = os.environ.get('TUSHARE_TOKEN', '')
+        if not _TOKEN:
+            logging.warning('[board_api] TUSHARE_TOKEN环境变量未设置，Tushare板块数据将不可用')
+        else:
+            try:
+                ts.set_token(_TOKEN)
+                _pro = ts.pro_api()
+            except PermissionError:
+                logging.warning('[board_api] Tushare token写入被沙箱拦截')
+                _pro = None
+            except Exception as e:
+                logging.warning(f'[board_api] Tushare初始化失败: {e}')
+                _pro = None
     except Exception as e:
         logging.warning(f'[board_api] Tushare初始化失败: {e}')
         _pro = None
@@ -46,7 +68,11 @@ def _date_fmt(d: str) -> str:
 
 def get_industry_boards() -> Optional[pd.DataFrame]:
     """获取行业板块列表（Tushare dc_index）"""
+    if _pro is None:
+        logger.warning('[Tushare] _pro 未初始化，无法获取行业板块列表')
+        return None
     try:
+        _rate_limit()
         df = _pro.dc_index(idx_type='行业板块')
         if df is None or df.empty:
             return None
@@ -68,7 +94,11 @@ def get_industry_boards() -> Optional[pd.DataFrame]:
 
 def get_concept_boards() -> Optional[pd.DataFrame]:
     """获取概念板块列表（Tushare dc_index）"""
+    if _pro is None:
+        logger.warning('[Tushare] _pro 未初始化，无法获取概念板块列表')
+        return None
     try:
+        _rate_limit()
         df = _pro.dc_index(idx_type='概念板块')
         if df is None or df.empty:
             return None
@@ -102,8 +132,11 @@ def _clean_stock_name(name: str) -> str:
 
 def _get_constituents(sector_code: str) -> list:
     """通用成分股获取（Tushare dc_member）"""
+    if _pro is None:
+        logger.warning('[Tushare] _pro 未初始化，无法获取成分股')
+        return []
     try:
-        time.sleep(0.35)  # Tushare限流
+        _rate_limit()
         df = _pro.dc_member(ts_code=f'{sector_code}.DC')
         if df is None or df.empty:
             return []
@@ -145,8 +178,12 @@ def get_concept_constituents(sector_code: str) -> list:
 
 def _get_spot(board_type: str) -> Optional[dict]:
     """通用板块实时行情"""
+    if _pro is None:
+        logger.warning('[Tushare] _pro 未初始化，无法获取板块行情')
+        return None
     label = '行业板块' if board_type == 'industry' else '概念板块'
     try:
+        _rate_limit()
         df = _pro.dc_index(idx_type=label)
         if df is None or df.empty:
             return None
@@ -183,9 +220,11 @@ def get_board_kline(board_type: str, code: str, start_date: str = '20000101') ->
     获取板块日K线（Tushare dc_daily）
     返回中文列名以兼容 _normalize_df()：['日期','开盘','收盘','最高','最低','成交量','成交额']
     """
+    if _pro is None:
+        logger.warning('[Tushare] _pro 未初始化，无法获取板块K线')
+        return None
     try:
-        # 限流间隔
-        time.sleep(0.35)
+        _rate_limit()
 
         end = _today()
         df = _pro.dc_daily(ts_code=f'{code}.DC',
@@ -221,7 +260,11 @@ def get_board_kline(board_type: str, code: str, start_date: str = '20000101') ->
 
 def get_trade_dates() -> set:
     """获取A股交易日历（Tushare trade_cal）"""
+    if _pro is None:
+        logger.warning('[Tushare] _pro 未初始化，无法获取交易日历')
+        return set()
     try:
+        _rate_limit()
         df = _pro.trade_cal(exchange='SSE',
                              start_date='20000101',
                              end_date=_today(),
@@ -232,3 +275,117 @@ def get_trade_dates() -> set:
     except Exception as e:
         logger.warning(f"[Tushare] get_trade_dates 失败: {e}")
         return set()
+
+
+# ===== 午休缓存感知的数据获取 =====
+
+from services.noon_cache_manager import noon_cache_manager
+
+
+def get_board_data_with_fallback(board_code: str) -> Optional[dict]:
+    """
+    获取板块数据（支持午休缓存）
+    
+    逻辑：
+    1. 13:00 前且午休缓存有效 → 使用缓存
+    2. 其他时间 → 实时获取（Tushare）
+    3. 失败 → 本地缓存兜底
+    
+    Args:
+        board_code: 板块代码（如 BK1499）
+    
+    Returns:
+        Dict: 板块数据，失败返回 None
+    """
+    from datetime import datetime
+    
+    now = datetime.now()
+    is_afternoon = now.hour >= 13
+    
+    # 1. 检查是否使用午休缓存（13:00 前且缓存有效）
+    if not is_afternoon and noon_cache_manager.is_noon_cache_valid():
+        noon_data = noon_cache_manager.load_noon_data()
+        if board_code in noon_data:
+            logger.debug(f"[板块数据] 使用午休缓存: {board_code}")
+            return noon_data[board_code]
+    
+    # 2. 实时获取（Tushare）
+    try:
+        # 东财板块走 Tushare
+        df = get_board_kline('concept', board_code)
+        if df is not None and not df.empty:
+            latest = df.iloc[-1]
+            return {
+                'price': float(latest.get('收盘', 0)),
+                'change_pct': float(latest.get('涨跌幅', 0)) if '涨跌幅' in latest else 0,
+                'volume': int(latest.get('成交量', 0)),
+                'source': 'tushare_realtime'
+            }
+    except Exception as e:
+        logger.warning(f"[板块数据] Tushare获取失败: {e}")
+    
+    # 3. 本地缓存兜底
+    try:
+        from data.sqlite_repo import get_cached_prices
+        cached = get_cached_prices([board_code])
+        if cached.get(board_code):
+            data = cached[board_code]
+            data['source'] = 'local_cache'
+            return data
+    except Exception as e:
+        logger.error(f"[板块数据] 本地缓存兜底失败: {e}")
+    
+    return None
+
+
+def get_index_data_with_fallback(index_code: str) -> Optional[dict]:
+    """
+    获取指数数据（支持午休缓存）
+    
+    逻辑：
+    1. 13:00 前且午休缓存有效 → 使用缓存
+    2. 其他时间 → 实时获取（QMT）
+    3. 失败 → 本地缓存兜底
+    
+    Args:
+        index_code: 指数代码（如 sh000001）
+    
+    Returns:
+        Dict: 指数数据，失败返回 None
+    """
+    from datetime import datetime
+    
+    now = datetime.now()
+    is_afternoon = now.hour >= 13
+    
+    # 1. 检查是否使用午休缓存（13:00 前且缓存有效）
+    if not is_afternoon and noon_cache_manager.is_noon_cache_valid():
+        noon_data = noon_cache_manager.load_noon_data()
+        if index_code in noon_data:
+            logger.debug(f"[指数数据] 使用午休缓存: {index_code}")
+            return noon_data[index_code]
+    
+    # 2. 实时获取（QMT）
+    try:
+        from data.qmt_client import get_qmt_client
+        client = get_qmt_client()
+        data = client.get_constituents_batch([index_code])
+        if data and index_code in data:
+            result = data[index_code]
+            result['source'] = 'qmt_realtime'
+            return result
+    except Exception as e:
+        logger.warning(f"[指数数据] QMT获取失败: {e}")
+    
+    # 3. 本地缓存兜底
+    try:
+        from data.sqlite_repo import get_cached_prices
+        cached = get_cached_prices([index_code])
+        if cached.get(index_code):
+            data = cached[index_code]
+            data['source'] = 'local_cache'
+            return data
+    except Exception as e:
+        logger.error(f"[指数数据] 本地缓存兜底失败: {e}")
+    
+    return None
