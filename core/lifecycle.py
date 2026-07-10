@@ -55,10 +55,24 @@ class AppContext:
         self._stop_event = threading.Event()
         self.board_chg_cache: dict = {}
         self.board_chg_lock = threading.Lock()
+        self._qmt_warning: str = ""
 
     @property
     def uptime_seconds(self) -> float:
         return time.time() - self.started_at
+
+    def get_qmt_warning(self) -> str:
+        """获取QMT连接警告信息"""
+        return self._qmt_warning
+
+    def get_system_status(self) -> dict:
+        """获取系统整体状态（用于前端展示）"""
+        return {
+            'qmt_available': self.qmt_available,
+            'qmt_warning': self._qmt_warning,
+            'uptime_seconds': self.uptime_seconds,
+            'scheduler_running': data_update_scheduler.is_running(),
+        }
 
     def start(self):
         """启动应用：依赖检查 → QMT预热 → 后台服务"""
@@ -127,8 +141,10 @@ class AppContext:
                 return
             else:
                 logger.warning("[QMT] ⚠️ RPC连接成功但数据服务不可用（请确认QMT.exe已启动）")
+                self._qmt_warning = "QMT RPC连接成功但数据服务不可用，请确认QMT.exe已启动并连接行情"
         except Exception as e:
             logger.warning(f"[QMT] RPC验证失败: {e}")
+            self._qmt_warning = f"QMT连接失败: {str(e)[:100]}，请检查MiniQMT是否启动"
         logger.info("[QMT] ⚠️ 使用缓存数据（无QMT）")
 
     def _qmt_sync_all(self):

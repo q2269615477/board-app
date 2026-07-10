@@ -43,6 +43,30 @@ def cache_clear_key_route(data_type, code):
     return jsonify({'ok': True, 'deleted': key})
 
 
+@bp.route('/api/system/status')
+def system_status_route():
+    """获取系统完整状态（含QMT连接警告）"""
+    ctx = get_app_context()
+    status = ctx.get_system_status()
+    return jsonify({
+        'success': True,
+        'data': status
+    })
+
+
+@bp.route('/api/system/qmt-warning')
+def qmt_warning_route():
+    """获取QMT连接警告"""
+    ctx = get_app_context()
+    warning = ctx.get_qmt_warning()
+    return jsonify({
+        'success': True,
+        'has_warning': bool(warning),
+        'warning': warning,
+        'qmt_available': ctx.qmt_available
+    })
+
+
 @bp.route('/api/system/health')
 def system_health_route():
     from datetime import datetime
