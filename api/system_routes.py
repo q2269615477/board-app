@@ -69,9 +69,9 @@ def qmt_warning_route():
 
 @bp.route('/api/system/miniqmt-status')
 def miniqmt_status_route():
-    """获取 MiniQMT 常驻管理器状态"""
-    from services.miniqmt_manager import miniqmt_manager
-    status = miniqmt_manager.get_status()
+    """获取 MiniQMT 服务状态"""
+    from services.miniqmt_service import miniqmt_service
+    status = miniqmt_service.get_status()
     return jsonify({
         'success': True,
         'data': status
@@ -81,12 +81,32 @@ def miniqmt_status_route():
 @bp.route('/api/system/miniqmt-restart', methods=['POST'])
 def miniqmt_restart_route():
     """手动重启 MiniQMT"""
-    from services.miniqmt_manager import miniqmt_manager
-    success = miniqmt_manager._restart_minqmt()
+    from services.miniqmt_service import miniqmt_service
+    miniqmt_service._stop_process()
+    success = miniqmt_service._start_process()
     return jsonify({
         'success': success,
         'message': '重启成功' if success else '重启失败'
     })
+
+
+@bp.route('/api/system/miniqmt-setup-boot', methods=['POST'])
+def miniqmt_setup_boot_route():
+    """配置 MiniQMT 开机启动"""
+    from services.miniqmt_service import setup_boot_start
+    try:
+        boot_script = setup_boot_start()
+        return jsonify({
+            'success': True,
+            'message': '开机启动配置已生成',
+            'boot_script': str(boot_script),
+            'note': '请以管理员身份运行生成的命令'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'配置失败: {str(e)}'
+        }), 500
 
 
 @bp.route('/api/system/health')

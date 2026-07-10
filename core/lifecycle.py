@@ -19,7 +19,7 @@ from core.config import (
     PREWARM_TARGETS, BOARD_CHG_REFRESH_INTERVAL
 )
 from services.data_update_scheduler import data_update_scheduler
-from services.miniqmt_manager import miniqmt_manager
+from services.miniqmt_service import miniqmt_service
 from core.cache import get_cache, kill_orphaned, write_pid, register_cleanup
 
 
@@ -73,7 +73,7 @@ class AppContext:
             'qmt_warning': self._qmt_warning,
             'uptime_seconds': self.uptime_seconds,
             'scheduler_running': data_update_scheduler.is_running(),
-            'miniqmt_manager': miniqmt_manager.get_status(),
+            'miniqmt_service': miniqmt_service.get_status(),
         }
 
     def start(self):
@@ -216,12 +216,13 @@ class AppContext:
         t2.start()
         self._threads.append(t2)
 
-        # 启动 MiniQMT 常驻管理器（心跳自动唤醒）
+        # 启动 MiniQMT 服务（应用托管模式，带看门狗保障）
         try:
-            miniqmt_manager.start()
-            logger.info("[生命周期] MiniQMT 常驻管理器已启动（心跳间隔 30 秒）")
+            miniqmt_service.set_mode('application')
+            miniqmt_service.start()
+            logger.info("[生命周期] MiniQMT 服务已启动（应用托管模式，心跳+看门狗）")
         except Exception as e:
-            logger.error(f"[生命周期] MiniQMT 管理器启动失败: {e}")
+            logger.error(f"[生命周期] MiniQMT 服务启动失败: {e}")
 
         # 启动数据更新调度器
         try:
