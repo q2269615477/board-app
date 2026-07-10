@@ -67,6 +67,28 @@ def qmt_warning_route():
     })
 
 
+@bp.route('/api/system/miniqmt-status')
+def miniqmt_status_route():
+    """获取 MiniQMT 常驻管理器状态"""
+    from services.miniqmt_manager import miniqmt_manager
+    status = miniqmt_manager.get_status()
+    return jsonify({
+        'success': True,
+        'data': status
+    })
+
+
+@bp.route('/api/system/miniqmt-restart', methods=['POST'])
+def miniqmt_restart_route():
+    """手动重启 MiniQMT"""
+    from services.miniqmt_manager import miniqmt_manager
+    success = miniqmt_manager._restart_minqmt()
+    return jsonify({
+        'success': success,
+        'message': '重启成功' if success else '重启失败'
+    })
+
+
 @bp.route('/api/system/health')
 def system_health_route():
     from datetime import datetime
