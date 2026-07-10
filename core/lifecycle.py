@@ -219,10 +219,20 @@ class AppContext:
         # 启动 MiniQMT 服务（应用托管模式，带看门狗保障）
         try:
             miniqmt_service.set_mode('application')
-            miniqmt_service.start()
-            logger.info("[生命周期] MiniQMT 服务已启动（应用托管模式，心跳+看门狗）")
+            success = miniqmt_service.start()
+            if success:
+                # 等待服务初始化
+                import time
+                time.sleep(2)
+                status = miniqmt_service.get_status()
+                if status['process_alive']:
+                    logger.info("[生命周期] MiniQMT 服务已启动（应用托管模式，心跳+看门狗）")
+                else:
+                    logger.warning("[生命周期] MiniQMT 服务已启动，但进程尚未就绪，监控线程将继续尝试")
+            else:
+                logger.error("[生命周期] MiniQMT 服务启动失败")
         except Exception as e:
-            logger.error(f"[生命周期] MiniQMT 服务启动失败: {e}")
+            logger.error(f"[生命周期] MiniQMT 服务启动异常: {e}")
 
         # 启动数据更新调度器
         try:

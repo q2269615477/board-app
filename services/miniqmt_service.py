@@ -99,6 +99,7 @@ class MiniQMTService:
         
         self._running = True
         self._stop_event.clear()
+        self._consecutive_failures = 0
         
         # 启动监控线程
         self._monitor_thread = threading.Thread(
@@ -108,6 +109,13 @@ class MiniQMTService:
         )
         self._monitor_thread.start()
         
+        # 等待监控线程启动
+        time.sleep(0.5)
+        if not self._monitor_thread.is_alive():
+            logger.error("[MiniQMT服务] 监控线程启动失败")
+            self._running = False
+            return False
+        
         # 启动看门狗线程（确保监控线程不死）
         self._watchdog_thread = threading.Thread(
             target=self._watchdog_loop,
@@ -115,6 +123,13 @@ class MiniQMTService:
             name="MiniQMT-Watchdog"
         )
         self._watchdog_thread.start()
+        
+        # 等待看门狗线程启动
+        time.sleep(0.5)
+        if not self._watchdog_thread.is_alive():
+            logger.error("[MiniQMT服务] 看门狗线程启动失败")
+            self._running = False
+            return False
         
         logger.info(f"[MiniQMT服务] 已启动，模式: {self._mode}")
         return True
@@ -138,19 +153,39 @@ class MiniQMTService:
     # ==================== 监控循环 ====================
     
     def _monitor_loop(self):
-        """主监控循环 - 心跳检测"""
+        """主监控循环 - 心跳检测（强化版，异常不退出）"""
         logger.info("[MiniQMT监控] 循环启动")
         
-        # 首次启动
-        if not self._is_process_running():
-            logger.info("[MiniQMT监控] 首次启动 MiniQMT...")
-            self._start_process()
+        # 首次启动（带重试）
+        retry_count = 0
+        while not self._is_process_running() and retry_count < 3:
+            logger.info(f"[MiniQMT监控] 首次启动 MiniQMT... (尝试 {retry_count + 1}/3)")
+            if self._start_process():
+                break
+            retry_count += 1
+            time.sleep(2)
+        
+        # 主循环 - 异常捕获确保不退出
+        consecutive_errors = 0
+        max_consecutive_errors = 10
         
         while not self._stop_event.is_set():
             try:
                 self._do_heartbeat()
+                consecutive_errors = 0  # 成功则重置错误计数
             except Exception as e:
-                logger.error(f"[MiniQMT监控] 异常: {e}")
+                consecutive_errors += 1
+                logger.error(f"[MiniQMT监控] 异常 ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                
+                # 连续错误过多，尝试重启监控
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.critical("[MiniQMT监控] 连续错误过多，尝试恢复...")
+                    try:
+                        if not self._is_process_running():
+                            self._auto_restart()
+                    except Exception as restart_error:
+                        logger.error(f"[MiniQMT监控] 恢复失败: {restart_error}")
+                    consecutive_errors = 0
             
             self._stop_event.wait(self._heartbeat_interval)
         
@@ -250,15 +285,18 @@ class MiniQMTService:
             self._last_restart = time.time()
             logger.info(f"[MiniQMT进程] 已启动 (PID: {proc.pid})")
             
-            # 等待服务就绪
-            for i in range(15):
+            # 等待服务就绪（增加等待时间）
+            logger.info("[MiniQMT进程] 等待服务就绪...")
+            for i in range(30):  # 最多等待 30 秒
                 time.sleep(1)
                 if self._is_process_running():
-                    logger.info("[MiniQMT进程] ✓ 服务已就绪")
+                    logger.info(f"[MiniQMT进程] ✓ 服务已就绪 (用时 {i+1} 秒)")
                     return True
+                if (i + 1) % 10 == 0:
+                    logger.info(f"[MiniQMT进程] 等待中... ({i+1}/30 秒)")
             
             logger.warning("[MiniQMT进程] 启动超时，可能仍在初始化")
-            return True
+            return True  # 仍返回 True，让监控线程继续检测
             
         except Exception as e:
             logger.error(f"[MiniQMT进程] 启动失败: {e}")
