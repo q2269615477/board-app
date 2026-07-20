@@ -228,23 +228,15 @@ class BoardService:
             except Exception as e:
                 logger.debug(f'[board_service] QMT批量查询失败，回退Tushare: {e}')
 
-        # 2. Tushare兜底：仅补全QMT未覆盖且SQLite无数据的股票
+        # 2. Tushare兜底：补全QMT未覆盖且SQLite无数据的股票（限制最多50只，避免API超限）
         still_missing = [c.get('code','') for c in cons if c.get('code') and (c.get('close') == '-' or c.get('change_pct', 0) == 0)]
         if still_missing:
             try:
-                import tushare as ts
-                import os
-                _TOKEN = os.environ.get('TUSHARE_TOKEN')
-                if not _TOKEN:
-                    raise RuntimeError("TUSHARE_TOKEN environment variable is required")
-                try:
-                    ts.set_token(_TOKEN)
-                    _pro_spot = ts.pro_api()
-                except Exception:
-                    _pro_spot = None
+                from data_loader import _tushare_pro as _pro_spot
                 if _pro_spot:
                     import time as _t
-                    for cd in still_missing[:10]:
+                    # 限制最多50只，避免Tushare API频率限制
+                    for cd in still_missing[:50]:
                         try:
                             _t.sleep(0.35)
                             ts_code = f'{cd}.SZ' if cd.startswith(('0','3')) else f'{cd}.SH'
@@ -292,46 +284,45 @@ class BoardService:
         return get_app_context().get_board_changes_cached()
 
     def get_stock_change(self, code: str) -> float:
-        """获取个股今日涨跌幅（QMT实时）"""
+        """获取个股今日涨跌幅（QMT实时，通过qmt_client统一接口）"""
         cache_key = f'stock_chg:{code}'
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
         try:
-            from xtquant import xtdata
-            xtdata.connect(port=58610)
-            xtdata.enable_hello = False
-            suffix = '.SH' if code.startswith('6') else '.SZ'
-            d = xtdata.get_instrument_detail(code + suffix)
-            if d and d.get('PreClose', 0) and d.get('Open', 0):
-                chg = round((d['Open'] / d['PreClose'] - 1) * 100, 2)
+            from data.qmt_client import get_qmt_client
+            from core.lifecycle import is_qmt_available
+            if not is_qmt_available():
+                return 0.0
+            client = get_qmt_client()
+            raw = client.get_constituents_live([code])
+            if raw and code in raw:
+                chg = raw[code].get('change_pct', 0)
                 self._cache.set(cache_key, chg, ttl=300)
                 return chg
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f'[board_service] get_stock_change {code}: {e}')
         return 0.0
 
     def _get_market_cap(self, code: str) -> float:
-        """获取总市值（300秒TTL缓存）"""
+        """获取总市值（300秒TTL缓存，通过qmt_client统一接口）"""
         cache_key = f'mkt_cap:{code}'
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
         try:
-            from xtquant import xtdata
-            xtdata.connect(port=58610)
-            xtdata.enable_hello = False
-            suffix = '.SH' if code.startswith('6') else '.SZ'
-            d = xtdata.get_instrument_detail(code + suffix)
-            if not d:
-                suffix = '.SZ' if suffix == '.SH' else '.SH'
-                d = xtdata.get_instrument_detail(code + suffix)
-            if d:
-                v = (d.get('PreClose', 0) or 0) * (d.get('TotalVolume', 0) or 0)
+            from data.qmt_client import get_qmt_client
+            from core.lifecycle import is_qmt_available
+            if not is_qmt_available():
+                return 0.0
+            client = get_qmt_client()
+            raw = client.get_constituents_batch([code])
+            if raw and code in raw:
+                v = raw[code].get('mkt_cap', 0) * 1e8  # mkt_cap以亿为单位，转回元
                 self._cache.set(cache_key, v, ttl=300)
                 return v
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f'[board_service] _get_market_cap {code}: {e}')
         return 0.0
 
 

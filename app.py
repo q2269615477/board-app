@@ -10,6 +10,15 @@ from datetime import datetime
 # 确保当前目录在 sys.path 中（支持直接运行 python app.py）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# 尽早加载 .env（须在 data_loader / board_api 等模块 import 前）
+# 并强制国内行情直连（清除 HTTP(S)_PROXY→7688 等，避免 Tushare 超时）
+try:
+    from core.env_bootstrap import load_env_files, force_direct_network
+    load_env_files()
+    force_direct_network()
+except Exception:
+    pass
+
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 from flask_sock import Sock
@@ -106,6 +115,16 @@ register_routes(app)
 # ============================================================
 # 静态文件
 # ============================================================
+@app.route('/favicon.ico')
+def favicon():
+    """浏览器默认请求；避免控制台 404 噪音。"""
+    fav = Config.STATIC_DIR / 'favicon.ico'
+    if fav.exists() and fav.stat().st_size > 0:
+        return send_from_directory(Config.STATIC_DIR, 'favicon.ico')
+    # 空/缺失时返回 204，比 404 更干净
+    return Response(status=204)
+
+
 @app.route('/')
 def index():
     """Serve main panel with all initial data embedded (WorkBuddy CSP blocks internal fetch)"""
@@ -151,7 +170,8 @@ def index():
             from data.qmt_client import get_qmt_client
             from services.kline_service import df_to_kline
             qmt = get_qmt_client()
-            df = qmt.get_daily_local('000001.SH')
+            # 公式口优先（qmt_api/58600），xtdata 空壳时仍可出图
+            df = qmt.get_daily('000001.SH', start='20200101', count=-1)
             if df is not None and not df.empty:
                 kline_data = df_to_kline(df)
         except Exception as e:
@@ -175,6 +195,15 @@ def index():
 # ============================================================
 # 运行入口
 # ============================================================
+def create_app():
+    """Flask 工厂（用于测试）：返回已配置好的应用实例。
+
+    当前实现是模块级 app 的别名；测试通过 test_client() 隔离请求上下文，
+    通过 service fixture 隔离数据库。如需每次创建新实例，可改造为工厂式初始化。
+    """
+    return app
+
+
 if __name__ == '__main__':
     from core.lifecycle import get_app_context
     ctx = get_app_context()

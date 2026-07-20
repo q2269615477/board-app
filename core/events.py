@@ -18,6 +18,7 @@ class EventBus:
         self._lock = threading.Lock()
         self._event_queue: queue.Queue = queue.Queue(maxsize=1000)
         self._running = True
+        self._overflow_count = 0
 
     def subscribe(self, event_type: str, callback: Callable):
         with self._lock:
@@ -47,7 +48,16 @@ class EventBus:
         try:
             self._event_queue.put_nowait((event_type, data))
         except queue.Full:
-            logger.warning("[EventBus] SSE queue overflow, dropping event")
+            self._overflow_count += 1
+            logger.warning(f"[EventBus] SSE queue overflow (total={self._overflow_count}), dropping event: {event_type}")
+            # 发布溢出事件供监控订阅
+            with self._lock:
+                listeners = list(self._listeners.get('event_bus_overflow', []))
+            for cb in listeners:
+                try:
+                    cb({'overflow_count': self._overflow_count, 'dropped_type': event_type})
+                except Exception:
+                    pass
 
     def get_sse_events(self, timeout: float = 0.1) -> Optional[tuple]:
         """SSE消费者获取事件"""
@@ -59,6 +69,15 @@ class EventBus:
     def clear(self):
         with self._lock:
             self._listeners.clear()
+
+    def get_stats(self) -> dict:
+        """返回事件总线统计信息"""
+        return {
+            'queue_size': self._event_queue.qsize(),
+            'queue_maxsize': self._event_queue.maxsize,
+            'overflow_count': self._overflow_count,
+            'listener_count': sum(len(v) for v in self._listeners.values()),
+        }
 
 
 # 全局单例

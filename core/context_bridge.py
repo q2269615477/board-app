@@ -16,14 +16,27 @@ _ctx = {
 _lock = Lock()
 
 
-def update_context(code: str, type_: str, period: str = 'daily',
-                   name: str = '', range_: str = '',
-                   analysis_period: str = 'daily', analysis_range: str = '1y'):
-    """前端切换标的或分析参数时调用，更新全局上下文"""
+def update_context(code: str = None, type_: str = None, period: str = None,
+                   name: str = None, range_: str = None,
+                   analysis_period: str = None, analysis_range: str = None):
+    """前端切换标的或分析参数时调用，更新全局上下文
+    所有参数可选，仅更新提供的字段"""
     with _lock:
-        ctx = dict(code=code, type=type_, period=period, name=name, range=range_,
-                   analysis_period=analysis_period, analysis_range=analysis_range)
-        _ctx.update(ctx)
+        if code is not None:
+            _ctx['code'] = code
+        if type_ is not None:
+            _ctx['type'] = type_
+        if period is not None:
+            _ctx['period'] = period
+            _ctx['analysis_period'] = period
+        if name is not None:
+            _ctx['name'] = name
+        if range_ is not None:
+            _ctx['range'] = range_
+        if analysis_period is not None:
+            _ctx['analysis_period'] = analysis_period
+        if analysis_range is not None:
+            _ctx['analysis_range'] = analysis_range
 
 
 def get_context() -> dict:

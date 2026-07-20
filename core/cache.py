@@ -104,9 +104,10 @@ class CacheManager:
             return True
         if isinstance(data, (list, tuple)) and len(data) == 0:
             existing = self._store.get(key)
-            if existing is not None and len(existing.data) > 0:
-                return False
-            return False
+            if existing is not None and isinstance(existing.data, (list, tuple)) and len(existing.data) > 0:
+                # 已有非空数据，拒绝用空数据覆盖（防止瞬时异常导致缓存被清空）
+                return True
+            return False  # 首次无数据，允许缓存空列表
         return False
 
     def _cleanup_loop(self):

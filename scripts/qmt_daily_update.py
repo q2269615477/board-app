@@ -28,7 +28,7 @@ DB_PATH = Path(__file__).resolve().parent.parent / 'data' / 'kline.db'
 LOG_PATH = Path(__file__).resolve().parent.parent / 'data' / 'update_logs'
 LOG_PATH.mkdir(parents=True, exist_ok=True)
 
-QMT_PORT = 58610
+QMT_PORT = 58600  # 仅 RPC；58610 已废弃
 INSERT_SQL = """INSERT OR REPLACE INTO kline
                  (code, period, date, open, high, low, close, volume, updated_at)
                  VALUES (?,?,?,?,?,?,?,?,?)"""

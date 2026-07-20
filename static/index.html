@@ -173,8 +173,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',s
 
 <script src="/static/js/klinecharts.min.js"></script>
 <script src="/static/js/klinecharts-pro.umd.js"></script>
+<script src="/static/js/mcp-bridge.js"></script>
+<script src="/static/js/annotation-ui.js"></script>
+<script src="/static/js/session-ui.js"></script>
 <script>
 const store = { activeCat:null, selected:null, categoryData:null, _seq:0, _expandedCats:{}, _catSortState:{} };
+// 暴露给 session-ui / annotation-ui / MCP / 调试（脚本块内 const 默认不进 window）
+window.store = store;
 // 全局错误边界：防止单个JS错误打垮整个UI
 window.addEventListener('error', function(e){console.warn('[ErrorBoundary]',e.message||e);e.preventDefault();});
 window.addEventListener('unhandledrejection', function(e){console.warn('[ErrorBoundary]',e.reason);e.preventDefault();});
@@ -186,6 +191,7 @@ let _origClearInt = window.clearInterval; window.clearInterval = function(id){_a
 window.addEventListener('beforeunload', function(){_allTimers.forEach(id=>clearInterval(id));_allTimers.clear();});
 let pro = null;
 const API = '';
+window.API = API;
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2500);}
 /* 预先声明所有可能被初始化函数引用的变量（避免TDZ） */
 let _analysisHistory = [];
@@ -342,7 +348,13 @@ document.addEventListener('contextmenu',e=>{if(!e.target.closest('#nav-panel'))c
 
 // ===== 3. KLineChart Pro Datafeed（带请求取消+超时控制） =====
 class BoardDatafeed {
-  constructor(){this._timer=null;this._activeReqs=new Map();this._seq=0;}
+  constructor(){
+    this._timer=null;
+    this._activeReqs=new Map();
+    this._seq=0;
+    // 全量序列缓存：避免 Pro 多次 getHistory 重拉/拼接导致同一日期循环展示
+    this._cache=new Map();
+  }
   async searchSymbols(search) {
     if(!store.categoryData) return [];
     const results = [];
@@ -358,6 +370,30 @@ class BoardDatafeed {
     });
     return results;
   }
+  _periodToApi(p) {
+    const t=p.timespan, m=p.multiplier;
+    if(t==='minute') return m+'m';
+    if(t==='hour') return (m*60)+'m';
+    if(t==='day') return 'daily';
+    if(t==='week') return 'weekly';
+    if(t==='month'){if(m===1)return 'monthly';if(m===3)return 'quarterly';if(m===12)return 'yearly';return 'monthly';}
+    return 'daily';
+  }
+  _normalizeTs(v) {
+    const n = Number(v);
+    if (!isFinite(n) || n <= 0) return null;
+    // 秒级 < 1e10，毫秒级 >= 1e10
+    return n < 1e10 ? n * 1000 : n;
+  }
+  _dedupeSort(rows) {
+    rows.sort((a, b) => a.timestamp - b.timestamp);
+    const seen = new Set();
+    return rows.filter(d => {
+      if (seen.has(d.timestamp)) return false;
+      seen.add(d.timestamp);
+      return true;
+    });
+  }
   async getHistoryKLineData(symbol, period, from, to) {
     const mySeq = ++this._seq;
     // 取消同symbol+period的旧请求
@@ -365,27 +401,41 @@ class BoardDatafeed {
     if(this._activeReqs.has(symKey)){this._activeReqs.get(symKey).abort();}
     const ctrl = new AbortController();
     this._activeReqs.set(symKey, ctrl);
-    function periodToApi(p) {
-      const t=p.timespan, m=p.multiplier;
-      if(t==='minute') return m+'m';
-      if(t==='hour') return (m*60)+'m';
-      if(t==='day') return 'daily';
-      if(t==='week') return 'weekly';
-      if(t==='month'){if(m===1)return 'monthly';if(m===3)return 'quarterly';if(m===12)return 'yearly';return 'monthly';}
-      return 'daily';
-    }
-    const p = periodToApi(period);
+    const p = this._periodToApi(period);
+    const cacheKey = symKey + ':' + p;
     const tid = setTimeout(()=>ctrl.abort(), 15000);
     try {
-      const r = await fetch(API+'/api/kline/'+(symbol.type||'industry')+'/'+symbol.ticker
-        +'?name='+encodeURIComponent(symbol.name||symbol.shortName)+'&period='+p+'&timeout=15', {signal:ctrl.signal});
-      clearTimeout(tid);
-      this._activeReqs.delete(symKey);
-      if(this._seq!==mySeq) return [];  // 已有更新的请求，丢弃当前结果
-      const j = await r.json();
-      if(j.loading) return [];
-      if(j.error){console.warn('kline data error:',j.error);return [];}
-      return (j.data||[]).map(d=>({timestamp:d.timestamp,open:d.open,high:d.high,low:d.low,close:d.close,volume:d.volume||0}));
+      let rows = [];
+      // 优先缓存：Pro 会多次回调；无缓存时每次全量返回易被内部拼接成「日期循环」
+      if (this._cache.has(cacheKey)) {
+        rows = this._cache.get(cacheKey).slice();
+      } else {
+        const r = await fetch(API+'/api/kline/'+(symbol.type||'industry')+'/'+symbol.ticker
+          +'?name='+encodeURIComponent(symbol.name||symbol.shortName)+'&period='+p+'&timeout=15', {signal:ctrl.signal});
+        clearTimeout(tid);
+        this._activeReqs.delete(symKey);
+        if(this._seq!==mySeq) return [];  // 已有更新的请求，丢弃当前结果
+        const j = await r.json();
+        if(j.loading) return [];
+        if(j.error){console.warn('kline data error:',j.error);return [];}
+        rows = (j.data||[]).map(d=>({
+          timestamp:d.timestamp,open:d.open,high:d.high,low:d.low,close:d.close,volume:d.volume||0
+        }));
+        rows = this._dedupeSort(rows);
+        this._cache.set(cacheKey, rows.slice());
+      }
+      // from/to：Pro 多为秒级，数据为毫秒
+      if (rows.length && from != null && to != null) {
+        const f = this._normalizeTs(from);
+        const t = this._normalizeTs(to);
+        if (f !== null && t !== null) {
+          const lo = Math.min(f, t);
+          const hi = Math.max(f, t);
+          rows = rows.filter(d => d.timestamp >= lo && d.timestamp <= hi);
+        }
+      }
+      rows = this._dedupeSort(rows);
+      return rows;
     } catch(e) {
       clearTimeout(tid);
       this._activeReqs.delete(symKey);
@@ -471,6 +521,22 @@ function initPro() {
     // 移除 placeholder
     const ph = container.querySelector('.placeholder');
     if (ph) ph.remove();
+
+    // 劫持 klinecharts.init：Pro 内部会 init 真实 chart，供会话面板采集画线
+    try {
+      if (window.klinecharts && window.klinecharts.init && !window.__kline_init_patched) {
+        const _origInit = window.klinecharts.init.bind(window.klinecharts);
+        window.klinecharts.init = function(dom, opts) {
+          const chart = _origInit(dom, opts);
+          window.__kline_chart = chart;
+          try {
+            window.dispatchEvent(new CustomEvent('kline-chart-ready', { detail: chart }));
+          } catch (e) {}
+          return chart;
+        };
+        window.__kline_init_patched = true;
+      }
+    } catch (e) { console.warn('[Pro] init patch failed', e); }
     
     pro = new window.klinechartspro.KLineChartPro({
       container: container,
@@ -514,6 +580,21 @@ function initPro() {
       subIndicators: ['VOL'],
       datafeed: _datafeed
     });
+    window.pro = pro;
+    // 若劫持后已拿到 chart，再挂一次 draw-end 钩子入口
+    if (window.__kline_chart) {
+      console.log('[Pro] underlying chart ready', window.__kline_chart.id || '');
+    } else {
+      console.warn('[Pro] __kline_chart 未捕获，会话画线采集可能失败');
+    }
+    // 默认标的写入 store / ctx，供标注 UI 使用（此前仅 Pro 内部默认，外层未同步）
+    if (!store.selected) {
+      store.selected = { name: '上证指数', code: 'sh000001', type: 'index' };
+    }
+    window.__board_ctx = window.__board_ctx || {
+      code: 'sh000001', type: 'index', name: '上证指数', period: 'daily', range: ''
+    };
+    window.__board_ctx.symbol = window.__board_ctx.code;
     toast('KLineChart Pro 就绪');
     // 右侧空白bar设为零，避免非交易日显示空区域
     try{ pro.setOffsetRightBarCount(0); }catch(e){}
@@ -540,6 +621,7 @@ function initPro() {
 // 强制重新加载Pro（用户点击重试按钮）
 function forceReloadPro() {
   _initProAttempts = 0;
+  if (_datafeed && _datafeed._cache) _datafeed._cache.clear();
   // 尝试重新注入CDN脚本
   if (!window.klinechartspro) {
     injectCDNScripts();
@@ -607,11 +689,13 @@ function selectBoard(name,code,type,ev){
   if(ev) document.querySelectorAll('.board-item.active').forEach(e=>e.classList.remove('active'));
   if(ev && ev.target.closest('.board-item')) ev.target.closest('.board-item').classList.add('active');
   store.selected={name,code,type};
+  window.store = store;
   _lastClickBoard={name,code,type};
   
   /* ==== 上下文暴露给 WorkBuddy MCP Tool ==== */
   window.__board_ctx = {
     code: code, type: type, name: name,
+    symbol: code,
     period: window.__board_ctx ? window.__board_ctx.period : 'daily',
     range: ''
   };
@@ -1371,6 +1455,7 @@ async function checkDataFreshness(){
 // ==== 强制刷新 ====
 function forceRefresh(){
   closeCtx();
+  if (_datafeed && _datafeed._cache) _datafeed._cache.clear();
   toast('正在强制刷新...');
   fetch(API+'/api/update/force', {method:'POST'})
     .then(r=>r.json())
@@ -1435,6 +1520,24 @@ if (document.readyState === 'loading') {
 } else {
   setTimeout(initPro, 100);
 }
+
+// ===== MCP 集成初始化 =====
+let mcpClient, klineIntegrator, cacheManager;
+
+function initMCP() {
+  // 创建MCP客户端
+  mcpClient = new MCPClient();
+  mcpClient.connect();
+  
+  // 创建缓存管理器
+  cacheManager = new CacheRefreshManager(mcpClient);
+  cacheManager.start();
+  
+  console.log('[MCP] 初始化完成');
+}
+
+// 在Pro初始化后初始化MCP
+setTimeout(initMCP, 500);
 // 页面加载后预加载第一个板块（仅调度一次）
 </script>
 </body>

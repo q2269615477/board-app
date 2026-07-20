@@ -28,6 +28,19 @@ def _rate_limit():
             time.sleep(_MIN_INTERVAL - elapsed)
         _last_call_time = time.time()
 
+
+def _ensure_direct():
+    """板块/Tushare 请求前清代理（防 127.0.0.1:7688 超时）。"""
+    try:
+        from core.env_bootstrap import force_direct_network
+        force_direct_network()
+    except Exception:
+        import os
+        for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY'):
+            os.environ.pop(k, None)
+        os.environ['NO_PROXY'] = '*'
+        os.environ['no_proxy'] = '*'
+
 # ===== Tushare 初始化（复用 data_loader 的全局配置） =====
 _pro = None
 try:
@@ -215,45 +228,127 @@ def get_concept_spot() -> Optional[dict]:
 
 # ===== 板块K线数据 =====
 
-def get_board_kline(board_type: str, code: str, start_date: str = '20000101') -> Optional[pd.DataFrame]:
+def _get_board_kline_eastmoney(code: str, start_date: str = '20000101') -> Optional[pd.DataFrame]:
     """
-    获取板块日K线（Tushare dc_daily）
-    返回中文列名以兼容 _normalize_df()：['日期','开盘','收盘','最高','最低','成交量','成交额']
+    东财 push2his 板块日K（secid=90.BKxxxx）。
+    Tushare 不可用时的兜底，保证图表与列表涨跌幅同源东财。
     """
-    if _pro is None:
-        logger.warning('[Tushare] _pro 未初始化，无法获取板块K线')
+    import requests
+
+    _ensure_direct()
+    code = str(code or '').strip().upper()
+    if not code.startswith('BK'):
         return None
+    beg = start_date.replace('-', '') if start_date else '20000101'
+    if len(beg) >= 8:
+        beg = beg[:8]
+    else:
+        beg = '20000101'
     try:
-        _rate_limit()
-
-        end = _today()
-        df = _pro.dc_daily(ts_code=f'{code}.DC',
-                            start_date=start_date.replace('-', '') if '-' in start_date else start_date,
-                            end_date=end)
-        if df is None or df.empty:
-            logger.debug(f"[Tushare] {code} dc_daily 无数据")
+        r = requests.get(
+            'https://push2his.eastmoney.com/api/qt/stock/kline/get',
+            params={
+                'secid': f'90.{code}',
+                'fields1': 'f1,f2,f3,f4,f5,f6',
+                'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+                'klt': '101',  # 日K
+                'fqt': '1',
+                'beg': beg,
+                'end': '20500101',
+                'lmt': 100000,
+            },
+            headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': 'https://quote.eastmoney.com/',
+            },
+            timeout=20,
+        )
+        data = (r.json() or {}).get('data') or {}
+        klines = data.get('klines') or []
+        if not klines:
+            logger.warning(f'[EastMoney] {code} kline 无数据')
             return None
-
         records = []
-        for _, row in df.iterrows():
-            d = _date_fmt(str(row.get('trade_date', '')))
+        for line in klines:
+            # date,open,close,high,low,volume,amount,amplitude,pct,change,turnover
+            parts = str(line).split(',')
+            if len(parts) < 6:
+                continue
+            d = parts[0].strip()
+            if len(d) == 8 and d.isdigit():
+                d = _date_fmt(d)
             if not d or len(d) < 10:
                 continue
-            records.append({
-                '日期': d,
-                '开盘': float(row.get('open', 0) or 0),
-                '收盘': float(row.get('close', 0) or 0),
-                '最高': float(row.get('high', 0) or 0),
-                '最低': float(row.get('low', 0) or 0),
-                '成交量': float(row.get('vol', 0) or 0),
-                '成交额': float(row.get('amount', 0) or 0),
-            })
+            try:
+                records.append({
+                    '日期': d[:10],
+                    '开盘': float(parts[1] or 0),
+                    '收盘': float(parts[2] or 0),
+                    '最高': float(parts[3] or 0),
+                    '最低': float(parts[4] or 0),
+                    '成交量': float(parts[5] or 0),
+                    '成交额': float(parts[6] or 0) if len(parts) > 6 else 0.0,
+                })
+            except (TypeError, ValueError):
+                continue
         if not records:
             return None
+        logger.info(f'[EastMoney] {code} kline {len(records)} 根, last={records[-1]["日期"]}')
         return pd.DataFrame(records)
     except Exception as e:
-        logger.warning(f"[Tushare] get_board_kline({code}) 失败: {e}")
+        logger.warning(f'[EastMoney] get_board_kline({code}) 失败: {e}')
         return None
+
+
+def get_board_kline(board_type: str, code: str, start_date: str = '20000101') -> Optional[pd.DataFrame]:
+    """
+    获取板块日K线：优先 Tushare dc_daily，失败则东财 push2his。
+    返回中文列名以兼容 _normalize_df()：['日期','开盘','收盘','最高','最低','成交量','成交额']
+    """
+    global _pro
+    _ensure_direct()
+    if _pro is None:
+        # 延迟再试一次（token 可能刚 bootstrap）
+        try:
+            from core.env_bootstrap import ensure_tushare_token
+            ensure_tushare_token()
+            from data_loader import _tushare_pro
+            if _tushare_pro is not None:
+                _pro = _tushare_pro
+        except Exception:
+            pass
+    if _pro is not None:
+        try:
+            _rate_limit()
+
+            end = _today()
+            df = _pro.dc_daily(
+                ts_code=f'{code}.DC',
+                start_date=start_date.replace('-', '') if '-' in start_date else start_date,
+                end_date=end,
+            )
+            if df is not None and not df.empty:
+                records = []
+                for _, row in df.iterrows():
+                    d = _date_fmt(str(row.get('trade_date', '')))
+                    if not d or len(d) < 10:
+                        continue
+                    records.append({
+                        '日期': d,
+                        '开盘': float(row.get('open', 0) or 0),
+                        '收盘': float(row.get('close', 0) or 0),
+                        '最高': float(row.get('high', 0) or 0),
+                        '最低': float(row.get('low', 0) or 0),
+                        '成交量': float(row.get('vol', 0) or 0),
+                        '成交额': float(row.get('amount', 0) or 0),
+                    })
+                if records:
+                    return pd.DataFrame(records)
+            logger.debug(f"[Tushare] {code} dc_daily 无数据，尝试东财")
+        except Exception as e:
+            logger.warning(f"[Tushare] get_board_kline({code}) 失败: {e}，尝试东财")
+
+    return _get_board_kline_eastmoney(code, start_date=start_date)
 
 
 # ===== 交易日历 =====
@@ -279,10 +374,24 @@ def get_trade_dates() -> set:
 
 # ===== 午休缓存感知的数据获取 =====
 
-from services.noon_cache_manager import noon_cache_manager
-
 
 def get_board_data_with_fallback(board_code: str) -> Optional[dict]:
+    """
+    获取板块数据（支持午休缓存）
+    
+    逻辑：
+    1. 13:00 前且午休缓存有效 → 使用缓存
+    2. 其他时间 → 实时获取（Tushare）
+    3. 失败 → 本地缓存兜底
+    
+    Args:
+        board_code: 板块代码（如 BK1499）
+    
+    Returns:
+        Dict: 板块数据，失败返回 None
+    """
+    from datetime import datetime
+    from services.noon_cache_manager import noon_cache_manager
     """
     获取板块数据（支持午休缓存）
     

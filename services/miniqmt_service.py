@@ -324,20 +324,12 @@ class MiniQMTService:
             logger.warning(f"[MiniQMT进程] 停止时出错: {e}")
     
     def _is_process_running(self) -> bool:
-        """检测 MiniQMT 进程和端口是否存活"""
-        # 1. 检测端口
-        import socket
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2)
-            result = sock.connect_ex(('127.0.0.1', self._rpc_port))
-            sock.close()
-            if result == 0:
-                return True
-        except Exception:
-            pass
-        
-        # 2. 检测进程
+        """检测 XtMiniQmt.exe 是否存活。
+
+        注意：58600 也可能被 XtItClient.exe 占用；仅看端口会把
+        “仅有 RPC 壳、无行情” 误判为 MiniQMT 正常。
+        """
+        # 1. 必须看到 XtMiniQmt 进程名（根因判定）
         try:
             result = subprocess.run(
                 ['tasklist', '/FI', 'IMAGENAME eq XtMiniQmt.exe'],
@@ -345,9 +337,26 @@ class MiniQMTService:
                 text=True,
                 timeout=5
             )
-            return 'XtMiniQmt.exe' in result.stdout
+            if 'XtMiniQmt.exe' in (result.stdout or ''):
+                return True
         except Exception:
-            return False
+            pass
+
+        # 2. 端口仅作辅助日志，不再单独判定存活
+        import socket
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            port_open = sock.connect_ex(('127.0.0.1', self._rpc_port)) == 0
+            sock.close()
+            if port_open:
+                logger.debug(
+                    f"[MiniQMT] 端口 {self._rpc_port} 开放但未见 XtMiniQmt.exe"
+                    "（可能是 XtItClient 占用）"
+                )
+        except Exception:
+            pass
+        return False
     
     # ==================== 状态通知 ====================
     

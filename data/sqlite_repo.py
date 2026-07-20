@@ -56,7 +56,7 @@ class SqliteRepo:
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._path))
         try:
-            conn.execute("PRAGMA journal_mode=DELETE")
+            conn.execute("PRAGMA journal_mode=WAL")
         except Exception:
             pass
         conn.execute("PRAGMA synchronous=NORMAL")

@@ -3,6 +3,7 @@ services/kline_service.py — K线数据业务逻辑
 统一K线加载入口：分钟线(QMT子进程)/日线(QMT+缓存)/重采样(月/季/年线)
 """
 import time
+import atexit
 import threading
 import logging
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -19,10 +20,44 @@ logger = logging.getLogger('kline_service')
 
 MINUTE_PERIODS = {'1m', '5m', '15m', '30m', '60m', '120m', '240m'}
 RESAMPLE_PERIODS = {'weekly', 'monthly', 'quarterly', 'yearly'}
-# 需resample的目标周期及对应分钟数
-RESAMPLE_FROM_1M = {'15m': '15min', '30m': '30min', '60m': '60min', '120m': '120min', '240m': '240min'}
+# 需 resample 的目标周期及对应分钟数（含 5m，避免 QMT 直出与 1m 混淆）
+RESAMPLE_FROM_1M = {
+    '5m': '5min',
+    '15m': '15min',
+    '30m': '30min',
+    '60m': '60min',
+    '120m': '120min',
+    '240m': '240min',
+}
+# 前端/口语别名 → 内部 period
+PERIOD_ALIASES = {
+    '1H': '60m', '1h': '60m', '60min': '60m',
+    '2H': '120m', '2h': '120m',
+    '4H': '240m', '4h': '240m',
+    'day': 'daily', '1d': 'daily',
+    'week': 'weekly', '1w': 'weekly',
+    'month': 'monthly', '1M': 'monthly',
+}
 
-logger = logging.getLogger('kline_service')
+
+def normalize_period(period: str) -> str:
+    """统一周期字符串，避免 1H/60m 分叉导致错误缓存或循环加载。"""
+    if not period:
+        return 'daily'
+    p = str(period).strip()
+    return PERIOD_ALIASES.get(p, p)
+
+
+def dedupe_kline_df(df: pd.DataFrame) -> pd.DataFrame:
+    """按 date 去重（保留最后一条），再按时间升序。"""
+    if df is None or df.empty or 'date' not in df.columns:
+        return df if df is not None else pd.DataFrame()
+    out = df.copy()
+    out['_sort'] = pd.to_datetime(out['date'], errors='coerce')
+    out = out.sort_values('_sort')
+    out = out.drop_duplicates(subset=['date'], keep='last')
+    out = out.drop(columns='_sort').reset_index(drop=True)
+    return out
 
 
 def df_to_kline(df: pd.DataFrame) -> List[Dict]:
@@ -37,14 +72,16 @@ def df_to_kline(df: pd.DataFrame) -> List[Dict]:
     df = df.copy()
     df['_sort_date'] = pd.to_datetime(df['date'], errors='coerce')
     df = df.sort_values('_sort_date').drop(columns='_sort_date').reset_index(drop=True)
+    df = dedupe_kline_df(df)
 
     records = []
+    seen_ts = set()
     for _, r in df.iterrows():
         date_str = str(r['date'])
-        if len(date_str) > 10 and ' ' in date_str:
-            ts = int(pd.Timestamp(date_str).timestamp() * 1000)
-        else:
-            ts = int(pd.Timestamp(date_str).timestamp() * 1000)
+        ts = int(pd.Timestamp(date_str).timestamp() * 1000)
+        if ts in seen_ts:
+            continue
+        seen_ts.add(ts)
         records.append({
             'timestamp': ts,
             'open': float(r['open']),
@@ -61,6 +98,9 @@ def df_to_kline(df: pd.DataFrame) -> List[Dict]:
 _executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix='kline_loader')
 _pending = {}  # cache_key -> Event
 _pending_lock = threading.Lock()
+
+# 进程退出时优雅关闭线程池
+atexit.register(lambda: _executor.shutdown(wait=False, cancel_futures=True))
 
 
 class KLineService:
@@ -79,6 +119,7 @@ class KLineService:
         主入口：获取K线数据（同步等待或返回loading信号）
         返回: (result_dict, status_code)
         """
+        period = normalize_period(period)
         cache_key = f'{data_type}:{code}:{period}'
 
         # 强制刷新
@@ -138,64 +179,83 @@ class KLineService:
                  board_name: str, cache_key: str):
         """线程池中执行的实际数据加载"""
         try:
+            period = normalize_period(period)
             minute_periods = MINUTE_PERIODS
 
-            # 分钟级 → QMT
+            # 分钟级 → QMT（5m/15m/… 统一由 1m resample，避免与 1m 混淆）
             if period in minute_periods:
                 if is_qmt_available():
-                    # 15m/30m/60m/120m/240m需要先获取1m再resample
                     if period in RESAMPLE_FROM_1M:
                         df_1m = self._qmt.get_minute_kline(code, data_type, '1m')
+                        if (df_1m is None or df_1m.empty) and data_type in (
+                            'index', 'stock', 'hk_index'
+                        ):
+                            df_1m = self._qmt.get_minute_kline(code, 'hk_index', '1m')
                         if df_1m is not None and not df_1m.empty:
-                            return self._resample_from_1m(df_1m, period)
-                    else:
-                        df = self._qmt.get_minute_kline(code, data_type, period)
-                        if df is None or df.empty and data_type in ('index', 'stock', 'hk_index'):
-                            df = self._qmt.get_minute_kline(code, 'hk_index', period)
-                        return df
+                            return dedupe_kline_df(self._resample_from_1m(df_1m, period))
+                        return pd.DataFrame()
+                    # 仅 1m 直取
+                    df = self._qmt.get_minute_kline(code, data_type, period)
+                    if (df is None or df.empty) and data_type in (
+                        'index', 'stock', 'hk_index'
+                    ):
+                        df = self._qmt.get_minute_kline(code, 'hk_index', period)
+                    return dedupe_kline_df(df) if df is not None else pd.DataFrame()
 
-            # 日线 → QMT优先+SQLite回退（行业/概念板块不经过QMT，直接用本地数据）
-            if period == 'daily':
-                if is_qmt_available() and data_type not in ('industry', 'concept'):
-                    qmt_code = self._qmt.to_qmt_code(code, data_type)
-                    df = self._qmt.get_daily_local(qmt_code)
-                    if df is not None and not df.empty:
+            # 板块日线：必须走 load_board_kline（SQLite + 增量），不可因本地有旧数据就永久跳过更新
+            # 否则列表实时涨跌幅与图表末 bar 脱节（如半导体 -9.87% 有而图停在旧日期）
+            if data_type in ('industry', 'concept') and period == 'daily':
+                from data_loader import load_board_kline
+                df = load_board_kline(data_type, board_name or code, code, period)
+                if df is not None and not df.empty:
+                    try:
                         self._db.save_kline(code, 'daily', df)
-                        # 从SQLite读取完整数据（含QMT最新数据 + 备份恢复的历史数据）
-                        df = self._db.read_kline(code, period)
-                        if df is not None and not df.empty:
-                            return df
-                # 回退SQLite
+                    except Exception:
+                        pass
+                    return dedupe_kline_df(df)
+                # 仍空则读库兜底
+                df = self._db.read_kline(code, period)
+                return dedupe_kline_df(df) if df is not None else pd.DataFrame()
+
+            # 日线 → 先 SQLite（快、完整）；QMT 仅在本地空或 force 缺口时补写
+            # 策略：指数/个股仅 QMT 写库；读路径不覆盖已有更新的历史
+            if period == 'daily':
                 df = self._db.read_kline(code, period)
                 if df is not None and not df.empty:
-                    return df
+                    return dedupe_kline_df(df)
+                # 本地无日线：QMT 拉全量写库（板块不走 QMT）
+                if is_qmt_available() and data_type not in ('industry', 'concept'):
+                    qmt_code = self._qmt.to_qmt_code(code, data_type)
+                    qdf = self._qmt.get_daily(qmt_code, start='20200101', count=-1)
+                    if qdf is not None and not qdf.empty:
+                        self._db.save_kline(code, 'daily', qdf)
+                        df = self._db.read_kline(code, period)
+                        if df is not None and not df.empty:
+                            return dedupe_kline_df(df)
+                return pd.DataFrame()
 
-            # 周/月/季/年线 → 从日线重采样
+            # 周/月/季/年线 → 从日线重采样（禁止 fallthrough 到错误 loader）
             if period in RESAMPLE_PERIODS:
-                return self._load_resample(data_type, code, period, board_name)
+                return dedupe_kline_df(
+                    self._load_resample(data_type, code, period, board_name)
+                )
 
-            # 板块数据（行业/概念）→ SQLite或磁盘CSV/tushare
+            # 板块非日线（若有直出周期）→ SQLite 或 load_board_kline
             if data_type in ('industry', 'concept'):
                 df = self._db.read_kline(code, period)
                 if df is not None and not df.empty:
-                    return df
-                # SQLite 没有则尝试 CSV/tushare 增量拉取
+                    return dedupe_kline_df(df)
                 from data_loader import load_board_kline
                 df = load_board_kline(data_type, board_name, code, period)
                 if df is not None and not df.empty:
-                    return df
+                    return dedupe_kline_df(df)
                 return pd.DataFrame()
 
-            # 其他（hk_index, us, etc）
-            if data_type == 'hk_index':
-                if is_qmt_available():
-                    df = self._qmt.get_minute_kline(code, 'hk_index', period)
-                    if df is not None and not df.empty:
-                        return df
-
-            # 兜底：QMT分钟线
-            if is_qmt_available():
-                return self._qmt.get_minute_kline(code, data_type, period)
+            # 其他（hk_index 等）— 仅在未命中上述分支时
+            if data_type == 'hk_index' and period == '1m' and is_qmt_available():
+                df = self._qmt.get_minute_kline(code, 'hk_index', '1m')
+                if df is not None and not df.empty:
+                    return dedupe_kline_df(df)
 
             return pd.DataFrame()
 
@@ -248,21 +308,36 @@ class KLineService:
             return pd.DataFrame()
 
     def _load_resample(self, data_type: str, code: str, period: str, board_name: str) -> pd.DataFrame:
-        """从日线重采样"""
-        from data_loader import load_stock_data, load_index_kline, load_hk_index_kline, _resample
-        df = None
-        if data_type == 'stock':
-            df = load_stock_data(code)
-        elif data_type == 'index':
-            df = load_index_kline(code)
-        elif data_type == 'hk_index':
-            df = load_hk_index_kline(code)
-        elif data_type in ('industry', 'concept'):
-            df = self._db.read_kline(code, 'daily')
+        """从日线重采样（统一读 SQLite 日线，避免 loader 旁路不一致）。"""
+        from data_loader import _resample
+        df = self._db.read_kline(code, 'daily')
+        if df is None or df.empty:
+            if data_type not in ('industry', 'concept') and is_qmt_available():
+                daily_df = self._do_load(
+                    data_type, code, 'daily', board_name, f'{data_type}:{code}:daily'
+                )
+                df = daily_df if daily_df is not None else pd.DataFrame()
+            if (df is None or df.empty) and data_type in ('industry', 'concept'):
+                from data_loader import load_board_kline
+                df = load_board_kline(data_type, board_name, code, 'daily')
+        if df is None or df.empty:
+            return pd.DataFrame()
 
-        if df is not None and not df.empty:
-            return _resample(df, period)
-        return pd.DataFrame()
+        last_daily = str(df['date'].max())[:10].replace('/', '-')
+        # 缓存可用且末 bar 不超过日线末交易日 → 直接用；否则按日线重算（修未来月末标签）
+        cached = self._db.read_kline(code, period)
+        if cached is not None and not cached.empty:
+            last_c = str(cached['date'].max())[:10].replace('/', '-')
+            if last_c <= last_daily and len(cached) >= 1:
+                return cached
+
+        out = _resample(df, period)
+        try:
+            if out is not None and not out.empty:
+                self._db.save_kline(code, period, out)
+        except Exception:
+            pass
+        return out if out is not None else pd.DataFrame()
 
     # ---- 格式化响应 ----
 

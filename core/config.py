@@ -22,9 +22,23 @@ QMT_MINI_PATH = os.environ.get(
     'QMT_MINI_PATH',
     r'D:\迅投极速策略交易系统交易终端 大同证券QMT实盘\bin.x64\XtMiniQmt.exe'
 )
-QMT_PORTS = [58600, 58610]
+# 仅 58600 RPC；58610 MiniQMT 数据口已废弃，勿再加入列表
+QMT_PORTS = [58600]
+QMT_RPC_PORT = 58600
 QMT_ENABLED = os.environ.get('QMT_ENABLED', '1') == '1'
-QMT_AUTO_START = os.environ.get('QMT_AUTO_START', '1') == '1'  # 自动启动 MiniQMT
+# 默认不自动启动 MiniQMT：完整 QMT 登录后可直接走 58600 取数（历史经验）
+# 若需应用托管 MiniQMT，显式设 QMT_AUTO_START=1
+QMT_AUTO_START = os.environ.get('QMT_AUTO_START', '0') == '1'
+# 本地 K 线缓存目录：优先完整客户端 datadir（非 userdata_mini）
+QMT_DATA_DIR = os.environ.get(
+    'QMT_DATA_DIR',
+    str(Path(QMT_DIR).resolve().parent / 'datadir')
+)
+# 兼容回退（xtquant 默认常指向此路径）
+QMT_MINI_DATA_DIR = os.environ.get(
+    'QMT_MINI_DATA_DIR',
+    str(Path(QMT_DIR).resolve().parent / 'userdata_mini' / 'datadir')
+)
 
 # Flask 配置
 FLASK_PORT = int(os.environ.get('FLASK_PORT', 5000))
@@ -36,10 +50,29 @@ CACHE_DEFAULT_TTL = 300  # 5分钟
 CACHE_MAX_ITEMS = 200
 CACHE_CLEAN_INTERVAL = 60  # 清理间隔（秒）
 
-# MCP 配置
+# MCP 配置（对外契约统一 /mcp/*）
 MCP_ENABLED = os.environ.get('MCP_ENABLED', '1') == '1'
-MCP_SSE_ENDPOINT = '/api/mcp/sse'
-MCP_TOOLS_ENDPOINT = '/api/mcp/tools'
+MCP_SSE_ENDPOINT = '/mcp/sse'
+MCP_TOOLS_ENDPOINT = '/mcp/tools'
+MCP_CALL_ENDPOINT = '/mcp/call'
+
+# 知识库 / Obsidian vault（文件夹即库；默认项目内 TradingVault）
+ANNOTATION_VAULT_PATH = Path(
+    os.environ.get(
+        'ANNOTATION_VAULT_PATH',
+        str(BASE_DIR / 'vault' / 'TradingVault'),
+    )
+)
+ANNOTATION_INDEX_DB = DATA_DIR / 'annotation_index.sqlite'
+# Obsidian URI 用的库名（须与 Obsidian「库名称」一致，默认同文件夹名）
+OBSIDIAN_VAULT_NAME = os.environ.get(
+    'OBSIDIAN_VAULT_NAME', ANNOTATION_VAULT_PATH.name
+)
+# 可选：Obsidian 安装路径（仅用于文档/打开应用，写库不依赖）
+OBSIDIAN_APP_PATH = os.environ.get(
+    'OBSIDIAN_APP_PATH',
+    r'D:\Program Files\Obsidian\Obsidian.exe',
+)
 
 # QMT缓存配置
 QMT_CACHE_INTERVAL = 3  # 后端缓存刷新间隔（秒）
@@ -121,6 +154,7 @@ class Config:
     QMT_PYTHON_PATH = QMT_PYTHON_PATH
     QMT_DIR = QMT_DIR
     QMT_PORTS = QMT_PORTS
+    QMT_RPC_PORT = QMT_RPC_PORT
     QMT_ENABLED = QMT_ENABLED
     FLASK_PORT = FLASK_PORT
     FLASK_HOST = FLASK_HOST
@@ -131,6 +165,13 @@ class Config:
     PREWARM_TARGETS = PREWARM_TARGETS
     SQLITE_PATH = SQLITE_PATH
     BOARD_CLASSIFICATION_FILE = BOARD_CLASSIFICATION_FILE
+    MCP_TOOLS_ENDPOINT = MCP_TOOLS_ENDPOINT
+    MCP_SSE_ENDPOINT = MCP_SSE_ENDPOINT
+    MCP_CALL_ENDPOINT = MCP_CALL_ENDPOINT
+    ANNOTATION_VAULT_PATH = ANNOTATION_VAULT_PATH
+    ANNOTATION_INDEX_DB = ANNOTATION_INDEX_DB
+    OBSIDIAN_VAULT_NAME = OBSIDIAN_VAULT_NAME
+    OBSIDIAN_APP_PATH = OBSIDIAN_APP_PATH
 
     @staticmethod
     def validate():

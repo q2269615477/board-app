@@ -50,7 +50,7 @@ def build_stock_index() -> list[dict]:
     """从 QMT 获取全市场股票列表并构建索引"""
     try:
         from xtquant import xtdata
-        xtdata.connect(port=58610)
+        xtdata.connect(port=58600)  # 58610 已废弃
         xtdata.enable_hello = False
     except Exception as e:
         logger.warning(f"QMT连接失败: {e}")
@@ -118,7 +118,7 @@ def build_index_sectors() -> list[dict]:
     """从 QMT 获取全量指数列表"""
     try:
         from xtquant import xtdata
-        xtdata.connect(port=58610)
+        xtdata.connect(port=58600)  # 58610 已废弃
         xtdata.enable_hello = False
     except Exception as e:
         logger.warning(f"QMT连接失败: {e}")

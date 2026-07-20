@@ -1,10 +1,11 @@
 """
 lifecycle.py — 应用生命周期管理
 端口架构：
-  - 58600: QMT标准客户端 rpc_init（公式/策略引擎）
-（MiniQMT 58610 已移除，所有数据走 58600 RPC）
+  - 58600: QMT标准客户端 server_formula（公式 RPC / qmt_api 主取数通道）
+  - xtdata 行情服务常需 Mini 58610；本环境可能空壳，日线以 qmt_api 为准
 """
 import os
+import json
 import time
 import threading
 import subprocess
@@ -15,8 +16,8 @@ from typing import Optional
 logger = logging.getLogger('lifecycle')
 
 from core.config import (
-    QMT_PYTHON_PATH, QMT_DIR, QMT_ENABLED, BASE_DIR, DATA_DIR,
-    PREWARM_TARGETS, BOARD_CHG_REFRESH_INTERVAL
+    QMT_PYTHON_PATH, QMT_DIR, QMT_ENABLED, QMT_AUTO_START, QMT_DATA_DIR,
+    BASE_DIR, DATA_DIR, PREWARM_TARGETS, BOARD_CHG_REFRESH_INTERVAL
 )
 from services.data_update_scheduler import data_update_scheduler
 from services.miniqmt_service import miniqmt_service
@@ -77,11 +78,24 @@ class AppContext:
         }
 
     def start(self):
-        """启动应用：依赖检查 → QMT预热 → 后台服务"""
+        """启动应用：依赖检查 → 后台/调度 → 异步探测 58600 行情
+
+        主通道：完整 QMT 登录后走 58600 RPC（不依赖 MiniQMT）。
+        MiniQMT 仅当 QMT_AUTO_START=1 时由应用托管；默认可不启动。
+        """
         logger.info("=== 应用启动 ===")
+        # 注入 TUSHARE_TOKEN 等本地 env（.env / ~/.board-app.env）
+        try:
+            from core.env_bootstrap import ensure_tushare_token
+            if ensure_tushare_token():
+                logger.info("[OK] TUSHARE_TOKEN 已就绪")
+            else:
+                logger.warning("[WARN] TUSHARE_TOKEN 未就绪，Tushare 回填/板块日更将失败")
+        except Exception as e:
+            logger.warning(f"[WARN] env bootstrap 失败: {e}")
         self._check_dependencies()
-        self._start_qmt()
-        self._start_background_services()
+        self._start_background_services()  # 可选 MiniQMT + 真实日更调度
+        self._start_qmt()  # 异步探测完整 QMT / 58600
         kill_orphaned()
         write_pid()
         register_cleanup()
@@ -99,7 +113,7 @@ class AppContext:
     # ---- QMT 初始化 ----
 
     def _start_qmt(self):
-        """QMT标准客户端预热（58600端口，无需启动miniquote）"""
+        """QMT 标准客户端预热（58600 RPC，完整 QMT 登录后可用）"""
         if not QMT_ENABLED:
             logger.info("[QMT] 已禁用")
             return
@@ -108,101 +122,241 @@ class AppContext:
         self._threads.append(t)
 
     def _qmt_init_worker(self):
-        """QMT初始化：验证标准QMT客户端RPC并测试数据可用性"""
-        global _qmt_available
-        logger.info("[QMT] 验证标准客户端RPC(58600)...")
-        try:
-            # Step 1: rpc_init
-            proc = subprocess.run(
-                [QMT_PYTHON_PATH, '-c',
-                 'from xtquant import xtdata;'
-                 'r=xtdata.rpc_init("127.0.0.1:58600");'
-                 'print("RPC="+str(r))'],
-                capture_output=True, timeout=10, text=True, cwd=QMT_DIR
-            )
-            if 'RPC=0' not in proc.stdout:
-                logger.info("[QMT] ⚠️ 使用缓存数据（无QMT）")
-                return
+        """验证 58600 行情可用性（不依赖 MiniQMT 进程）。
 
-            # Step 2: 实际数据测试（验证QMT.exe正在运行）
-            proc2 = subprocess.run(
-                [QMT_PYTHON_PATH, '-c',
-                 'from xtquant import xtdata;'
-                 'xtdata.rpc_init("127.0.0.1:58600");'
-                 'xtdata.download_history_data("000001.SH","1d","20260701","20260702");'
-                 'd=xtdata.get_local_data(["time","open","high","low","close","volume"],["000001.SH"],"1d","20260701","20260702",count=1);'
-                 'print("OK" if "000001.SH" in d and d["000001.SH"] is not None and not d["000001.SH"].empty else "FAIL")'],
-                capture_output=True, timeout=15, text=True, cwd=QMT_DIR
+        协议分流（文档已实证）：
+        - **主通道 qmt_api 公式口**：net.RPCClient.request('getMarketData')，同 58600，
+          可取真实日线 OHLCV（不依赖 Mini 58610）。
+        - **次通道 xtdata**：get_market_data3，常需 server_ipythonapi(58610)；
+          仅连 58600 公式口时往往空壳（无 bar / subscribe=-2）。
+
+        判定顺序：先公式口有 bar → qmt_available=True；再记录 xtdata 状态。
+        """
+        global _qmt_available
+        logger.info("[QMT] 验证 58600（优先 qmt_api 公式口日线）...")
+        if not os.path.exists(QMT_PYTHON_PATH):
+            self._qmt_warning = f"QMT Python 不存在: {QMT_PYTHON_PATH}"
+            logger.warning(f"[QMT] {self._qmt_warning}")
+            logger.info("[QMT] ⚠️ 使用缓存数据（无QMT）")
+            return
+
+        for i in range(8):
+            if _port_open(58600):
+                if i:
+                    logger.info(f"[QMT] 58600 已监听，开始探测 ({i+1}s)")
+                break
+            time.sleep(1)
+        else:
+            logger.warning("[QMT] 58600 暂未监听，仍尝试取数")
+
+        try:
+            # ---- 主通道：qmt_api 公式 RPC（文档记载可取真实日线）----
+            formula_rows = 0
+            formula_last = ''
+            try:
+                from data.qmt_client import get_qmt_client
+                probe = get_qmt_client().probe_formula_ready()
+                if probe.get('ok') and int(probe.get('rows') or 0) > 0:
+                    formula_rows = int(probe['rows'])
+                    formula_last = str(probe.get('last_date') or '')
+                    _qmt_available = True
+                    self.qmt_available = True
+                    self._qmt_warning = (
+                        f"QMT 公式口就绪（qmt_api / net.RPCClient getMarketData @58600），"
+                        f"日线样本 {formula_rows} 条"
+                        + (f"，末 bar={formula_last}" if formula_last else "")
+                        + "。xtdata 标准路径若空壳属预期（需 Mini 58610 行情服务）。"
+                    )
+                    logger.info(
+                        f"[QMT] ✓ 公式口就绪 rows={formula_rows} last={formula_last!r}"
+                    )
+                    threading.Thread(target=self._qmt_sync_all, daemon=True).start()
+                    return
+                logger.info(f"[QMT] 公式口探测未就绪: {probe}")
+            except Exception as e:
+                logger.warning(f"[QMT] 公式口探测异常: {e}")
+
+            # ---- 次通道：xtdata（58610/完整行情服务）----
+            probe = (
+                'from xtquant import xtdata\n'
+                'import json\n'
+                f'DATA_DIR = r"{QMT_DATA_DIR}"\n'
+                'xtdata.reconnect("127.0.0.1", 58600)\n'
+                'c = xtdata.get_client()\n'
+                'connected = bool(c.is_connected()) if c is not None else False\n'
+                'client_data_dir = ""\n'
+                'client_app_dir = ""\n'
+                'try:\n'
+                '    client_data_dir = str(c.get_data_dir() or "")\n'
+                'except Exception:\n'
+                '    pass\n'
+                'try:\n'
+                '    client_app_dir = str(c.get_app_dir() or "")\n'
+                'except Exception:\n'
+                '    pass\n'
+                'rows = 0\n'
+                'detail_ok = False\n'
+                'sector_n = 0\n'
+                'err = ""\n'
+                'quote_err = ""\n'
+                'try:\n'
+                '    xtdata.download_history_data("000001.SH", "1d", "20260601", "20260717")\n'
+                'except Exception as e:\n'
+                '    err = str(e)[:120]\n'
+                'try:\n'
+                '    d = xtdata.get_local_data(["time","open","high","low","close","volume"],'
+                '["000001.SH"],"1d","20260601","20260717",count=5,data_dir=DATA_DIR)\n'
+                '    df = d.get("000001.SH") if isinstance(d, dict) else None\n'
+                '    if df is not None and hasattr(df, "empty") and not df.empty:\n'
+                '        rows = int(len(df))\n'
+                'except Exception as e:\n'
+                '    err = (err + "|" + str(e)[:80]) if err else str(e)[:120]\n'
+                'try:\n'
+                '    det = xtdata.get_instrument_detail("000001.SH") or {}\n'
+                '    detail_ok = bool(det.get("InstrumentID") or det.get("InstrumentName")'
+                ' or det.get("LastPrice"))\n'
+                'except Exception:\n'
+                '    pass\n'
+                'try:\n'
+                '    lst = xtdata.get_stock_list_in_sector("沪深A股") or []\n'
+                '    sector_n = len(lst)\n'
+                'except Exception as e:\n'
+                '    quote_err = str(e)[:80]\n'
+                'try:\n'
+                '    sid = xtdata.subscribe_quote("000001.SH", period="1d", count=1)\n'
+                '    if int(sid) < 0:\n'
+                '        quote_err = (quote_err + f"|subscribe={sid}").strip("|")\n'
+                'except Exception as e:\n'
+                '    quote_err = (quote_err + "|" + str(e)[:80]).strip("|")\n'
+                'print(json.dumps({"connected": connected, "rows": rows, '
+                '"detail_ok": detail_ok, "sector_n": sector_n, '
+                '"err": err, "quote_err": quote_err, "data_dir": DATA_DIR, '
+                '"client_data_dir": client_data_dir, "client_app_dir": client_app_dir}, '
+                'ensure_ascii=False))\n'
             )
-            if 'OK' in proc2.stdout:
+            proc = subprocess.run(
+                [QMT_PYTHON_PATH, '-c', probe],
+                capture_output=True, timeout=30, text=True, cwd=QMT_DIR
+            )
+            out_lines = (proc.stdout or '').strip().splitlines()
+            payload = {}
+            for line in reversed(out_lines):
+                line = line.strip()
+                if line.startswith('{') and line.endswith('}'):
+                    payload = json.loads(line)
+                    break
+            connected = bool(payload.get('connected'))
+            rows = int(payload.get('rows') or 0)
+            detail_ok = bool(payload.get('detail_ok'))
+            sector_n = int(payload.get('sector_n') or 0)
+            err = str(payload.get('err') or '')
+            quote_err = str(payload.get('quote_err') or '')
+            client_data_dir = str(payload.get('client_data_dir') or '')
+            client_app_dir = str(payload.get('client_app_dir') or '')
+            data_ok = rows > 0 or detail_ok
+
+            if connected and data_ok:
                 _qmt_available = True
                 self.qmt_available = True
-                logger.info("[QMT] ✓ 标准客户端RPC就绪（数据服务正常）")
-                # 后台同步常用标的到SQLite
+                self._qmt_warning = ""
+                logger.info(
+                    f"[QMT] ✓ xtdata 行情就绪 connected={connected} rows={rows} "
+                    f"detail_ok={detail_ok} sector_n={sector_n} "
+                    f"client_data_dir={client_data_dir!r}"
+                )
                 threading.Thread(target=self._qmt_sync_all, daemon=True).start()
                 return
+
+            if connected and not data_ok:
+                self._qmt_warning = (
+                    "QMT 58600 已连接，但公式口与 xtdata 均未取到日线。"
+                    "请确认完整 QMT 已登录且本地有 K 线缓存；"
+                    "分钟线另需 Mini 行情服务(58610)。"
+                )
+                extras = []
+                if not client_data_dir:
+                    extras.append("client_data_dir=空")
+                if sector_n:
+                    extras.append(f"sector_n={sector_n}")
+                if err:
+                    extras.append(f"err={err}")
+                if quote_err:
+                    extras.append(f"quote={quote_err}")
+                if extras:
+                    self._qmt_warning += " | " + " ; ".join(extras)
+                logger.warning(f"[QMT] ⚠️ {self._qmt_warning}")
             else:
-                logger.warning("[QMT] ⚠️ RPC连接成功但数据服务不可用（请确认QMT.exe已启动）")
-                self._qmt_warning = "QMT RPC连接成功但数据服务不可用，请确认QMT.exe已启动并连接行情"
+                self._qmt_warning = (
+                    "QMT 未连接 58600。请先启动并登录完整 QMT 客户端。"
+                    f" stdout={(proc.stdout or '')[:100]!r}"
+                )
+                logger.warning(f"[QMT] ⚠️ {self._qmt_warning}")
         except Exception as e:
             logger.warning(f"[QMT] RPC验证失败: {e}")
-            self._qmt_warning = f"QMT连接失败: {str(e)[:100]}，请检查MiniQMT是否启动"
-        logger.info("[QMT] ⚠️ 使用缓存数据（无QMT）")
+            self._qmt_warning = f"QMT连接失败: {str(e)[:100]}。请检查完整 QMT 是否已登录"
+        logger.info("[QMT] ⚠️ 使用缓存/Tushare 回退（QMT 行情未就绪）")
 
     def _qmt_sync_all(self):
-        """后台同步常用标的到SQLite"""
-        import json
+        """后台同步常用标的到 SQLite（优先 qmt_api 公式口日线）"""
         import sqlite3
-        import pandas as pd
         from core.config import Config
 
-        today = pd.Timestamp.now().strftime('%Y%m%d')
         targets = [
-            ('sh000001','000001.SH'),('sz399006','399006.SZ'),
-            ('sh000688','000688.SH'),('sh000300','000300.SH'),
-            ('sh000016','000016.SH'),('sh000852','000852.SH'),
-            ('sh000853','000853.SH'),('sh000985','000985.SH'),
-            ('HSI','HSI.HK'),('HSTECH','HSTECH.HK'),
-            ('600519','600519.SH'),('600036','600036.SH'),
+            ('sh000001', '000001.SH'), ('sz399006', '399006.SZ'),
+            ('sh000688', '000688.SH'), ('sh000300', '000300.SH'),
+            ('sh000016', '000016.SH'), ('sh000852', '000852.SH'),
+            ('sh000853', '000853.SH'), ('sh000985', '000985.SH'),
+            ('HSI', 'HSI.HK'), ('HSTECH', 'HSTECH.HK'),
+            ('600519', '600519.SH'), ('600036', '600036.SH'),
         ]
+        try:
+            from data.qmt_client import get_qmt_client
+            client = get_qmt_client()
+        except Exception as e:
+            logger.warning(f"[QMT同步] 无法加载 qmt_client: {e}")
+            return
+
+        # 批量公式口（单子进程）覆盖多数标的
+        qmt_codes = [qc for _, qc in targets]
+        batch = {}
+        try:
+            batch = client.get_daily_batch(qmt_codes, start='20200101', count=-1) or {}
+        except Exception as e:
+            logger.debug(f"[QMT同步] batch 失败，改逐只: {e}")
+
+        synced = 0
         for code, qmt_code in targets:
             try:
-                script = (
-                    "from xtquant import xtdata; import pandas as pd, json\n"
-                    f"xtdata.rpc_init('127.0.0.1:58600')\n"
-                    f"xtdata.download_history_data('{qmt_code}','1d','{today}','{today}')\n"
-                    f"d=xtdata.get_local_data(['time','open','high','low','close','volume'],['{qmt_code}'],'1d','{today}','{today}',count=2)\n"
-                    f"if '{qmt_code}' in d and d['{qmt_code}'] is not None and not d['{qmt_code}'].empty:\n"
-                    "  rows=[]\n"
-                    "  for idx,row in d['{qmt_code}'].iterrows():\n"
-                    "    t=int(idx) if isinstance(idx,(int,float)) and idx>1e9 else 0\n"
-                    "    ds=str(pd.to_datetime(t,unit='ms').date()) if t>1e9 else str(idx)[:10]\n"
-                    "    vol=int(float(row['volume'])) or 0\n"
-                    "    if vol==0: continue\n"
-                    "    rows.append({'date':ds,'open':round(float(row['open']),2),'high':round(float(row['high']),2),'low':round(float(row['low']),2),'close':round(float(row['close']),2),'volume':vol})\n"
-                    "  print(json.dumps({'ok':True,'data':rows}))\n"
-                    "else: print(json.dumps({'ok':False}))"
-                )
-                proc = subprocess.run(
-                    [QMT_PYTHON_PATH, '-c', script],
-                    capture_output=True, timeout=15, cwd=QMT_DIR
-                )
-                out = proc.stdout.decode('utf-8', errors='ignore').strip()
-                result = json.loads(out) if out else {}
-                if result.get('ok') and result.get('data'):
-                    conn = sqlite3.connect(str(Config.SQLITE_PATH))
-                    for row in result['data']:
-                        # 统一日期格式为 YYYY-MM-DD，防止写入混合格式
-                        raw_date = str(row.get('date', ''))
-                        if len(raw_date) == 8 and raw_date.isdigit():
-                            raw_date = f'{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}'
-                        conn.execute(
-                            'INSERT OR REPLACE INTO kline (code,period,date,open,high,low,close,volume) VALUES (?,?,?,?,?,?,?,?)',
-                            (code, 'daily', raw_date, row.get('open'), row.get('high'), row.get('low'), row.get('close'), row.get('volume')))
-                    conn.commit()
-                    conn.close()
-            except Exception:
-                pass
+                df = batch.get(qmt_code)
+                if df is None or getattr(df, 'empty', True):
+                    df = client.get_daily(qmt_code, start='20200101', count=-1)
+                if df is None or getattr(df, 'empty', True):
+                    continue
+                conn = sqlite3.connect(str(Config.SQLITE_PATH))
+                for _, row in df.iterrows():
+                    raw_date = str(row.get('date', ''))
+                    if len(raw_date) == 8 and raw_date.isdigit():
+                        raw_date = f'{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}'
+                    elif len(raw_date) >= 10:
+                        raw_date = raw_date[:10]
+                    conn.execute(
+                        'INSERT OR REPLACE INTO kline '
+                        '(code,period,date,open,high,low,close,volume) VALUES (?,?,?,?,?,?,?,?)',
+                        (
+                            code, 'daily', raw_date,
+                            float(row.get('open') or 0),
+                            float(row.get('high') or 0),
+                            float(row.get('low') or 0),
+                            float(row.get('close') or 0),
+                            int(float(row.get('volume') or 0)),
+                        ),
+                    )
+                conn.commit()
+                conn.close()
+                synced += 1
+            except Exception as e:
+                logger.debug(f"[QMT同步] {code} 失败: {e}")
+        logger.info(f"[QMT同步] 公式口/统一通道写入 {synced}/{len(targets)} 个标的")
 
     # ---- 后台服务 ----
 
@@ -216,28 +370,32 @@ class AppContext:
         t2.start()
         self._threads.append(t2)
 
-        # 启动 MiniQMT 服务（应用托管模式，带看门狗保障）
-        try:
-            miniqmt_service.set_mode('application')
-            success = miniqmt_service.start()
-            if success:
-                # 等待服务初始化
-                import time
-                time.sleep(2)
-                status = miniqmt_service.get_status()
-                if status['process_alive']:
-                    logger.info("[生命周期] MiniQMT 服务已启动（应用托管模式，心跳+看门狗）")
+        # MiniQMT 可选：默认关闭（完整 QMT 已登录即可）；需托管时设 QMT_AUTO_START=1
+        if QMT_AUTO_START:
+            try:
+                miniqmt_service.set_mode('application')
+                success = miniqmt_service.start()
+                if success:
+                    time.sleep(2)
+                    status = miniqmt_service.get_status()
+                    if status['process_alive']:
+                        logger.info("[生命周期] MiniQMT 服务已启动（QMT_AUTO_START=1，心跳+看门狗）")
+                    else:
+                        logger.warning("[生命周期] MiniQMT 服务已启动，但进程尚未就绪，监控线程将继续尝试")
                 else:
-                    logger.warning("[生命周期] MiniQMT 服务已启动，但进程尚未就绪，监控线程将继续尝试")
-            else:
-                logger.error("[生命周期] MiniQMT 服务启动失败")
-        except Exception as e:
-            logger.error(f"[生命周期] MiniQMT 服务启动异常: {e}")
+                    logger.error("[生命周期] MiniQMT 服务启动失败")
+            except Exception as e:
+                logger.error(f"[生命周期] MiniQMT 服务启动异常: {e}")
+        else:
+            logger.info("[生命周期] 跳过 MiniQMT 自动启动（主通道=完整 QMT / 58600；需要时设 QMT_AUTO_START=1）")
 
-        # 启动数据更新调度器
+        # 启动数据更新调度器：
+        # services.data_update_scheduler 仅是状态/手动触发门面；
+        # 真实交易日历循环在 data_update_manager.start_scheduler()。
         try:
+            # start() 内部已挂接 data_update_manager 真实日更循环，勿重复 start
             data_update_scheduler.start()
-            logger.info("[生命周期] 数据更新调度器已启动")
+            logger.info("[生命周期] 数据更新调度器已启动（门面+真实日更循环）")
         except Exception as e:
             logger.error(f"[生命周期] 调度器启动失败: {e}")
 

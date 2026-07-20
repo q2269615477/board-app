@@ -198,29 +198,51 @@ class DataUpdateScheduler:
         }
     
     def start(self) -> bool:
-        """启动调度器"""
-        with self._lock:
-            if self._running:
-                return True
-            
-            self._running = True
-            logger.info("[调度器] 数据更新调度器已启动")
-            return True
-    
-    def stop(self) -> bool:
-        """停止调度器"""
+        """启动调度器门面，并挂接真实日更循环（data_update_manager）。
+
+        历史问题：此处仅置 _running=True，不启任何循环，导致
+        system status 显示 scheduler_running=true 但 update_status
+        的 last_run/next_run 长期陈旧、日更不触发。
+        """
         with self._lock:
             if not self._running:
-                return True
-            
+                self._running = True
+                logger.info("[调度器] 门面已启动")
+        # 真实循环：交易日历感知 + update_all_today / 盘中指数同步
+        try:
+            from data_update_manager import start_scheduler as start_real_scheduler
+            start_real_scheduler()
+            logger.info("[调度器] 已挂接 data_update_manager 日更循环")
+        except Exception as e:
+            logger.error(f"[调度器] 挂接真实日更循环失败: {e}")
+            # 门面仍标记 running，避免 API 误导为“完全未启动”；
+            # 但 get_status 会带上 real_scheduler 细节供诊断。
+        return True
+    
+    def stop(self) -> bool:
+        """停止调度器门面，并尝试停止真实日更循环"""
+        with self._lock:
             self._running = False
-            logger.info("[调度器] 数据更新调度器已停止")
-            return True
+            logger.info("[调度器] 门面已停止")
+        try:
+            from data_update_manager import stop_scheduler as stop_real_scheduler
+            stop_real_scheduler()
+        except Exception as e:
+            logger.warning(f"[调度器] 停止真实日更循环失败: {e}")
+        return True
     
     def is_running(self) -> bool:
-        """检查调度器是否运行中"""
+        """检查调度器是否运行中（门面 flag；真实线程见 get_status）"""
         with self._lock:
-            return self._running
+            facade = self._running
+        real_alive = False
+        try:
+            from data_update_manager import _scheduler_thread, _scheduler_running
+            real_alive = bool(_scheduler_running and _scheduler_thread and _scheduler_thread.is_alive())
+        except Exception:
+            pass
+        # 任一侧在跑都视为 running，避免启动竞态下 status 闪 false
+        return facade or real_alive
     
     def trigger_update(self, update_type: str) -> bool:
         """
@@ -263,9 +285,35 @@ class DataUpdateScheduler:
             return False
     
     def get_status(self) -> Dict[str, Any]:
-        """获取调度器状态"""
+        """获取调度器状态（含真实日更循环诊断字段）"""
+        real = {
+            'thread_alive': False,
+            'loop_flag': False,
+            'last_run': None,
+            'next_run': None,
+            'status': None,
+        }
+        try:
+            from data_update_manager import (
+                _scheduler_thread, _scheduler_running, get_update_status,
+            )
+            real['thread_alive'] = bool(
+                _scheduler_thread is not None and _scheduler_thread.is_alive()
+            )
+            real['loop_flag'] = bool(_scheduler_running)
+            st = get_update_status() or {}
+            sch = st.get('scheduler') or {}
+            real['last_run'] = sch.get('last_run')
+            real['next_run'] = sch.get('next_run')
+            real['status'] = sch.get('status')
+        except Exception as e:
+            real['error'] = str(e)[:120]
+        with self._lock:
+            facade_running = self._running
         return {
-            'running': self._running,
+            'running': facade_running or real.get('thread_alive') or real.get('loop_flag'),
+            'facade_running': facade_running,
+            'real_scheduler': real,
             'last_updates': {
                 k: v.isoformat() if v else None
                 for k, v in self._last_update_times.items()

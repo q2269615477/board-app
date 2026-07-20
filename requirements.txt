@@ -1,0 +1,47 @@
+# board-app 运行时核心依赖（venv: python -m pip install -r requirements.txt）
+# 说明：xtquant 不在此列表——使用 QMT 安装目录自带 pythonw 子进程调用。
+
+Flask==3.1.3
+flask-cors==6.0.5
+flask-sock==0.7.0
+Werkzeug==3.1.8
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+itsdangerous==2.2.0
+click==8.4.2
+blinker==1.9.0
+simple-websocket==1.1.0
+
+pandas==3.0.3
+numpy==2.5.0
+python-dateutil==2.9.0.post0
+tzdata==2026.2
+six==1.17.0
+
+requests==2.34.2
+urllib3==2.7.0
+certifi==2026.6.17
+charset-normalizer==3.4.7
+idna==3.18
+websocket-client==1.9.0
+
+tushare==1.4.29
+akshare==1.18.64
+beautifulsoup4==4.15.0
+lxml==6.1.1
+html5lib==1.1
+soupsieve==2.8.4
+openpyxl==3.1.5
+
+# 启动警告加固：Flask .env 提示 + MCP 参数校验
+python-dotenv==1.2.2
+pydantic==2.13.4
+pydantic_core==2.46.4
+annotated-types==0.7.0
+typing_extensions==4.16.0
+
+pytest==9.1.1
+iniconfig==2.3.0
+packaging==26.2
+pluggy==1.6.0
+colorama==0.4.6

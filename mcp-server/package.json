@@ -1,0 +1,30 @@
+{
+  "name": "board-app-mcp-server",
+  "version": "1.0.0",
+  "description": "AI炒股面板MCP服务 - 支持A股板块分析、画线、回测",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "board-app-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test-mcp.js"
+  },
+  "keywords": [
+    "mcp",
+    "stock",
+    "trading",
+    "a-share",
+    "kline"
+  ],
+  "author": "AI Trader",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.23.8"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

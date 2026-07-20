@@ -99,22 +99,54 @@ def get_spot_route(data_type, code):
 
 @bp.route('/api/spot/indices')
 def spot_indices_route():
-    """导航栏批量指数行情"""
-    from data_loader import get_spot_index, get_spot_board, get_spot_stock
+    """导航栏批量指数行情（并行获取，避免串行超时）"""
+    from data_loader import get_spot_index, get_spot_board, get_spot_stock, get_global_index_spot
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+    
     result = {}
-    for code, typ in [
-        ('sh000001','index'),('sz399006','index'),('sh000688','index'),
-        ('sh000300','index'),('sh000016','index'),('sh000852','index'),
-        ('sh000853','index'),('HSI','hk_index'),('HSTECH','hk_index'),
-        ('BK1158','concept'),('800000','index'),
-        ('^N225','stock'),('^KS11','stock'),('^TWII','stock'),
-        ('SPX','stock'),('IXIC','stock'),('DJI','stock'),
-    ]:
+    result_lock = threading.Lock()
+    
+    def _fetch_index(code, typ):
         try:
-            d = get_spot_index(code) if typ in ('index','hk_index') else \
-                get_spot_board('concept',code) if typ=='concept' else \
-                get_spot_stock(code)
-            if d: result[code] = {'price':d.get('price',0),'change_pct':d.get('change_pct',0)}
+            d = get_spot_index(code) if typ == 'index' else get_spot_board('concept', code)
+            if d and d.get('price', 0) > 0:
+                return code, {'price': d.get('price', 0), 'change_pct': d.get('change_pct', 0)}
         except Exception:
-            pass  # 单个标的行情获取失败不影响其他标的
-    return jsonify({'data':result})
+            pass
+        return code, None
+    
+    def _fetch_global(code):
+        try:
+            d = get_global_index_spot(code)
+            if d and d.get('price', 0) > 0:
+                return code, {'price': d.get('price', 0), 'change_pct': d.get('change_pct', 0)}
+        except Exception:
+            pass
+        return code, None
+    
+    # 并行获取所有指数
+    tasks = []
+    with ThreadPoolExecutor(max_workers=8, thread_name_prefix='spot_idx') as executor:
+        # A股指数
+        for code, typ in [
+            ('sh000001','index'),('sz399006','index'),('sh000688','index'),
+            ('sh000300','index'),('sh000016','index'),('sh000852','index'),
+            ('sh000853','index'),('BK1158','concept'),('800000','index'),
+        ]:
+            tasks.append(executor.submit(_fetch_index, code, typ))
+        
+        # 港股/亚太/美股指数
+        for code in ['HSI', 'HSTECH', '^N225', '^KS11', '^TWII', 'SPX', 'IXIC', 'DJI']:
+            tasks.append(executor.submit(_fetch_global, code))
+        
+        for future in as_completed(tasks, timeout=20):
+            try:
+                code, data = future.result(timeout=15)
+                if data:
+                    with result_lock:
+                        result[code] = data
+            except Exception:
+                pass  # 单个标的超时或失败不影响其他
+    
+    return jsonify({'data': result})
