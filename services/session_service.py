@@ -345,6 +345,7 @@ class SessionService:
         """
         if not session.get("id"):
             raise ValueError("缺少 session.id")
+        existing_rev = 0
         existing = self.repo.get(session["id"])
         if existing:
             # 只读守护：基于持久化状态判断
