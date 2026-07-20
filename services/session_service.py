@@ -908,6 +908,74 @@ class SessionService:
         ev["elements"] = els
         self._sync_event_legacy_fields(ev)
 
+    def update_cause_title(
+        self, session: Dict[str, Any], cause_id: str, title: str
+    ) -> Dict[str, Any]:
+        """重命名因果链标题。空标题自动回退到 '因-L{depth}'。"""
+        self._check_writable(session)
+        self.normalize_session(session)
+        c = next(
+            (x for x in session.get("causes") or [] if x["id"] == cause_id), None
+        )
+        if not c:
+            raise ValueError("因果链不存在")
+        new_title = (title or "").strip()
+        if not new_title:
+            depth = c.get("depth") or 0
+            new_title = f"因-L{depth}" if depth > 0 else "因"
+        c["title"] = new_title[:64]  # 限长
+        return c
+
+    def update_event_title(
+        self, session: Dict[str, Any], event_id: str, title: str
+    ) -> Dict[str, Any]:
+        """重命名事件标题。"""
+        self._check_writable(session)
+        self.normalize_session(session)
+        ev = next((e for e in session.get("events") or [] if e["id"] == event_id), None)
+        if not ev:
+            raise ValueError("事件不存在")
+        ev["title"] = (title or "").strip()[:64]
+        return ev
+
+    def update_session_title(
+        self, session: Dict[str, Any], title: str
+    ) -> Dict[str, Any]:
+        """重命名会话标题。"""
+        self._check_writable(session)
+        session["title"] = (title or "").strip()[:80] or session.get("title", "会话")
+        return session
+
+    def smart_title(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        """智能生成会话标题：基于当前 chart / 周期 / 链数 / 未闭果数。
+
+        格式：`{symbol_name} · {period} · N链 · 未闭M`
+        """
+        self._check_writable(session)
+        ui = session.get("ui") or {}
+        ctx = (session.get("charts") or [])
+        cur_chart = next(
+            (
+                ch
+                for ch in (session.get("charts") or [])
+                if ch.get("id") == session.get("current_chart_id")
+            ),
+            (session.get("charts") or [{}])[0] if session.get("charts") else {},
+        )
+        symbol = cur_chart.get("symbol_name") or cur_chart.get("symbol") or "未选"
+        period = (cur_chart.get("period") or "").upper() or "日"
+        cause_count = len([c for c in session.get("causes") or [] if c.get("id")])
+        open_effects = len(
+            [
+                e
+                for e in session.get("effects") or []
+                if e.get("phase") == "collecting"
+            ]
+        )
+        new_title = f"{symbol} · {period} · {cause_count}链 · 未闭{open_effects}"
+        session["title"] = new_title[:80]
+        return session
+
     def delete_element(
         self, session: Dict[str, Any], event_id: str = None, element_id: str = None
     ) -> Dict[str, Any]:

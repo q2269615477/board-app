@@ -331,6 +331,18 @@ def session_action(session_id: str):
             )
         elif action == "click_effect":
             sess = svc.click_effect(sess, effect_id=body.get("effect_id"))
+        elif action in ("update_cause_title", "rename_cause"):
+            sess = svc.update_cause_title(
+                sess, body.get("cause_id") or "", body.get("title") or ""
+            )
+        elif action in ("update_event_title", "rename_event"):
+            sess = svc.update_event_title(
+                sess, body.get("event_id") or "", body.get("title") or ""
+            )
+        elif action == "update_session_title":
+            sess = svc.update_session_title(sess, body.get("title") or "")
+        elif action == "smart_title":
+            sess = svc.smart_title(sess)
         elif action in ("delete_event", "remove_event"):
             sess = svc.delete_event(sess, body.get("event_id") or "")
         elif action in ("delete_element", "remove_element"):
