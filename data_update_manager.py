@@ -548,7 +548,7 @@ def _tushare_fallback_single_index(
         return 0
 
 def update_all_indices_qmt(max_retries: int = 3) -> dict:
-    """通过 QMT 更新指数日K（唯一路径；不用 Tushare）。"""
+    """更新指数日K：QMT 优先，若无数据或断连则 Tushare 兜底。"""
     qmt_targets = [
         (c, n, t) for c, n, t in PREWARM_TARGETS
         if c in QMT_INDEX_MAP and c not in BOARD_ONLY_PREWARM
@@ -557,13 +557,11 @@ def update_all_indices_qmt(max_retries: int = 3) -> dict:
         'success': 0, 'failed': 0, 'skipped': 0,
         'total': len(qmt_targets), 'written': 0, 'channel': 'qmt',
     }
-    logger.info(f"[QMT指数] 开始更新 {result['total']} 个指数（仅 QMT）")
+    logger.info(f"[QMT指数] 开始更新 {result['total']} 个指数（QMT 优先）")
 
-    if not _qmt_connect():
-        logger.error("[QMT指数] QMT 不可用，跳过指数更新（不回退 Tushare）")
-        result['error'] = 'QMT未连接'
-        result['failed'] = result['total']
-        return result
+    qmt_available = _qmt_connect()
+    if not qmt_available:
+        logger.warning("[QMT指数] QMT 不可用，全部回退 Tushare 兜底")
 
     conn = _sqlite3.connect(_LEDGER_DB)
     cur = conn.cursor()
@@ -592,15 +590,16 @@ def update_all_indices_qmt(max_retries: int = 3) -> dict:
                 continue
 
             rows = []
-            for attempt in range(max_retries):
-                try:
-                    rows = fetch_qmt_kline(code, next_start)
-                    break
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        time.sleep(2 ** attempt)
-                    else:
-                        logger.error(f"[QMT指数] {name} 读取失败: {e}")
+            if qmt_available:
+                for attempt in range(max_retries):
+                    try:
+                        rows = fetch_qmt_kline(code, next_start)
+                        break
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            time.sleep(2 ** attempt)
+                        else:
+                            logger.error(f"[QMT指数] {name} 读取失败: {e}")
 
             if rows:
                 batch = [
@@ -674,7 +673,7 @@ def update_all_indices_qmt(max_retries: int = 3) -> dict:
     conn.close()
     logger.info(
         f"[QMT指数] 完成: 成功={result['success']}, 失败={result['failed']}, "
-        f"跳过板指={result['skipped']}, 写入={result['written']}"
+        f"跳过板指={result['skipped']}, 写入={result['written']}, 通道={result['channel']}"
     )
     return result
 
