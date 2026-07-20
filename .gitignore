@@ -1,0 +1,33 @@
+
+# secrets
+.env
+*.env
+.board-app.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 日志 & 临时
+*.log
+nul
+background_captures/
+
+# SQLite 运行时
+*.db-shm
+*.db-wal
+data/session_index.sqlite
+data/annotation_index.sqlite
+
+# WorkBuddy 内部
+.workbuddy/
+
+# Obsidian vault（人读副本，非代码）
+vault/
+
+# QMT 导出
+data/qmt_export/
+
+# 系统
+.DS_Store
