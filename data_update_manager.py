@@ -1,9 +1,10 @@
 """
-data_update_manager.py - 数据更新管理器（v5.1）
+data_update_manager.py - 数据更新管理器（v5.2）
 数据源纪律（硬）：
-  - 指数 / 个股日K / 盘中同步 → **仅 QMT**（qmt_api 公式口 @58600 优先）
+  - 指数 / 个股日K / 盘中同步 → **QMT 优先**（qmt_api 公式口 @58600）
+  - QMT 数据陈旧超过 1 个交易日 → **自动回退 Tushare** 补齐尾部
   - 东财 BK 板块（行业+概念）  → **仅 Tushare** dc_index/dc_daily/dc_member
-  - 禁止用 Tushare 回填指数或个股；禁止用 QMT 替代东财板块接口
+  - 禁止用 QMT 替代东财板块接口
 """
 import json
 import os
@@ -502,7 +503,49 @@ def qmt_update_all_stocks(
     return result
 
 
-# ===== 指数数据（QMT） =====
+# ===== 指数数据（QMT 优先 + Tushare 兜底） =====
+
+def _tushare_fallback_single_index(
+    code: str, name: str, local_max: str, last_td_norm: str,
+    cur, insert_sql: str, now_str: str
+) -> int:
+    """QMT 数据陈旧时，用 Tushare 补齐尾部。
+
+    返回写入行数；失败返回 0。
+    """
+    start = (datetime.strptime(local_max, '%Y%m%d') + timedelta(days=1)).strftime('%Y%m%d')
+    if start > last_td_norm:
+        return 0
+    try:
+        mapping = TUSHARE_INDEX_API_MAP.get(code)
+        if not mapping:
+            logger.warning(f"[Tushare兜底] {name}({code}) 无 Tushare 映射，跳过")
+            return 0
+        api, ts_code = mapping
+        df = _fetch_tushare_index_df(api, ts_code, start, last_td_norm)
+        rows = df.to_dict('records') if not df.empty else []
+        if not rows:
+            logger.warning(
+                f"[Tushare兜底] {name}({code}) Tushare 也无新数据 "
+                f"({api}/{ts_code} {start}..{last_td_norm})"
+            )
+            return 0
+        batch = [
+            (code, 'daily', r['date'], r['open'], r['high'], r['low'],
+             r['close'], r['volume'], now_str)
+            for r in rows
+        ]
+        cur.executemany(insert_sql, batch)
+        cur.connection.commit()
+        last_d = max(r['date'] for r in rows)
+        logger.info(
+            f"[Tushare兜底] ✓ {name}({code}) 补齐 {len(batch)} 条 "
+            f"{start}→{last_d} (api={api}/{ts_code})"
+        )
+        return len(batch)
+    except Exception as e:
+        logger.error(f"[Tushare兜底] {name}({code}) 失败: {e}")
+        return 0
 
 def update_all_indices_qmt(max_retries: int = 3) -> dict:
     """通过 QMT 更新指数日K（唯一路径；不用 Tushare）。"""
@@ -584,20 +627,29 @@ def update_all_indices_qmt(max_retries: int = 3) -> dict:
                     )
                     result['success'] += 1
                 else:
+                    # QMT 数据陈旧 → Tushare 兜底补齐尾部
                     logger.warning(
                         f"[QMT指数] {name} QMT 无新 bar (start={next_start}) "
-                        f"local_max={max_norm} < last_td={last_td_norm}（不回退 Tushare）"
+                        f"local_max={max_norm} < last_td={last_td_norm} → 回退 Tushare"
                     )
-                    result['failed'] += 1
-                    status = _load_status()
-                    status.setdefault('indices', {})[code] = {
-                        'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        'status': 'qmt_stale',
-                        'name': name,
-                        'local_max': max_norm,
-                        'last_td': last_td_norm,
-                    }
-                    _save_status(status)
+                    fallback_written = _tushare_fallback_single_index(
+                        code, name, max_norm, last_td_norm, cur, INSERT_SQL, now_str
+                    )
+                    if fallback_written > 0:
+                        result['written'] += fallback_written
+                        result['success'] += 1
+                        result['channel'] = 'qmt+tushare_fallback'
+                    else:
+                        result['failed'] += 1
+                        status = _load_status()
+                        status.setdefault('indices', {})[code] = {
+                            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'status': 'stale_no_source',
+                            'name': name,
+                            'local_max': max_norm,
+                            'last_td': last_td_norm,
+                        }
+                        _save_status(status)
 
         except Exception as e:
             logger.error(f"[QMT指数] {name}({code}) 失败: {e}")

@@ -107,3 +107,107 @@ class TestKlineMetaBatch:
         assert len(batches) == 3  # 500 + 500 + 200
         for batch in batches:
             assert len(batch) <= 999  # 每批不超过 SQLite 变量上限
+
+
+class TestTushareFallback:
+    """QMT stale → Tushare 兜底逻辑"""
+
+    def test_fallback_writes_when_qmt_stale(self, tmp_path, monkeypatch):
+        import sqlite3
+        from data_update_manager import _tushare_fallback_single_index
+        from unittest.mock import patch, MagicMock
+        import pandas as pd
+
+        db = tmp_path / 'test.db'
+        conn = sqlite3.connect(str(db))
+        cur = conn.cursor()
+        cur.execute(
+            'CREATE TABLE IF NOT EXISTS kline '
+            '(code TEXT,period TEXT,date TEXT,open REAL,high REAL,low REAL,close REAL,volume REAL,updated_at TEXT)'
+        )
+        # 预置旧数据
+        cur.execute(
+            "INSERT INTO kline VALUES('sh000001','daily','2026-07-10',100,110,90,105,1000,'')"
+        )
+        conn.commit()
+
+        insert_sql = (
+            "INSERT OR REPLACE INTO kline "
+            "(code,period,date,open,high,low,close,volume,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)"
+        )
+
+        # Mock Tushare返回 5 条新数据
+        mock_df = pd.DataFrame([
+            {'date': '2026-07-11', 'open': 105, 'high': 115, 'low': 95, 'close': 110, 'volume': 2000},
+            {'date': '2026-07-14', 'open': 110, 'high': 120, 'low': 100, 'close': 115, 'volume': 3000},
+        ])
+        with patch('data_update_manager._fetch_tushare_index_df', return_value=mock_df):
+            written = _tushare_fallback_single_index(
+                code='sh000001',
+                name='上证指数',
+                local_max='20260710',
+                last_td_norm='20260715',
+                cur=cur,
+                insert_sql=insert_sql,
+                now_str='20260715 120000',
+            )
+        assert written == 2
+
+        # 验证数据写入
+        rows = cur.execute(
+            "SELECT COUNT(*) FROM kline WHERE code='sh000001' AND date > '2026-07-10'"
+        ).fetchone()[0]
+        assert rows == 2
+
+    def test_fallback_skips_when_no_tushare_mapping(self, tmp_path):
+        import sqlite3
+        from data_update_manager import _tushare_fallback_single_index
+
+        db = tmp_path / 'test.db'
+        conn = sqlite3.connect(str(db))
+        cur = conn.cursor()
+        cur.execute(
+            'CREATE TABLE IF NOT EXISTS kline '
+            '(code TEXT,period TEXT,date TEXT,open REAL,high REAL,low REAL,close REAL,volume REAL,updated_at TEXT)'
+        )
+        insert_sql = (
+            "INSERT OR REPLACE INTO kline "
+            "(code,period,date,open,high,low,close,volume,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)"
+        )
+        # code 无 Tushare 映射（如 800000）
+        written = _tushare_fallback_single_index(
+            code='800000',
+            name='东方财富全A',
+            local_max='20260710',
+            last_td_norm='20260715',
+            cur=cur,
+            insert_sql=insert_sql,
+            now_str='',
+        )
+        assert written == 0
+
+    def test_fallback_skips_when_already_current(self, tmp_path):
+        from data_update_manager import _tushare_fallback_single_index
+        import sqlite3
+
+        db = tmp_path / 'test.db'
+        conn = sqlite3.connect(str(db))
+        cur = conn.cursor()
+        cur.execute(
+            'CREATE TABLE IF NOT EXISTS kline '
+            '(code TEXT,period TEXT,date TEXT,open REAL,high REAL,low REAL,close REAL,volume REAL,updated_at TEXT)'
+        )
+        insert_sql = "..."
+        # local_max >= last_td → 无需兜底
+        written = _tushare_fallback_single_index(
+            code='sh000001',
+            name='上证指数',
+            local_max='20260715',
+            last_td_norm='20260715',
+            cur=cur,
+            insert_sql=insert_sql,
+            now_str='',
+        )
+        assert written == 0
