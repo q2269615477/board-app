@@ -21,6 +21,7 @@
   python run_full_update.py          # 全量（无个股）
   python run_full_update.py --stocks # 全量 + 个股（需QMT在线）
   python run_full_update.py --dry    # 干跑：只列出将更新的项
+  python run_full_update.py --no-panel # 不自动打开面板
 """
 
 import argparse
@@ -326,6 +327,7 @@ def main():
     parser.add_argument("--stocks", action="store_true", help="包含个股K线（需QMT在线）")
     parser.add_argument("--dry", action="store_true", help="干跑：只列出计划，不执行")
     parser.add_argument("--skip-constituents", action="store_true", help="跳过成分股更新")
+    parser.add_argument("--no-panel", action="store_true", help="不自动启动 Flask 并打开浏览器面板")
     args = parser.parse_args()
 
     print(HEADER.format(timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
@@ -393,11 +395,64 @@ def main():
     logger.info(f"[汇总] 成功 {total_success} / 失败 {total_fail}")
     logger.info(f"[日志] {log_file}")
     print(f"\n日志文件: {log_file}")
-
-    # 停留一会让用户看到输出
     if not args.stocks:
-        print("\n提示: 用 --stocks 可包含个股K线更新（需QMT在线）")
-    input("\n按 Enter 关闭...")
+        print("提示: 用 --stocks 可包含个股K线更新（需QMT在线）")
+
+    # 自动打开面板
+    if not args.no_panel:
+        _launch_panel()
+        print("\n面板将在浏览器中打开…")
+    print(f"全部完成 ({total_ms / 1000:.1f}s)，窗口 5 秒后关闭")
+    time.sleep(5)
+
+
+def _launch_panel():
+    """启动 Flask（如未运行）+ 打开浏览器面板"""
+    import subprocess
+    import urllib.request
+
+    panel_url = "http://127.0.0.1:5000"
+    flask_running = False
+
+    # 检测 Flask 是否已在监听
+    try:
+        req = urllib.request.Request(panel_url)
+        req.add_header("User-Agent", "board-app/launcher")
+        urllib.request.urlopen(req, timeout=3)
+        flask_running = True
+    except Exception:
+        flask_running = False
+
+    if not flask_running:
+        logger.info("[面板] Flask 未运行，启动中…")
+        venv_python = os.path.join(_BASE, "venv", "Scripts", "python.exe")
+        subprocess.Popen(
+            [venv_python, "app.py"],
+            cwd=_BASE,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        # 等待启动
+        for _ in range(10):
+            time.sleep(1)
+            try:
+                urllib.request.urlopen(panel_url, timeout=2)
+                break
+            except Exception:
+                continue
+        logger.info("[面板] Flask 已启动")
+
+    # 打开浏览器
+    try:
+        import webbrowser
+        webbrowser.open(panel_url)
+        logger.info(f"[面板] 浏览器已打开 → {panel_url}")
+    except Exception as e:
+        logger.warning(f"[面板] 浏览器打开失败: {e}")
+        if sys.platform == "win32":
+            try:
+                subprocess.run(["start", panel_url], shell=True)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
