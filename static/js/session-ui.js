@@ -15,7 +15,13 @@
   function toggleSessSide() {
     var s = document.getElementById('sess-side');
     if (!s) return;
-    s.classList.toggle('collapsed');
+    var collapsed = s.classList.toggle('collapsed');
+    // 折叠时释放 chart 的 margin-right，让主图占满全宽
+    if (collapsed) {
+      document.body.classList.remove('sess-side-on');
+    } else {
+      document.body.classList.add('sess-side-on');
+    }
   }
   let chartClickBound = false;
   let overlayHookBound = false;
@@ -475,7 +481,11 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 
   function ensureUI() {
     applyPanelCss();
-    document.body.classList.add('sess-side-on');
+    // 仅在面板未折叠时加 body class（折叠态下不占用 chart 空间）
+    const sessPanel = document.getElementById('sess-side');
+    if (sessPanel && !sessPanel.classList.contains('collapsed')) {
+      document.body.classList.add('sess-side-on');
+    }
     if (document.getElementById('sess-side')) {
       // 已有面板：确保标题可取消选中
       const title = document.querySelector('#sess-side .hd b');

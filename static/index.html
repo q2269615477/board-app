@@ -58,7 +58,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',s
 #splitter{cursor:col-resize}
 #splitter:hover{background:#2962ff}
 /* 右侧 */
-#content{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#content{flex:1;display:flex;flex-direction:column;overflow:hidden;transition:margin-right .25s ease}
+body.sess-side-on #content{margin-right:372px}
 #price-bar{display:flex;align-items:center;gap:12px;padding:5px 14px;border-bottom:1px solid #2a2e39;font-size:11px;flex-shrink:0;color:#787b86}
 #price-bar .name{font-size:13px;font-weight:500;color:#d1d4dc}
 #price-bar .price{font-size:20px;font-weight:400}
