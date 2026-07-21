@@ -600,6 +600,9 @@ function initPro() {
     try{ pro.setOffsetRightBarCount(0); }catch(e){}
     _initProAttempts = 0;
     
+    // 监听 Pro 内置周期/标的切换 → 同步 __board_ctx（保证 hookCtxPoll 能检测到并 ensure_chart）
+    _bindProContextSync();
+    
     // 应用等待中的symbol
     if (_pendingSymbol) {
       setTimeout(() => {
@@ -615,6 +618,62 @@ function initPro() {
     console.error('Pro init error:', e);
     toast('Pro 初始化失败: '+e.message);
     return false;
+  }
+}
+
+// 将 Pro period 对象转为字符串
+function _periodToCtx(p) {
+  if (!p) return 'daily';
+  if (p.timespan === 'day') return 'daily';
+  if (p.timespan === 'week') return 'weekly';
+  if (p.timespan === 'month') {
+    if (p.multiplier === 3) return 'quarterly';
+    if (p.multiplier === 12) return 'yearly';
+    return 'monthly';
+  }
+  if (p.timespan === 'minute') return p.multiplier + 'm';
+  if (p.timespan === 'hour') return p.multiplier * 60 + 'm';
+  return 'daily';
+}
+
+// 将 Pro 内置的周期/标的切换同步到 __board_ctx
+// KLineChart Pro 9.x 不支持 onPeriodChange/onSymbolChange → monkey-patch setSymbol/setPeriod
+function _bindProContextSync() {
+  if (!window.pro) return;
+  try {
+    const origSetSymbol = window.pro.setSymbol;
+    if (origSetSymbol && !origSetSymbol.__ctx_patched) {
+      window.pro.setSymbol = function(sym) {
+        const result = origSetSymbol.apply(this, arguments);
+        if (sym && window.__board_ctx) {
+          window.__board_ctx.code = sym.ticker || '';
+          window.__board_ctx.symbol = sym.ticker || '';
+          window.__board_ctx.name = sym.name || sym.shortName || '';
+          window.__board_ctx.type = sym.type || 'stock';
+          try { window.__board_ctx.period = _periodToCtx(window.pro.getPeriod()); } catch(_) {}
+          // 同步更新 store.selected（保持与顶部 bar 一致）
+          if (window.store) { window.store.selected = { code: sym.ticker, name: sym.name || sym.shortName, type: sym.type || 'stock' }; }
+          console.log('[Pro patch] symbol sync:', sym.ticker, '→', window.__board_ctx.period);
+        }
+        return result;
+      };
+      window.pro.setSymbol.__ctx_patched = true;
+    }
+    
+    const origSetPeriod = window.pro.setPeriod;
+    if (origSetPeriod && !origSetPeriod.__ctx_patched) {
+      window.pro.setPeriod = function(p) {
+        const result = origSetPeriod.apply(this, arguments);
+        if (p && window.__board_ctx) {
+          window.__board_ctx.period = _periodToCtx(p);
+          console.log('[Pro patch] period sync:', window.__board_ctx.period);
+        }
+        return result;
+      };
+      window.pro.setPeriod.__ctx_patched = true;
+    }
+  } catch(e) {
+    console.warn('[Pro] context sync bind failed:', e);
   }
 }
 

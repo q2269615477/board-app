@@ -43,6 +43,11 @@
   function panelCtx() {
     const s = (global.store && global.store.selected) || {};
     const ctx = global.__board_ctx || {};
+    // Pro 的 __board_ctx 与 store.selected 可能出现分歧（如用 Pro 内置搜索切换标的）
+    // 以 __board_ctx 为准（它反映 KLineChart Pro 当前实际状态）
+    let code = ctx.symbol || ctx.code || s.code || 'sh000001';
+    let name = ctx.name || s.name || '';
+    let atype = ctx.type || s.type || 'index';
     let period = ctx.period || 'daily';
     if (period && typeof period === 'object') {
       const t = period.timespan, m = period.multiplier;
@@ -55,9 +60,9 @@
       else period = 'daily';
     }
     return {
-      symbol: s.code || ctx.symbol || ctx.code || 'sh000001',
-      symbol_name: s.name || ctx.name || '',
-      asset_type: s.type || ctx.type || 'index',
+      symbol: code,
+      symbol_name: name,
+      asset_type: atype,
       period,
     };
   }
