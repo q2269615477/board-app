@@ -54,10 +54,10 @@ logging.basicConfig(
 logger = logging.getLogger("full-update")
 
 HEADER = """
-╔══════════════════════════════════════════╗
-║     board-app 全量数据更新               ║
-║     时间: {timestamp}           ║
-╚══════════════════════════════════════════╝
+================================================
+     board-app Full Data Update
+     Time: {timestamp}
+================================================
 """.strip()
 
 
@@ -92,7 +92,7 @@ def _force_reset_gates():
     if changed:
         with open(status_path, "w", encoding="utf-8") as f:
             json.dump(status, f, ensure_ascii=False, indent=2)
-        logger.info("[Gate] 已强制重置今日门控 → 昨天")
+        logger.info("[Gate] Reset today gate to yesterday")
 
 
 # ============================================================
@@ -327,7 +327,7 @@ def main():
     parser.add_argument("--stocks", action="store_true", help="包含个股K线（需QMT在线）")
     parser.add_argument("--dry", action="store_true", help="干跑：只列出计划，不执行")
     parser.add_argument("--skip-constituents", action="store_true", help="跳过成分股更新")
-    parser.add_argument("--no-panel", action="store_true", help="不自动启动 Flask 并打开浏览器面板")
+    parser.add_argument("--no-panel", action="store_true", help="Skip auto-launch Flask + browser")
     args = parser.parse_args()
 
     print(HEADER.format(timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
@@ -350,11 +350,11 @@ def main():
         )
 
     if args.dry:
-        print("[干跑] 计划执行的步骤:")
+        print("[DRY RUN] Planned steps:")
         for i, (label, key, fn) in enumerate(STEPS, 1):
             if fn:
                 print(f"  {i}. {label}")
-        print(f"\n共 {sum(1 for _, _, f in STEPS if f)} 步（另有概念板块并入行业板块）")
+        print(f"\nTotal {sum(1 for _, _, f in STEPS if f)} steps")
         return
 
     _force_reset_gates()
@@ -393,16 +393,16 @@ def main():
     )
     total_fail = sum(r.get("failed", 0) or 0 for r in results.values())
     logger.info(f"[汇总] 成功 {total_success} / 失败 {total_fail}")
-    logger.info(f"[日志] {log_file}")
-    print(f"\n日志文件: {log_file}")
+    logger.info(f"[Log] {log_file}")
+    print(f"\nLog: {log_file}")
     if not args.stocks:
-        print("提示: 用 --stocks 可包含个股K线更新（需QMT在线）")
+        print("Tip: use --stocks for stock K-lines (requires QMT)")
 
     # 自动打开面板
     if not args.no_panel:
         _launch_panel()
-        print("\n面板将在浏览器中打开…")
-    print(f"全部完成 ({total_ms / 1000:.1f}s)，窗口 5 秒后关闭")
+        print("\nPanel opening in browser...")
+    print(f"All done ({total_ms / 1000:.1f}s). Window closes in 5s.")
     time.sleep(5)
 
 
