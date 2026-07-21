@@ -31,8 +31,8 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-# 项目根目录
-_BASE = os.path.dirname(os.path.abspath(__file__))
+# 项目根目录（scripts/ 的父目录）
+_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _BASE)
 
 # ============================================================
