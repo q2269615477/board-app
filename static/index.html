@@ -12,7 +12,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',s
 #toolbar{display:flex;align-items:center;gap:10px;padding:6px 14px;border-bottom:1px solid #2a2e39;background:#1a1e29;flex-shrink:0;font-size:12px}
 #main{display:flex;flex:1;overflow:hidden}
 /* 左侧 */
-#nav-panel{width:280px;min-width:200px;max-width:400px;border-right:1px solid #2a2e39;overflow-y:auto;flex-shrink:0}
+#nav-panel{width:280px;min-width:200px;max-width:400px;border-right:1px solid #2a2e39;overflow-y:auto;flex-shrink:0;position:relative;transition:width .25s ease,min-width .25s ease}
+#nav-panel-toggle{position:absolute;top:50%;right:0;transform:translateY(-50%);width:16px;height:48px;background:#1a1e29;border:1px solid #2a2e39;border-right:0;border-radius:3px 0 0 3px;cursor:pointer;color:#434651;font-size:9px;display:flex;align-items:center;justify-content:center;z-index:10;transition:background .12s}
+#nav-panel-toggle:hover{color:#d1d4dc;background:#2962ff;border-color:#2962ff}
+#nav-expand-btn{display:none;position:absolute;left:0;top:50%;transform:translateY(-50%);width:16px;height:48px;background:#1a1e29;border:1px solid #2a2e39;border-left:0;border-radius:0 3px 3px 0;cursor:pointer;color:#434651;font-size:9px;align-items:center;justify-content:center;z-index:10;transition:background .12s}
+#nav-expand-btn:hover{background:#2962ff;color:#d1d4dc}
+.nav-collapsed #nav-panel{width:0!important;min-width:0!important;overflow:hidden;border-right:0}
+.nav-collapsed #splitter{display:none}
+.nav-collapsed #nav-expand-btn{display:flex}
+.nav-collapsed #nav-panel-toggle{display:none}
+.nav-collapsed #floating-cons{left:0}
 .nav-header{padding:7px 10px;font-size:11px;font-weight:500;border-bottom:1px solid #2a2e39;background:#1a1e29;position:sticky;top:0;z-index:1}
 .cat-item{padding:5px 10px;display:flex;align-items:center;border-bottom:1px solid #1e2230;cursor:pointer;font-size:12px;user-select:none}
 .cat-item:hover{background:#1e2230}
@@ -149,7 +158,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',s
 </div>
 
   <div id="main">
-    <div id="nav-panel"><div class="nav-header">加载分类...</div></div>
+    <div id="nav-panel"><div class="nav-header">加载分类...</div><button id="nav-panel-toggle" onclick="toggleNavPanel()" title="折叠板块导航">◀</button></div>
     <div id="splitter"></div>
     <div id="content">
       <div id="pro-container">
@@ -157,6 +166,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',s
       </div>
     </div>
   </div>
+  <!-- 左侧面板展开按钮（折叠态显示） -->
+  <button id="nav-expand-btn" onclick="toggleNavPanel()" title="展开板块导航">▶</button>
 </div>
 <div id="search-wrap">
   <input id="search-input" placeholder="搜索板块/代码">
@@ -192,6 +203,12 @@ window.addEventListener('beforeunload', function(){_allTimers.forEach(id=>clearI
 let pro = null;
 const API = '';
 window.API = API;
+// 左侧板块导航栏收缩/展开
+function toggleNavPanel(){
+  document.getElementById('app').classList.toggle('nav-collapsed');
+  var btn = document.getElementById('nav-panel-toggle');
+  if (btn) btn.textContent = document.getElementById('app').classList.contains('nav-collapsed') ? '\u25B6' : '\u25C0';
+}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2500);}
 /* 预先声明所有可能被初始化函数引用的变量（避免TDZ） */
 let _analysisHistory = [];
@@ -269,6 +286,15 @@ function renderNav(){
     h+='</div>';
   });
   p.innerHTML=h;
+  // 注入折叠按钮（每次 renderNav 后确保存在）
+  if(!document.getElementById('nav-panel-toggle')){
+    var tgl=document.createElement('button');
+    tgl.id='nav-panel-toggle';
+    tgl.title='折叠板块导航';
+    tgl.textContent='\u25C0';
+    tgl.onclick=function(){ toggleNavPanel(); };
+    p.appendChild(tgl);
+  }
 }
 function toggleCat(id,name){
   const el=document.getElementById(id); if(!el)return;

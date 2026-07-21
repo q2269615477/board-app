@@ -10,6 +10,13 @@
 
   let S = null;
   let pickKActive = false;
+
+  // 右侧面板折叠/展开
+  function toggleSessSide() {
+    var s = document.getElementById('sess-side');
+    if (!s) return;
+    s.classList.toggle('collapsed');
+  }
   let chartClickBound = false;
   let overlayHookBound = false;
   let saveTimer = null;
@@ -310,7 +317,22 @@
 #sess-side{position:fixed;top:48px;right:0;bottom:0;width:372px;z-index:420;
   background:linear-gradient(180deg,#12151e 0%,#0e1118 100%);border-left:1px solid #2a2e39;
   display:flex;flex-direction:column;font-size:11px;color:#d1d4dc;
-  box-shadow:-6px 0 24px rgba(0,0,0,.4)}
+  box-shadow:-6px 0 24px rgba(0,0,0,.4);
+  transition:transform .25s ease}
+#sess-side.collapsed{transform:translateX(372px)}
+#sess-toggle-btn{position:absolute;left:-24px;top:50%;transform:translateY(-50%);
+  width:24px;height:64px;background:#1a1e29;border:1px solid #2a2e39;border-right:0;
+  border-radius:4px 0 0 4px;cursor:pointer;color:#434651;font-size:10px;
+  display:flex;align-items:center;justify-content:center;z-index:11;
+  transition:background .12s,color .12s}
+#sess-toggle-btn:hover{background:#2962ff;color:#d1d4dc;border-color:#2962ff}
+#sess-expand-btn{position:fixed;top:50%;right:0;transform:translateY(-50%);
+  width:24px;height:64px;background:#1a1e29;border:1px solid #2a2e39;border-right:0;
+  border-radius:4px 0 0 4px;cursor:pointer;color:#434651;font-size:10px;z-index:421;
+  display:none;align-items:center;justify-content:center;
+  transition:background .12s,color .12s}
+#sess-expand-btn:hover{background:#2962ff;color:#d1d4dc;border-color:#2962ff}
+#sess-side.collapsed+#sess-expand-btn,#sess-side.collapsed~#sess-expand-btn{display:flex}
 #sess-side .hd{padding:11px 14px;background:linear-gradient(90deg,#1a1e29,#161b28);
   border-bottom:1px solid #2a2e39;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
 #sess-side .hd b{font-size:13px;color:#fff;cursor:pointer;letter-spacing:.02em}
@@ -505,6 +527,22 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 <div id="sess-list-drawer" style="display:none;position:absolute;inset:48px 0 0 0;background:#131722;z-index:2;overflow:auto;padding:10px"></div>
 `;
     document.body.appendChild(side);
+
+    // 右侧面板折叠按钮（在面板左边缘）
+    var tglBtn = document.createElement('button');
+    tglBtn.id = 'sess-toggle-btn';
+    tglBtn.title = '折叠会话面板';
+    tglBtn.textContent = '\u25B6';
+    tglBtn.onclick = function(){ toggleSessSide(); };
+    side.appendChild(tglBtn);
+
+    // 折叠态下的展开按钮（fixed 到 right:0）
+    var expBtn = document.createElement('button');
+    expBtn.id = 'sess-expand-btn';
+    expBtn.title = '展开会话面板';
+    expBtn.textContent = '\u25C0';
+    expBtn.onclick = function(){ toggleSessSide(); };
+    document.body.appendChild(expBtn);
 
     side.querySelector('#sess-side .hd b')?.addEventListener('click', () => clearChainFocus());
     // 智能标题
