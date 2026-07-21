@@ -62,6 +62,33 @@ HEADER = """
 
 
 # ============================================================
+# 时间戳检查
+# ============================================================
+def _get_last_update_date():
+    """从 update_status.json 读取上次手动更新时间"""
+    import json
+    status_path = os.path.join(_BASE, "data", "update_status.json")
+    if not os.path.exists(status_path):
+        return None
+    try:
+        with open(status_path, "r", encoding="utf-8") as f:
+            status = json.load(f)
+    except Exception:
+        return None
+    manual = status.get("manual_update", "")
+    if manual:
+        return manual[:10]  # YYYY-MM-DD
+    return None
+
+
+def _is_fresh_today():
+    """今天是否已做过手动更新"""
+    last = _get_last_update_date()
+    today = datetime.now().strftime("%Y-%m-%d")
+    return last == today
+
+
+# ============================================================
 # 强制解锁陈旧门控
 # ============================================================
 def _force_reset_gates():
@@ -328,6 +355,7 @@ def main():
     parser.add_argument("--dry", action="store_true", help="干跑：只列出计划，不执行")
     parser.add_argument("--skip-constituents", action="store_true", help="跳过成分股更新")
     parser.add_argument("--no-panel", action="store_true", help="Skip auto-launch Flask + browser")
+    parser.add_argument("--force", action="store_true", help="Force update even if today data is fresh")
     args = parser.parse_args()
 
     print(HEADER.format(timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
@@ -355,6 +383,19 @@ def main():
             if fn:
                 print(f"  {i}. {label}")
         print(f"\nTotal {sum(1 for _, _, f in STEPS if f)} steps")
+        return
+
+    # 时间戳检查：今天已更新过则跳过，直开面板（除非 --force）
+    if _is_fresh_today() and not args.stocks and not args.force:
+        last = _get_last_update_date()
+        logger.info(f"[Smart] Already updated today ({last}), skipping update")
+        print(f"[Smart] Data is fresh (last update: {last})")
+        print("Skipping update, opening panel directly...")
+        if not args.no_panel:
+            _launch_panel()
+            print("Panel opened in browser.")
+        print(f"Window closes in 3s.")
+        time.sleep(3)
         return
 
     _force_reset_gates()
