@@ -16,12 +16,18 @@
     var s = document.getElementById('sess-side');
     if (!s) return;
     var collapsed = s.classList.toggle('collapsed');
-    // 折叠时释放 chart 的 margin-right，让主图占满全宽
+    var content = document.getElementById('content');
     if (collapsed) {
       document.body.classList.remove('sess-side-on');
+      if (content) content.style.marginRight = '0';
     } else {
       document.body.classList.add('sess-side-on');
+      if (content) content.style.marginRight = '372px';
     }
+    // 通知 KLineChart Pro 容器尺寸已变，让图表跟随移动
+    setTimeout(function () {
+      window.dispatchEvent(new Event('resize'));
+    }, 30);
   }
   let chartClickBound = false;
   let overlayHookBound = false;
@@ -481,10 +487,11 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 
   function ensureUI() {
     applyPanelCss();
-    // 仅在面板未折叠时加 body class（折叠态下不占用 chart 空间）
-    const sessPanel = document.getElementById('sess-side');
+    // 面板打开时压缩 #content 边距（直接操作 style，不用 body class）
+    var sessPanel = document.getElementById('sess-side');
     if (sessPanel && !sessPanel.classList.contains('collapsed')) {
-      document.body.classList.add('sess-side-on');
+      var content = document.getElementById('content');
+      if (content) content.style.marginRight = '372px';
     }
     if (document.getElementById('sess-side')) {
       // 已有面板：确保标题可取消选中
