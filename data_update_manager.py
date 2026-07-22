@@ -525,10 +525,17 @@ def _tushare_fallback_single_index(
         df = _fetch_tushare_index_df(api, ts_code, start, last_td_norm)
         rows = df.to_dict('records') if not df.empty else []
         if not rows:
-            logger.warning(
-                f"[Tushare兜底] {name}({code}) Tushare 也无新数据 "
-                f"({api}/{ts_code} {start}..{last_td_norm})"
-            )
+            # 盘中/非交易时段 Tushare 日线尚未更新 → 降为 INFO
+            if start > datetime.now().strftime('%Y%m%d') or start == last_td_norm:
+                logger.info(
+                    f"[Tushare兜底] {name}({code}) 今日日线暂未发布 "
+                    f"({api}/{ts_code} {start}) — 数据已是最新"
+                )
+            else:
+                logger.warning(
+                    f"[Tushare兜底] {name}({code}) Tushare 也无新数据 "
+                    f"({api}/{ts_code} {start}..{last_td_norm})"
+                )
             return 0
         batch = [
             (code, 'daily', r['date'], r['open'], r['high'], r['low'],
@@ -627,7 +634,7 @@ def update_all_indices_qmt(max_retries: int = 3) -> dict:
                     result['success'] += 1
                 else:
                     # QMT 数据陈旧 → Tushare 兜底补齐尾部
-                    logger.warning(
+                    logger.info(
                         f"[QMT指数] {name} QMT 无新 bar (start={next_start}) "
                         f"local_max={max_norm} < last_td={last_td_norm} → 回退 Tushare"
                     )
@@ -639,9 +646,17 @@ def update_all_indices_qmt(max_retries: int = 3) -> dict:
                         result['success'] += 1
                         result['channel'] = 'qmt+tushare_fallback'
                     else:
-                        result['failed'] += 1
-                        status = _load_status()
-                        status.setdefault('indices', {})[code] = {
+                        # 盘中 Tushare 日线未发布 → 数据已是最新（昨天），不算失败
+                        yest = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+                        if max_norm >= yest:
+                            logger.debug(
+                                f"[QMT指数] {name} 无新 bar 但本地已达 {max_norm}（今日日线未发布）— 视为已最新"
+                            )
+                            result['success'] += 1
+                        else:
+                            result['failed'] += 1
+                            status = _load_status()
+                            status.setdefault('indices', {})[code] = {
                             'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                             'status': 'stale_no_source',
                             'name': name,
