@@ -64,8 +64,8 @@ HEADER = """
 # ============================================================
 # 时间戳检查
 # ============================================================
-def _get_last_update_date():
-    """从 update_status.json 读取上次手动更新时间"""
+def _get_last_update_time():
+    """从 update_status.json 读取上次手动更新的完整时间"""
     import json
     status_path = os.path.join(_BASE, "data", "update_status.json")
     if not os.path.exists(status_path):
@@ -77,15 +77,20 @@ def _get_last_update_date():
         return None
     manual = status.get("manual_update", "")
     if manual:
-        return manual[:10]  # YYYY-MM-DD
+        try:
+            return datetime.fromisoformat(manual)
+        except Exception:
+            return None
     return None
 
 
 def _is_fresh_today():
-    """今天是否已做过手动更新"""
-    last = _get_last_update_date()
-    today = datetime.now().strftime("%Y-%m-%d")
-    return last == today
+    """检查上次更新时间是否在 30 分钟内（盘中/盘后均可触发）"""
+    last = _get_last_update_time()
+    if last is None:
+        return False
+    delta = datetime.now() - last
+    return delta.total_seconds() < 1800  # 30 分钟冷却
 
 
 # ============================================================
@@ -385,12 +390,12 @@ def main():
         print(f"\nTotal {sum(1 for _, _, f in STEPS if f)} steps")
         return
 
-    # 时间戳检查：今天已更新过则跳过，直开面板（除非 --force）
+    # 时间戳检查：30 分钟内有更新则跳过，直开面板（除非 --force）
     if _is_fresh_today() and not args.stocks and not args.force:
-        last = _get_last_update_date()
-        logger.info(f"[Smart] Already updated today ({last}), skipping update")
-        print(f"[Smart] Data is fresh (last update: {last})")
-        print("Skipping update, opening panel directly...")
+        last = _get_last_update_time()
+        ago = int((datetime.now() - last).total_seconds() / 60)
+        logger.info(f"[Smart] Updated {ago}min ago, skipping")
+        print(f"[Smart] Updated {ago}min ago, opening panel directly...")
         if not args.no_panel:
             _launch_panel()
             print("Panel opened in browser.")
