@@ -78,10 +78,6 @@ def add_security_headers(response):
 # ============================================================
 def _bootstrap():
     """应用启动时执行：依赖检查 → QMT启动 → 预热 → 后台服务"""
-    if os.environ.get('BOARD_APP_AUTO_BOOTSTRAP', '1') == '0':
-        logger.info("[BOOTSTRAP] BOARD_APP_AUTO_BOOTSTRAP=0，跳过启动初始化")
-        return None
-
     logger.info("=" * 60)
     logger.info("AI炒股面板 v3.0")
     logger.info("=" * 60)
@@ -102,7 +98,9 @@ def _bootstrap():
     return ctx
 
 
-_bootstrap()
+# 模块级 bootstrap：仅当 BOARD_APP_AUTO_BOOTSTRAP != '0' 时执行
+if os.environ.get('BOARD_APP_AUTO_BOOTSTRAP', '1') != '0':
+    _bootstrap()
 
 
 # ============================================================
@@ -127,79 +125,30 @@ def favicon():
 
 @app.route('/')
 def index():
-    """Serve main panel with all initial data embedded (WorkBuddy CSP blocks internal fetch)"""
-    from pathlib import Path
-    import sqlite3
-    
-    base_dir = Path(__file__).resolve().parent
-    static_dir = base_dir / 'static'
+    """Serve main panel.
+
+    Phase 0（迁 OpenCode + 真实浏览器）：现役前端 static/js/* 已全部走正常
+    fetch('/api/...') 直取分类与 K 线，不再读 window.__init_data__。历史上这里
+    为绕过 WorkBuddy 内置浏览器 CSP 而在 </head> 前注入 __init_data__（并同步
+    加载分类文件 + sh000001 日线），真实浏览器下前端不消费该数据，故移除注入，
+    直接返回模板即可（消除每次请求的分类/DB/QMT 读取开销与首屏延迟）。
+    """
+    static_dir = Path(__file__).resolve().parent / 'static'
     template = (static_dir / 'index.html').read_text(encoding='utf-8')
-    
-    # Load classification data
-    classification_data = []
-    for cls_file in ['board_classification_saved.json', 'board_classification.json']:
-        fp = static_dir / cls_file
-        if fp.exists():
-            try:
-                classification_data = json.loads(fp.read_text(encoding='utf-8'))
-                if classification_data:
-                    break
-            except FileNotFoundError:
-                pass  # 文件不存在是正常情况（首次启动时）
-            except Exception as e:
-                logger.warning(f"分类文件 {fp.name} 读取失败: {e}")
-    
-    # Load initial kline data for default stock (sh000001 daily)
-    kline_data = []
-    try:
-        from data.sqlite_repo import get_sqlite_repo
-        from services.kline_service import df_to_kline
-        db = get_sqlite_repo()
-        df = db.read_kline('sh000001', 'daily')
-        if df is not None and not df.empty:
-            kline_data = df_to_kline(df)
-            # 过滤周末数据（避免非交易日导致视觉断层）
-            kline_data = [r for r in kline_data
-                          if datetime.fromtimestamp(r['timestamp'] / 1000).weekday() < 5]
-    except Exception as e:
-        logger.warning(f"加载初始K线数据失败: {e}", exc_info=True)
-    
-    # Also try QMT data for sh000001 daily
-    if not kline_data:
-        try:
-            from data.qmt_client import get_qmt_client
-            from services.kline_service import df_to_kline
-            qmt = get_qmt_client()
-            # 公式口优先（qmt_api/58600），xtdata 空壳时仍可出图
-            df = qmt.get_daily('000001.SH', start='20200101', count=-1)
-            if df is not None and not df.empty:
-                kline_data = df_to_kline(df)
-        except Exception as e:
-            logger.warning(f"QMT数据回退加载失败: {e}", exc_info=True)
-    
-    # Build embed script — extract nested 'categories' array if needed
-    _cats = classification_data.get('categories', []) if isinstance(classification_data, dict) else classification_data
-    init_data = {
-        'categories': _cats,
-        'defaultKline': kline_data,
-        'defaultSymbol': {'ticker': 'sh000001', 'name': '上证指数', 'type': 'index'}
-    }
-    embed = f'<script>\nwindow.__init_data__ = {json.dumps(init_data, ensure_ascii=False)};\n</script>\n'
-    
-    # Inject before </head>
-    template = template.replace('</head>', embed + '</head>', 1)
-    
     return Response(template, mimetype='text/html')
 
 
 # ============================================================
 # 运行入口
 # ============================================================
-def create_app():
-    """Flask 工厂（用于测试）：返回已配置好的应用实例。
+def create_app(auto_bootstrap: bool = True):
+    """返回模块级 app 实例。
 
-    当前实现是模块级 app 的别名；测试通过 test_client() 隔离请求上下文，
-    通过 service fixture 隔离数据库。如需每次创建新实例，可改造为工厂式初始化。
+    注意：当前实现并非真正的 Flask app factory。
+    app 对象在模块导入时已创建并注册路由，bootstrap 依赖
+    BOARD_APP_AUTO_BOOTSTRAP 环境变量控制。
+    auto_bootstrap 参数保留为接口预留，暂无实际效果。
+    真正的工厂改造另开任务。
     """
     return app
 
