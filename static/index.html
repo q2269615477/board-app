@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="/static/js/pinyin_helper.js?v=20260729-ui-refresh3"></script>
+<title>AI Stock Canvas</title>
+<link rel="stylesheet" href="/static/js/klinecharts-pro.css">
+<link rel="stylesheet" href="/static/css/app.css?v=20260729-wheel-scroll-fix">
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <div id="index-bar"></div>
+    <button id="idx-add-btn" class="idx-add-btn" title="管理顶部指数栏" onclick="openIdxManageModal()">+</button>
+  </div>
+
+  <div id="main">
+    <div id="nav-panel">
+      <div class="nav-header">加载分类...</div>
+      <button id="nav-panel-toggle" onclick="toggleNavPanel()" title="折叠板块导航">◀</button>
+    </div>
+    <div id="splitter"></div>
+    <div id="content">
+      <div id="pro-container">
+        <div class="placeholder">点击左侧板块查看K线</div>
+      </div>
+    </div>
+  </div>
+
+  <button id="nav-expand-btn" onclick="toggleNavPanel()" title="展开板块导航">▶</button>
+</div>
+
+<div id="search-wrap">
+  <input id="search-input" placeholder="搜索板块/代码">
+  <div id="search-results"></div>
+</div>
+
+<div id="floating-cons"></div>
+<div id="ctx-menu"></div>
+<div id="modal-overlay"><div id="modal-box"></div></div>
+<div id="toast" class="toast"></div>
+
+<div id="signal-list" style="display:none"></div>
+<div id="ai-history-list" style="display:none"></div>
+<div id="ai-result-panel">
+  <div class="panel-hd">
+    <b>AI 分析结论</b>
+    <button id="ai-result-close" class="panel-close" title="关闭">×</button>
+  </div>
+  <div id="ai-result-content"></div>
+</div>
+<div id="task-center">
+  <div class="panel-hd">
+    <b>数据更新任务</b>
+    <button id="task-center-close" class="panel-close" title="关闭">×</button>
+  </div>
+  <div id="task-center-body"></div>
+</div>
+
+<script src="/static/js/klinecharts.min.js"></script>
+<script src="/static/js/klinecharts-pro.umd.js"></script>
+<script src="/static/js/api-client.js"></script>
+<script src="/static/js/toast-modal.js"></script>
+<script src="/static/js/realtime-client.js"></script>
+<script src="/static/js/mcp-bridge.js"></script>
+<script src="/static/js/annotation-ui.js"></script>
+<!-- 统一选择链路核心模块 (阶段二) -->
+<script src="/static/js/symbol-router.js"></script>
+<script src="/static/js/ui-state.js"></script>
+<script src="/static/js/chart-controller.js"></script>
+<script src="/static/js/unified-selector.js"></script>
+<!-- 现有模块 (已接入 select-symbol 事件) -->
+<script src="/static/js/chart-core.js?v=20260729-symbol-switch"></script>
+<script src="/static/js/nav-panel.js?v=20260729-price-in-header5"></script>
+<script src="/static/js/index-bar.js?v=20260730-global-kline-fix2"></script>
+<script src="/static/js/search-panel.js?v=20260729-ui-refresh2"></script>
+<script src="/static/js/sse-client.js?v=20260729-symbol-switch"></script>
+<script src="/static/js/session-ui.js"></script>
+<!-- search-panel.js 是唯一生产搜索绑定 -->
+<script src="/static/js/app-init.js"></script>
+</body>
+</html>
