@@ -11,6 +11,7 @@ from services.session_service import (
     RevisionConflictError,
     get_session_service,
 )
+from api.auth_guard import write_protected
 
 logger = logging.getLogger("session_api")
 bp = Blueprint("session", __name__)
@@ -63,6 +64,7 @@ def list_sessions():
 
 
 @bp.route("/api/sessions", methods=["POST"])
+@write_protected
 def create_session():
     try:
         body = request.get_json(force=True, silent=True) or {}
@@ -97,6 +99,7 @@ def get_session(session_id: str):
 
 
 @bp.route("/api/sessions/<session_id>/activate", methods=["POST"])
+@write_protected
 def activate_session(session_id: str):
     try:
         body = request.get_json(force=True, silent=True) or {}
@@ -111,6 +114,7 @@ def activate_session(session_id: str):
 
 
 @bp.route("/api/sessions/<session_id>/clone", methods=["POST"])
+@write_protected
 def clone_session(session_id: str):
     """基于已有会话（含 committed）克隆为新 drafting 会话。"""
     try:
@@ -229,6 +233,7 @@ def save_session(session_id: str):
 
 
 @bp.route("/api/sessions/<session_id>/commit", methods=["POST"])
+@write_protected
 def commit_session(session_id: str):
     try:
         body = request.get_json(force=True, silent=True) or {}
@@ -280,6 +285,7 @@ def commit_session(session_id: str):
 
 
 @bp.route("/api/sessions/<session_id>/actions", methods=["POST"])
+@write_protected
 def session_action(session_id: str):
     """
     统一动作 body: { action, session?, ...args }
@@ -331,6 +337,18 @@ def session_action(session_id: str):
             )
         elif action == "click_effect":
             sess = svc.click_effect(sess, effect_id=body.get("effect_id"))
+        elif action in ("update_cause_title", "rename_cause"):
+            sess = svc.update_cause_title(
+                sess, body.get("cause_id") or "", body.get("title") or ""
+            )
+        elif action in ("update_event_title", "rename_event"):
+            sess = svc.update_event_title(
+                sess, body.get("event_id") or "", body.get("title") or ""
+            )
+        elif action == "update_session_title":
+            sess = svc.update_session_title(sess, body.get("title") or "")
+        elif action == "smart_title":
+            sess = svc.smart_title(sess)
         elif action in ("delete_event", "remove_event"):
             sess = svc.delete_event(sess, body.get("event_id") or "")
         elif action in ("delete_element", "remove_element"):

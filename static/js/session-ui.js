@@ -10,6 +10,25 @@
 
   let S = null;
   let pickKActive = false;
+
+  // 右侧面板折叠/展开
+  function toggleSessSide() {
+    var s = document.getElementById('sess-side');
+    if (!s) return;
+    var collapsed = s.classList.toggle('collapsed');
+    var content = document.getElementById('content');
+    if (collapsed) {
+      document.body.classList.remove('sess-side-on');
+      if (content) content.style.marginRight = '0';
+    } else {
+      document.body.classList.add('sess-side-on');
+      if (content) content.style.marginRight = '372px';
+    }
+    // 通知 KLineChart Pro 容器尺寸已变，让图表跟随移动
+    setTimeout(function () {
+      window.dispatchEvent(new Event('resize'));
+    }, 30);
+  }
   let chartClickBound = false;
   let overlayHookBound = false;
   let saveTimer = null;
@@ -23,26 +42,19 @@
     console.log('[SessionUI]', msg);
   }
 
+  // API 通信委托给 session-api.js（已抽取为独立模块）
   async function api(path, opts) {
-    const r = await fetch(API + path, {
-      headers: { 'Content-Type': 'application/json' },
-      ...opts,
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.ok === false || j.success === false) {
-      const err = new Error(j.error || 'HTTP ' + r.status);
-      err.status = r.status;
-      if (j.code) err.code = j.code;
-      if (j.current_rev !== undefined) err.current_rev = j.current_rev;
-      if (j.current_session) err.current_session = j.current_session;
-      throw err;
-    }
-    return j;
+    return global.SessionAPI.api(path, opts);
   }
 
   function panelCtx() {
     const s = (global.store && global.store.selected) || {};
     const ctx = global.__board_ctx || {};
+    // Pro 的 __board_ctx 与 store.selected 可能出现分歧（如用 Pro 内置搜索切换标的）
+    // 以 __board_ctx 为准（它反映 KLineChart Pro 当前实际状态）
+    let code = ctx.symbol || ctx.code || s.code || 'sh000001';
+    let name = ctx.name || s.name || '';
+    let atype = ctx.type || s.type || 'index';
     let period = ctx.period || 'daily';
     if (period && typeof period === 'object') {
       const t = period.timespan, m = period.multiplier;
@@ -55,9 +67,9 @@
       else period = 'daily';
     }
     return {
-      symbol: s.code || ctx.symbol || ctx.code || 'sh000001',
-      symbol_name: s.name || ctx.name || '',
-      asset_type: s.type || ctx.type || 'index',
+      symbol: code,
+      symbol_name: name,
+      asset_type: atype,
       period,
     };
   }
@@ -305,7 +317,22 @@
 #sess-side{position:fixed;top:48px;right:0;bottom:0;width:372px;z-index:420;
   background:linear-gradient(180deg,#12151e 0%,#0e1118 100%);border-left:1px solid #2a2e39;
   display:flex;flex-direction:column;font-size:11px;color:#d1d4dc;
-  box-shadow:-6px 0 24px rgba(0,0,0,.4)}
+  box-shadow:-6px 0 24px rgba(0,0,0,.4);
+  transition:transform .25s ease}
+#sess-side.collapsed{transform:translateX(372px)}
+#sess-toggle-btn{position:absolute;left:-24px;top:50%;transform:translateY(-50%);
+  width:24px;height:64px;background:#1a1e29;border:1px solid #2a2e39;border-right:0;
+  border-radius:4px 0 0 4px;cursor:pointer;color:#434651;font-size:10px;
+  display:flex;align-items:center;justify-content:center;z-index:11;
+  transition:background .12s,color .12s}
+#sess-toggle-btn:hover{background:#2962ff;color:#d1d4dc;border-color:#2962ff}
+#sess-expand-btn{position:fixed;top:50%;right:0;transform:translateY(-50%);
+  width:24px;height:64px;background:#1a1e29;border:1px solid #2a2e39;border-right:0;
+  border-radius:4px 0 0 4px;cursor:pointer;color:#434651;font-size:10px;z-index:421;
+  display:none;align-items:center;justify-content:center;
+  transition:background .12s,color .12s}
+#sess-expand-btn:hover{background:#2962ff;color:#d1d4dc;border-color:#2962ff}
+#sess-side.collapsed+#sess-expand-btn,#sess-side.collapsed~#sess-expand-btn{display:flex}
 #sess-side .hd{padding:11px 14px;background:linear-gradient(90deg,#1a1e29,#161b28);
   border-bottom:1px solid #2a2e39;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
 #sess-side .hd b{font-size:13px;color:#fff;cursor:pointer;letter-spacing:.02em}
@@ -353,6 +380,36 @@
 #sess-side .ol-node:hover{filter:brightness(1.08)}
 #sess-side .ol-node.active{box-shadow:0 0 0 1px rgba(41,98,255,.45),inset 3px 0 0 #2962ff}
 #sess-side .ol-node.closed{opacity:.78}
+#sess-side .ol-chain-wrap{position:relative}
+#sess-side .ol-chain-wrap.focused{box-shadow:inset 4px 0 0 #2962ff;border-left:0}
+#sess-side .ol-chain-wrap.focused::before{
+  content:'';position:absolute;left:-1px;top:0;bottom:0;width:4px;
+  background:linear-gradient(180deg,#2962ff 0%,#5b8def 100%);
+  border-radius:2px 0 0 2px;box-shadow:0 0 8px rgba(41,98,255,.5)}
+#sess-side .ol-collapse{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:18px;height:18px;margin-right:4px;font-size:10px;color:#787b86;
+  background:rgba(0,0,0,.25);border:1px solid #3a4155;border-radius:3px;
+  cursor:pointer;user-select:none;vertical-align:middle}
+#sess-side .ol-collapse:hover{color:#d1d4dc;border-color:#5b8def}
+#sess-side .ol-chain-wrap.collapsed>div.ol-line[data-collapse-body="1"]{display:none}
+#sess-side .ol-chain-wrap.collapsed>div.ol-line[data-collapse-toggle-line="0"]>div.ol-line-inner>div.ol-cause>div.ol-sub>span.ol-collapse-count{display:inline}
+#sess-side .ol-collapse-count{
+  display:none;margin-left:4px;font-size:9px;color:#787b86;background:rgba(0,0,0,.2);
+  padding:0 5px;border-radius:8px;vertical-align:middle}
+#sess-side .ol-title{
+  flex:1;min-width:0;color:#e8eaef;font-weight:600;cursor:text;
+  padding:0 4px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sess-side .ol-title:hover{background:rgba(255,255,255,.06)}
+#sess-side .ol-title-input{
+  flex:1;min-width:0;font-size:11px;font-weight:600;color:#e8eaef;
+  background:#1a1e29;border:1px solid #2962ff;border-radius:3px;
+  padding:1px 4px;outline:none;min-width:80px}
+#sess-side .smart-title-btn{
+  font-size:10px;padding:2px 6px;background:rgba(41,98,255,.15);
+  border:1px solid #2962ff44;border-radius:3px;cursor:pointer;color:#8ab4ff;
+  vertical-align:middle;margin-left:4px}
+#sess-side .smart-title-btn:hover{background:rgba(41,98,255,.3);color:#d1d4dc}
 #sess-side .ol-cause{background:linear-gradient(135deg,#1a2235 0%,#151b2a 100%);border-color:#2a3550}
 #sess-side .ol-cause.active{background:linear-gradient(135deg,#1e2d4d 0%,#182540 100%);border-color:#3d6df0}
 #sess-side .ol-effect{background:linear-gradient(135deg,#221c14 0%,#1a1610 100%);border-color:#3d3428}
@@ -418,7 +475,12 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 
   function ensureUI() {
     applyPanelCss();
-    document.body.classList.add('sess-side-on');
+    // 面板打开时压缩 #content 边距（直接操作 style，不用 body class）
+    var sessPanel = document.getElementById('sess-side');
+    if (sessPanel && !sessPanel.classList.contains('collapsed')) {
+      var content = document.getElementById('content');
+      if (content) content.style.marginRight = '372px';
+    }
     if (document.getElementById('sess-side')) {
       // 已有面板：确保标题可取消选中
       const title = document.querySelector('#sess-side .hd b');
@@ -441,6 +503,8 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     side.innerHTML = `
 <div class="hd">
   <b title="点击取消链/事件选中（再点「因」可建新根链）">会话分析</b>
+  <span class="muted" id="sess-hdr-title" title="双击编辑会话标题" style="cursor:text;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 8px"></span>
+  <span class="smart-title-btn" id="sess-smart-title" title="智能生成标题（基于当前图表/周期/链数）">智能</span>
   <span class="muted" id="sess-hdr-status">—</span>
 </div>
 <div class="tools" id="sess-tools">
@@ -453,6 +517,11 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
   <button class="btn" type="button" data-act="event" title="仅主动添加：挂到当前选中的因果链">事件</button>
   <button class="btn" type="button" data-act="browse">浏览</button>
   <button class="btn" type="button" data-act="pick_k" title="开关：开启后点图采集一根K，再点关闭；采完自动关">选K</button>
+  <button class="btn" type="button" data-act="level" title="[Alt+H] 支撑/阻力位：画水平线后写入用户标注">支撑</button>
+  <button class="btn" type="button" data-act="reaction" title="[Alt+R] 反应点：为已画支撑/阻力添加反应K">反应</button>
+  <button class="btn" type="button" data-act="levels" title="[Alt+L] 当前标的已保存的支撑/阻力位">位表</button>
+  <button class="btn" type="button" data-act="resonance" title="[Alt+M] 共振扫描：只列候选和来源，不给买卖结论">共振</button>
+  <button class="btn" type="button" data-act="proposal" title="[Alt+P] AI 提议候选支撑位，需用户确认才落库">AI提议</button>
 </div>
 <div class="body" id="sess-body"></div>
 <div class="foot">
@@ -469,9 +538,125 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 `;
     document.body.appendChild(side);
 
+    // 右侧面板折叠按钮（在面板左边缘）
+    var tglBtn = document.createElement('button');
+    tglBtn.id = 'sess-toggle-btn';
+    tglBtn.title = '折叠会话面板';
+    tglBtn.textContent = '\u25B6';
+    tglBtn.onclick = function(){ toggleSessSide(); };
+    side.appendChild(tglBtn);
+
+    // 折叠态下的展开按钮（fixed 到 right:0）
+    var expBtn = document.createElement('button');
+    expBtn.id = 'sess-expand-btn';
+    expBtn.title = '展开会话面板';
+    expBtn.textContent = '\u25C0';
+    expBtn.onclick = function(){ toggleSessSide(); };
+    document.body.appendChild(expBtn);
+
     side.querySelector('#sess-side .hd b')?.addEventListener('click', () => clearChainFocus());
+    // 智能标题
+    side.querySelector('#sess-smart-title')?.addEventListener('click', () => smartRenameSession());
+    // 会话标题双击编辑
+    side.querySelector('#sess-hdr-title')?.addEventListener('dblclick', () => {
+      inlineEditSessionTitle();
+    });
     side.querySelectorAll('[data-act]').forEach((btn) => {
       btn.addEventListener('click', () => onTool(btn.getAttribute('data-act')));
+    });
+  }
+
+  // 内联编辑会话标题
+  function inlineEditSessionTitle() {
+    const el = document.getElementById('sess-hdr-title');
+    if (!el || !S) return;
+    const cur = S.title || '';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = cur;
+    input.className = 'ol-title-input';
+    input.style.maxWidth = '300px';
+    el.replaceWith(input);
+    input.focus();
+    input.select();
+    const commit = async () => {
+      if (!S) return;
+      const newTitle = input.value.trim().slice(0, 80);
+      input.replaceWith(el);
+      if (newTitle && newTitle !== cur) {
+        try {
+          await actApi('update_session_title', { title: newTitle });
+          render();
+        } catch (e) {
+          toast('标题更新失败：' + e.message);
+        }
+      } else {
+        el.textContent = S.title || '';
+      }
+    };
+    const cancel = () => {
+      input.replaceWith(el);
+      el.textContent = S.title || '';
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancel();
+      }
+    });
+  }
+
+  // 智能标题：基于当前 chart/周期/链数
+  async function smartRenameSession() {
+    if (!S) return;
+    try {
+      await actApi('smart_title', {});
+      render();
+      toast('已智能生成标题：' + S.title);
+    } catch (e) {
+      toast('生成失败：' + e.message);
+    }
+  }
+
+  // 内联编辑链/事件标题
+  function inlineEditTitle(span, kind, id) {
+    const cur = span.textContent || '';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = cur;
+    input.className = 'ol-title-input';
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+    const action = kind === 'cause' ? 'update_cause_title' : 'update_event_title';
+    const payload =
+      kind === 'cause' ? { cause_id: id, title: input.value } : { event_id: id, title: input.value };
+    const commit = async () => {
+      const newVal = (input.value || '').trim();
+      input.replaceWith(span);
+      if (newVal && newVal !== cur) {
+        try {
+          await actApi(action, payload);
+          render();
+        } catch (e) {
+          toast('重命名失败：' + e.message);
+        }
+      } else {
+        span.textContent = cur;
+      }
+    };
+    const cancel = () => {
+      input.replaceWith(span);
+      span.textContent = cur;
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
     });
   }
 
@@ -509,6 +694,11 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
         ? '果'
         : '因';
     hdr.textContent = (S.status || '') + ' · ' + focusTag;
+    // 会话标题（独立显示 + 双击编辑）
+    const hdrTitle = document.getElementById('sess-hdr-title');
+    if (hdrTitle) {
+      hdrTitle.textContent = S.title || '';
+    }
 
     // 与后端 tool 同步选K开关状态
     pickKActive = ui.tool === 'pick_k';
@@ -558,6 +748,12 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       const isChain = c.id === ui.active_cause_id;
       const causeActive = isChain && !ui.active_event_id && (ui.side || 'cause') === 'cause';
       const effectActive = isChain && !ui.active_event_id && ui.side === 'effect';
+      // 折叠状态（存于 ui）
+      const collapsed = ((ui.collapsed_chains || {})[c.id]) === true;
+      // 子链数（用于折叠时显示 +N）
+      const childChains = causes.filter((ch) => ch.parent_id === c.id);
+      const childEvents = events.filter((ev) => ev.cause_id === c.id && ev.id);
+      const childCount = childChains.length + childEvents.length;
       let causeCls = 'ol-node ol-cause' + (causeActive ? ' active' : '');
       if (c.state === 'closed') causeCls += ' closed';
       let effectCls =
@@ -566,15 +762,25 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
         (phase === 'collecting' ? ' collecting' : '') +
         (phase === 'closed' ? ' closed' : '');
 
-      let html = `<div class="ol-chain-wrap" data-depth="${depth}" data-chain="${esc(c.id)}">`;
+      let wrapCls = 'ol-chain-wrap' + (isChain ? ' focused' : '') + (collapsed ? ' collapsed' : '');
+      let html = `<div class="${wrapCls}" data-depth="${depth}" data-chain="${esc(c.id)}">`;
       // 因行（链顶）+ 删除
-      html += `<div class="ol-line" data-depth="${depth}">
+      const collapseBtn = childCount > 0
+        ? `<span class="ol-collapse" data-toggle-collapse="${esc(c.id)}" title="${collapsed ? '展开' : '折叠'}子项">${collapsed ? '▶' : '▼'}</span>`
+        : '';
+      const childCountBadge = (collapsed && childCount > 0)
+        ? `<span class="ol-collapse-count" title="已折叠 ${childCount} 个子项">+${childCount}</span>`
+        : '';
+      html += `<div class="ol-line" data-depth="${depth}" data-toggle-line="1">
   ${indentHtml(depth)}
   <div class="ol-line-inner">
-  <div class="${causeCls}" data-cause="${esc(c.id)}" title="选中此因果链 · 因侧（点因≠事件）">
+  <div class="${causeCls}" data-cause="${esc(c.id)}" title="选中此因果链 · 因侧（点因≠事件） · 双击重命名">
     <div class="ol-ttl">
+      ${collapseBtn}
       <span class="tag">因</span>
+      <span class="ol-title" data-rename-cause="${esc(c.id)}">${esc(c.title || (depth > 0 ? '因-L' + depth : '因'))}</span>
       <span class="ol-meta">L${depth}${isChain && !ui.active_event_id && (ui.side || 'cause') === 'cause' ? ' · 选中' : ''}</span>
+      ${childCountBadge}
     </div>
     <div class="ol-sub">
       <span class="ol-chip">${esc(c.state || 'open')}</span>
@@ -605,12 +811,13 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
           if (!ev) return; // 无实体则不渲染
           const act = ev.id === ui.active_event_id ? ' active' : '';
           const t = (ev.created_at || '').slice(11, 16) || '';
-          html += `<div class="ol-line" data-depth="${depth + 1}">
+          html += `<div class="ol-line" data-depth="${depth + 1}" data-collapse-body="1">
   ${indentHtml(depth + 1)}
   <div class="ol-line-inner">
-  <div class="ol-node ol-event${act}" data-event="${esc(ev.id)}" title="属于链 L${depth} · 选中后：画线/选K/备注均归入此事件">
+  <div class="ol-node ol-event${act}" data-event="${esc(ev.id)}" title="属于链 L${depth} · 选中后：画线/选K/备注均归入此事件 · 双击重命名">
     <div class="ol-ttl">
       <span class="tag">事件</span>
+      <span class="ol-title" data-rename-event="${esc(ev.id)}">${esc(ev.title || ('事件' + (t ? '·' + t : '')))}</span>
       <span class="ol-meta">∈L${depth}${t ? ' · ' + esc(t) : ''}</span>
     </div>
     <div class="ol-sub">
@@ -622,7 +829,8 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 </div>`;
         } else if (item.type === 'chain') {
           if (!causeMap[item.id]) return;
-          html += renderChain(item.id, depth + 1);
+          const childHtml = renderChain(item.id, depth + 1);
+          html += `<div data-collapse-body="1">${childHtml}</div>`;
         }
       });
 
@@ -879,6 +1087,30 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteCause(el.getAttribute('data-del-cause'));
+      });
+    });
+    // 大纲折叠/展开
+    body.querySelectorAll('[data-toggle-collapse]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        toggleChainCollapse(el.getAttribute('data-toggle-collapse'));
+      });
+    });
+    // 链标题双击 → 重命名
+    body.querySelectorAll('[data-rename-cause]').forEach((el) => {
+      el.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        inlineEditTitle(el, 'cause', el.getAttribute('data-rename-cause'));
+      });
+    });
+    // 事件标题双击 → 重命名
+    body.querySelectorAll('[data-rename-event]').forEach((el) => {
+      el.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        inlineEditTitle(el, 'event', el.getAttribute('data-rename-event'));
       });
     });
     body.querySelectorAll('[data-element]').forEach((el) => {
@@ -1404,6 +1636,15 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     }
   }
 
+  // 大纲折叠/展开（本地状态，暂不持久化）
+  function toggleChainCollapse(causeId) {
+    if (!S || !causeId) return;
+    S.ui = S.ui || {};
+    S.ui.collapsed_chains = S.ui.collapsed_chains || {};
+    S.ui.collapsed_chains[causeId] = !S.ui.collapsed_chains[causeId];
+    render();
+  }
+
   async function focusCause(causeId) {
     if (!S) return;
     try {
@@ -1458,8 +1699,8 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     all.forEach((inst) => {
       if (!inst || !inst.id) return;
       const id = String(inst.id);
-      // 高亮线 sess_hl_* 永远显示
-      if (id.indexOf('sess_hl_') === 0) return;
+      // 系统管理的线 sess_* 永远显示
+      if (id.indexOf('sess_') === 0) return;
       // 事件聚焦：仅该事件的 overlays 满色，其他降透明度
       if (eventId) {
         if (eventOverlayIds.has(id)) {
@@ -1547,11 +1788,127 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     toast('已在当前链下嵌套子链 L' + d);
   }
 
+  function openSessModal(title, html) {
+    const box = document.getElementById('modal-box');
+    const overlay = document.getElementById('modal-overlay');
+    if (!box || !overlay) {
+      toast(title);
+      return;
+    }
+    box.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+      '<h3 style="margin:0">' + esc(title) + '</h3>' +
+      '<button class="modal-btn" type="button" id="sess-modal-close" style="margin-top:0">关闭</button>' +
+      '</div>' +
+      '<div style="font-size:11px;line-height:1.55;color:#d1d4dc">' + html + '</div>';
+    overlay.classList.add('show');
+    const close = document.getElementById('sess-modal-close');
+    if (close) close.onclick = function () { overlay.classList.remove('show'); };
+  }
+
+  function currentSymbolQuery() {
+    const ctx = panelCtx();
+    return {
+      symbol: ctx.symbol,
+      period: ctx.period || 'daily',
+      symbol_name: ctx.symbol_name || ctx.symbol,
+      asset_type: ctx.asset_type || '',
+    };
+  }
+
+  async function startDrawLevel() {
+    await setTool('level');
+    toast('支撑/阻力模式：请在图上画水平线，完成后填写来源K与备注');
+  }
+
+  async function startReactionMode() {
+    await setTool('reaction');
+    toast('反应点模式：先在位表选择一条支撑/阻力，再点反应K');
+    await openLevelManager();
+  }
+
+  async function openLevelManager() {
+    const ctx = currentSymbolQuery();
+    const url = '/api/annotations?symbol=' + encodeURIComponent(ctx.symbol) +
+      '&period=' + encodeURIComponent(ctx.period) + '&type=level_origin&limit=100';
+    const j = await api(url);
+    const items = j.data || [];
+    const rows = items.map((c) => {
+      const lv = c.level || {};
+      const sb = c.source_bar || {};
+      const role = lv.role === 'resistance' ? '阻力' : '支撑';
+      const status = lv.status || 'active';
+      const price = lv.price != null ? Number(lv.price).toFixed(2) : '—';
+      const note = c.notes || c.note || '';
+      return '<div class="list-line"><b>' + esc(role) + '</b> ' + esc(price) +
+        ' <span class="muted">' + esc(status) + ' · ' + esc(c.period || ctx.period) + '</span>' +
+        '<div class="muted">源K ' + esc(sb.date || sb.timestamp || '—') +
+        ' · ' + esc(c.price_element || 'custom') + '</div>' +
+        (note ? '<div>' + esc(note) + '</div>' : '') + '</div>';
+    }).join('');
+    openSessModal(ctx.symbol_name + ' 位表', rows || '<div class="empty">当前标的/周期暂无已保存的支撑或阻力位。</div>');
+  }
+
+  async function openResonancePanel() {
+    const ctx = currentSymbolQuery();
+    let draft = null;
+    try { draft = JSON.parse(localStorage.getItem('resonance_draft') || 'null'); } catch (e) {}
+    const members = (draft && Array.isArray(draft.members) && draft.members.length)
+      ? draft.members
+      : [{ symbol: ctx.symbol, symbol_name: ctx.symbol_name, asset_type: ctx.asset_type, period: ctx.period }];
+    const j = await api('/api/resonance/matrix', {
+      method: 'POST',
+      body: JSON.stringify({ members, periods: [ctx.period || 'daily'] }),
+    });
+    const data = j.data || {};
+    const aligned = data.aligned || data.cells || [];
+    const summary =
+      '<div class="kv"><span>成员</span><span>' + esc(String(members.length)) + '</span></div>' +
+      '<div class="kv"><span>结果</span><span>' + esc(data.is_resonance ? '候选成立' : '未达到阈值') + '</span></div>' +
+      '<div class="muted" style="margin:8px 0">只按用户已定义支撑位和阈值扫描；这里不输出买卖结论。</div>';
+    const rows = aligned.slice(0, 20).map((x) => {
+      const sym = x.symbol || (x.member || {}).symbol || '';
+      const price = x.level_price || x.hit_level || x.price || '';
+      const dist = x.distance_pct != null ? Number(x.distance_pct).toFixed(2) + '%' : '';
+      const note = x.note || x.notes || x.source_note || '';
+      return '<div class="list-line"><b>' + esc(sym) + '</b> ' + esc(price ? String(price) : '') +
+        ' <span class="muted">' + esc(dist) + '</span>' +
+        (note ? '<div>' + esc(note) + '</div>' : '') + '</div>';
+    }).join('');
+    openSessModal('共振扫描', summary + (rows || '<div class="empty">暂无命中明细。</div>'));
+  }
+
+  async function openProposalPanel() {
+    const ctx = currentSymbolQuery();
+    const url = '/api/levels/propose?symbol=' + encodeURIComponent(ctx.symbol) +
+      '&period=' + encodeURIComponent(ctx.period) + '&top_n=5';
+    const j = await api(url);
+    const data = j.data || {};
+    const items = data.candidates || data.items || [];
+    const rows = items.map((c, i) => {
+      const price = c.price != null ? Number(c.price).toFixed(2) : '—';
+      const role = c.role === 'resistance' ? '阻力' : '支撑';
+      const reason = c.reason || c.evidence || c.note || '';
+      return '<div class="list-line"><b>#' + (i + 1) + ' ' + esc(role) + '</b> ' +
+        esc(price) + (reason ? '<div>' + esc(reason) + '</div>' : '') + '</div>';
+    }).join('');
+    openSessModal(
+      'AI 提议候选位',
+      '<div class="muted" style="margin-bottom:8px">候选位不会自动落库；只有你确认后才会成为正式 level_origin。</div>' +
+      (rows || '<div class="empty">暂无候选。可能是当前样本不足或已有位太近。</div>')
+    );
+  }
+
   async function onTool(act) {
     try {
       if (act === 'list') return openList();
       if (act === 'new') return onNewSession();
       if (act === 'save') return onSaveCommit();
+      if (act === 'level') return startDrawLevel();
+      if (act === 'reaction') return startReactionMode();
+      if (act === 'levels') return openLevelManager();
+      if (act === 'resonance') return openResonancePanel();
+      if (act === 'proposal') return openProposalPanel();
       // 「因」：无选中 → 根链；已选中某链 → 在其下嵌套子链（层级缩进）
       if (act === 'cause') {
         await ensureSession();
@@ -1771,32 +2128,32 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       // 会话无 chart：跳过 replay（前端可走 ensure_chart）
       return { skipped: true, reason: 'no chart in session' };
     }
-    const pro = window.pro;
-    if (!pro || typeof pro.setSymbol !== 'function') {
-      return { skipped: true, reason: 'pro not ready' };
-    }
     // 已显示同 symbol+period → 跳过（避免无谓重载）
     const cur = window.__board_ctx || {};
     if (cur.symbol === chart.symbol && cur.period === chart.period) {
       return { skipped: true, reason: 'same chart' };
     }
-    // setSymbol 触发 K 线重载；overlays 走 collectOverlays 自动同步到 session
-    pro.setSymbol({
-      ticker: chart.symbol,
-      name: chart.symbol_name || chart.symbol,
-      type: chart.asset_type || (chart.symbol && chart.symbol.startsWith('sh') ? 'index' : 'stock'),
-      market: 'A',
-      priceCurrency: 'CNY',
-    });
-    // 切周期（如果 pro 支持）
-    if (chart.period && pro.setPeriod && cur.period !== chart.period) {
-      try { pro.setPeriod(chart.period); } catch (_) {}
+    // 会话恢复：走统一选择链路，确保 UIState / ctx / 标题全部一致
+    window.dispatchEvent(new CustomEvent('select-symbol', {
+      detail: {
+        code: chart.symbol,
+        name: chart.symbol_name || chart.symbol,
+        type: chart.asset_type || (chart.symbol && chart.symbol.startsWith('sh') ? 'index' : 'stock'),
+        source: 'session-ui',
+        trigger: 'restore'
+      }
+    }));
+    // 切周期（通过 UIState → ChartController 链路）
+    if (chart.period && cur.period !== chart.period && window.UIState) {
+      window.UIState.setPeriod(chart.period);
     }
     window.__board_ctx = Object.assign({}, window.__board_ctx, {
       symbol: chart.symbol,
       period: chart.period,
     });
     toast('已回放到：' + (chart.symbol_name || chart.symbol) + ' ' + (chart.period || ''));
+    // 数据加载后刷新锚点
+    setTimeout(() => { try { markLastBarAnchor(); } catch(_) {} }, 1200);
     return { ok: true, chart: chart, overlays: data.overlays || [] };
   }
 
@@ -1848,12 +2205,35 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     }
   }
 
+  // 选K 模式 ↔ 绘图工具栏互斥（KLineChart Pro 不暴露 setDrawingBarVisible，CSS 灰显）
+  function syncDrawingBar() {
+    const on = !!(pickKActive || ((S && S.ui) || {}).tool === 'pick_k');
+    // 工具栏 class 名：klinecharts-pro-drawing-bar
+    const bar = document.querySelector('.klinecharts-pro-drawing-bar');
+    if (bar) {
+      bar.style.opacity = on ? '0.25' : '';
+      bar.style.pointerEvents = on ? 'none' : '';
+      bar.style.filter = on ? 'grayscale(0.8)' : '';
+      bar.title = on ? '选K 模式开启中：绘图工具栏已锁定' : '';
+      bar.classList.toggle('sess-locked-by-pickk', on);
+    }
+    // 同步在图上绘图模式（如果有内部方法）
+    const pro = window.pro;
+    if (pro && pro._chartApi) {
+      const api = pro._chartApi;
+      if (api && api.setOverlayDrawingMode) {
+        try { api.setOverlayDrawingMode(!on); } catch (e) {}
+      }
+    }
+  }
+
   async function setTool(tool) {
     await ensureSession();
     pickKActive = tool === 'pick_k';
     await actApi('set_ui', { tool }, { skipFlush: true });
     toast(tool === 'pick_k' ? '选K已开启：点图采集一根K，再点「选K」可关闭' : '浏览');
     bindChartClick();
+    syncDrawingBar();
   }
 
   /** 选K：开关切换；开启后单次采集成功会自动关闭，避免连续触发 */
@@ -1864,12 +2244,14 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       pickKActive = false;
       await actApi('set_ui', { tool: 'browse' }, { skipFlush: true });
       toast('已关闭选K');
+      syncDrawingBar();
       return;
     }
     pickKActive = true;
     await actApi('set_ui', { tool: 'pick_k' }, { skipFlush: true });
     toast('选K已开启：点击图上K线采集（完成一根后自动关闭）');
     bindChartClick();
+    syncDrawingBar();
   }
 
   async function turnOffPickK(silent) {
@@ -1879,6 +2261,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       if (S) await actApi('set_ui', { tool: 'browse' }, { skipFlush: true });
     } catch (e) {}
     if (!silent) toast('选K已关闭');
+    syncDrawingBar();
   }
 
   async function openList() {
@@ -2078,6 +2461,8 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       true
     );
     chartClickBound = true;
+    // 预创建 tooltip DOM（避免第一次 crosshair 时延迟）
+    ensureTooltipEl();
     const chart = getChart();
     if (chart && typeof chart.subscribeAction === 'function') {
       try {
@@ -2086,10 +2471,106 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
           global.__sess_crosshair = {
             timestamp: data.timestamp || (data.kLineData && data.kLineData.timestamp),
             value: data.value != null ? data.value : data.price,
+            kLineData: data.kLineData || null,
           };
+          // 更新 tooltip 浮窗
+          updateKlineTooltip(data);
         });
       } catch (e) {}
     }
+    // 今日 K 锚点：最新 bar 外框 + 标记
+    markLastBarAnchor();
+  }
+
+  // K 线 tooltip 浮窗
+  let _tooltipEl = null;
+  function ensureTooltipEl() {
+    if (_tooltipEl) return _tooltipEl;
+    _tooltipEl = document.createElement('div');
+    _tooltipEl.id = 'kline-tooltip';
+    _tooltipEl.style.cssText =
+      'position:absolute;z-index:10;pointer-events:none;display:none;' +
+      'background:rgba(26,30,41,0.95);color:#d1d4dc;font-size:11px;' +
+      'padding:6px 10px;border-radius:4px;border:1px solid #2a2e39;' +
+      'white-space:nowrap;line-height:1.6;font-variant-numeric:tabular-nums';
+    const container = document.getElementById('pro-container');
+    if (container) container.appendChild(_tooltipEl);
+    return _tooltipEl;
+  }
+
+  function updateKlineTooltip(data) {
+    const el = ensureTooltipEl();
+    if (!data || !data.kLineData) {
+      el.style.display = 'none';
+      return;
+    }
+    const k = data.kLineData;
+    const ch = k.close > k.open ? '#ef5350' : k.close < k.open ? '#26a69a' : '#d1d4dc';
+    el.innerHTML =
+      '<span style="color:#787b86">' + (k.date || fmtTs(k.timestamp)) + '</span>' +
+      ' <span style="color:white">O</span>' + fmt(k.open) +
+      ' <span style="color:white">H</span>' + fmt(k.high) +
+      ' <span style="color:white">L</span>' + fmt(k.low) +
+      ' <span style="color:' + ch + '">C</span><b>' + fmt(k.close) + '</b>' +
+      ' <span style="color:#787b86">V</span>' + fmtVol(k.volume);
+    el.style.display = 'block';
+    const container = document.getElementById('pro-container');
+    if (container) {
+      const rect = container.getBoundingClientRect();
+      el.style.left = '10px';
+      el.style.top = '40px';
+    }
+    // 离图表外侧时隐藏
+    const hideTimer = setTimeout(() => {
+      if (_tooltipEl) _tooltipEl.style.display = 'none';
+    }, 3000);
+    if (_tooltipTimer) clearTimeout(_tooltipTimer);
+    _tooltipTimer = hideTimer;
+  }
+  let _tooltipTimer = null;
+
+  // 今日 K 锚点：最新 bar 外框 + 标记线
+  function markLastBarAnchor() {
+    const chart = getChart();
+    if (!chart || typeof chart.createOverlay !== 'function') return;
+    const list = getDataList();
+    if (!list.length) return;
+    // 移除旧锚点
+    if (_anchorOvId && typeof chart.removeOverlay === 'function') {
+      try { chart.removeOverlay({ id: _anchorOvId }); } catch (_) {}
+    }
+    try {
+      const last = list[list.length - 1];
+      const isUp = last.close >= last.open;
+      const color = isUp ? '#ef5350' : '#26a69a';
+      _anchorOvId = 'sess_last_bar_anchor';
+      chart.createOverlay({
+        name: 'simpleAnnotation',
+        id: _anchorOvId,
+        points: [{ timestamp: last.timestamp, value: last.high }],
+        styles: { line: { color: color, size: 2, style: 2 /* dashed */ } },
+        extendData: { type: 'anchor' },
+      });
+      // 第二个 marker：低端
+      chart.createOverlay({
+        name: 'simpleAnnotation',
+        id: _anchorOvId + '_lo',
+        points: [{ timestamp: last.timestamp, value: last.low }],
+        styles: { line: { color: color, size: 1, style: 2 } },
+        extendData: { type: 'anchor' },
+      });
+    } catch (e) {}
+  }
+  let _anchorOvId = null;
+
+  function fmt(v, d) { d = d || 2; return v != null ? Number(v).toFixed(d) : '—'; }
+  function fmtTs(ts) {
+    try {
+      if (!ts) return '';
+      const d = new Date(Number(ts));
+      if (isNaN(d.getTime())) return String(ts).slice(0,10);
+      return d.toISOString().slice(0,10);
+    } catch(e) { return String(ts).slice(0,10); }
   }
 
   function bindOverlayHooks() {
@@ -2214,8 +2695,32 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     }, 2500);
   }
 
+  function bindHotkeys() {
+    if (global.__sess_hotkeys_bound) return;
+    global.__sess_hotkeys_bound = true;
+    document.addEventListener('keydown', (e) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const tag = (e.target && e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      const key = String(e.key || '').toLowerCase();
+      const map = {
+        h: 'level',
+        r: 'reaction',
+        l: 'levels',
+        m: 'resonance',
+        p: 'proposal',
+        k: 'pick_k',
+      };
+      const act = map[key];
+      if (!act) return;
+      e.preventDefault();
+      onTool(act);
+    });
+  }
+
   async function boot() {
     ensureUI();
+    bindHotkeys();
     // 若 chart 已在模块加载前 init，直接用；否则等事件 / 轮询
     global.addEventListener('kline-chart-ready', () => {
       overlayHookBound = false;

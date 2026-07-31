@@ -1,0 +1,41 @@
+{
+  "_comment": "WorkBuddy Hook 配置 — 将此内容合并到 ~/.codebuddy/settings.json 的 hooks 部分",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read|Write|Edit|Grep|Glob",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:5000/api/ai/hooks/post-tool-use",
+            "method": "POST"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:5000/api/ai/hooks/stop",
+            "method": "POST"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:5000/api/ai/hooks/subagent-stop",
+            "method": "POST"
+          }
+        ]
+      }
+    ]
+  }
+}
