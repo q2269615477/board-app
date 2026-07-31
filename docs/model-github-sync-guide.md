@@ -239,6 +239,33 @@ git branch -D
 
 应该先报告用户，并说明是哪几个文件导致失败。
 
+### GitHub 使用本地 7688 代理
+
+本机访问 GitHub 时优先使用 HTTP 代理：
+
+```text
+http://127.0.0.1:7688
+```
+
+当前系统的 `NO_PROXY` 可能包含 `github.com`，这会让 Git 绕过代理并直接连接
+GitHub，表现为连接重置或无法连接 443 端口。推送时应只在当前 PowerShell
+进程中临时清空 `NO_PROXY`：
+
+```powershell
+$env:NO_PROXY=''
+$env:no_proxy=''
+git -c http.proxy=http://127.0.0.1:7688 -c http.version=HTTP/1.1 push -u origin $(git branch --show-current)
+```
+
+执行前可以确认代理端口是否正常：
+
+```powershell
+Test-NetConnection 127.0.0.1 -Port 7688
+```
+
+不要使用 `git config --global http.proxy ...` 写入永久代理配置。不要修改系统
+全局代理，也不要删除 Tushare、QMT 等域名已有的直连规则。
+
 如果只是新功能分支推送失败，常见检查命令：
 
 ```powershell
