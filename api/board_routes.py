@@ -98,6 +98,32 @@ def get_board_changes_route():
     return jsonify({'data': service.get_board_changes()})
 
 
+@bp.route('/api/snapshot/refresh', methods=['POST'])
+@write_protected
+def refresh_board_snapshot_route():
+    """强制刷新盘中板块快照，并立即同步左侧涨跌幅缓存。"""
+    from services.board_snapshot import get_snapshot_cache
+    from services.board_spot_cache import get_board_spot_cache
+
+    snapshot = get_snapshot_cache()
+    snapshot_ready = bool(snapshot.ensure_snapshot(force=True))
+    stats = snapshot.stats()
+
+    spot_cache = get_board_spot_cache()
+    spot_cache.invalidate_all()
+    # 盘中成功捕获后直接复用完整快照，避免行业/概念各触发一次网络抓取；
+    # 盘后或快照为空时才让 spot cache 执行其结算数据降级链。
+    changes = get_app_context().refresh_board_changes(force=not snapshot_ready)
+    ok = bool(changes)
+    return jsonify({
+        'ok': ok,
+        'snapshot_ready': snapshot_ready,
+        'snapshot': stats,
+        'board_changes_count': len(changes),
+        'message': '板块快照已刷新' if ok else '板块快照暂不可用',
+    }), 200 if ok else 503
+
+
 @bp.route('/api/spot/<data_type>/<code>')
 def get_spot_route(data_type, code):
     """鑾峰彇瀹炴椂琛屾儏"""

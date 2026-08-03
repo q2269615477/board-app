@@ -616,6 +616,8 @@ class KLineService:
         if (cache_first and not force
                 and (not standard_a_index or period == 'daily')):
             stale = self._read_sqlite_fast(code, period)
+            if period == 'daily':
+                stale = self._attach_board_snapshot(data_type, code, stale)
             safe_fast_path = (
                 not standard_a_index
                 or (period == 'daily' and _is_safe_a_share_index_daily_cache(stale))
@@ -697,6 +699,8 @@ class KLineService:
                 ), 200
             if cache_first:
                 stale = self._read_sqlite_fast(code, period)
+                if period == 'daily':
+                    stale = self._attach_board_snapshot(data_type, code, stale)
                 if stale is not None and not stale.empty:
                     data, last_date = self._format_response(stale)
                     load_ms = int((time.time() - start_time) * 1000)
@@ -840,6 +844,47 @@ class KLineService:
                 df.attrs['intraday'] = snapshot
         return df
 
+    def _attach_board_snapshot(self, data_type: str, code: str,
+                               df: pd.DataFrame) -> pd.DataFrame:
+        """把盘中板块快照临时合并为当日日 K，绝不写入结算数据库。"""
+        if data_type not in ('industry', 'concept') or df is None or df.empty:
+            return df
+        try:
+            from services.board_snapshot import get_snapshot_cache
+
+            row = get_snapshot_cache().get_board_today(data_type, code)
+            if not row:
+                return df
+            trade_date = str(row.get('trade_date') or '').strip()
+            if len(trade_date) == 8 and trade_date.isdigit():
+                trade_date = f'{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}'
+            if not trade_date:
+                return df
+            close = float(row.get('close') or 0)
+            if close <= 0:
+                return df
+
+            attrs = dict(getattr(df, 'attrs', {}) or {})
+            transient = pd.DataFrame([{
+                'date': trade_date,
+                'open': float(row.get('open') or close),
+                'high': float(row.get('high') or close),
+                'low': float(row.get('low') or close),
+                'close': close,
+                'volume': float(row.get('volume') or 0),
+                'amount': float(row.get('amount') or 0),
+            }])
+            base = df.copy()
+            dates = pd.to_datetime(base['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            base = base[dates != trade_date]
+            result = dedupe_kline_df(pd.concat([base, transient], ignore_index=True))
+            result.attrs.update(attrs)
+            result.attrs['board_snapshot_attached'] = True
+            return result
+        except Exception as e:
+            logger.debug('[KLine] 板块盘中快照合并失败 %s:%s: %s', data_type, code, e)
+            return df
+
     def _ensure_complete_history(
         self, data_type: str, code: str, df: pd.DataFrame, force: bool = False
     ) -> pd.DataFrame:
@@ -982,6 +1027,7 @@ class KLineService:
             except Exception:
                 pass
             result = dedupe_kline_df(df)
+            result = self._attach_board_snapshot(data_type, code, result)
             result.attrs['source'] = 'board_loader'
             result.attrs['fallback_chain'] = fallback_chain
             return result
@@ -990,6 +1036,7 @@ class KLineService:
         df = self._db.read_kline(code, 'daily')
         if df is not None and not df.empty:
             result = dedupe_kline_df(df)
+            result = self._attach_board_snapshot(data_type, code, result)
             result.attrs['source'] = 'sqlite'
             result.attrs['fallback_chain'] = fallback_chain
             return result

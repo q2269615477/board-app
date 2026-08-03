@@ -611,7 +611,12 @@ function forceRefresh(){
   toast('正在即时刷新...');
   // 1) 板块快照强制刷新（盘中立即拉东财实时；盘后空操作）
   var snapP = fetch(API+'/api/snapshot/refresh', {method:'POST'})
-    .then(function(r){ return r.json(); })
+    .then(function(r){
+      return r.json().then(function(j){
+        if(!r.ok || !j || !j.ok) throw new Error((j && j.message) || ('HTTP '+r.status));
+        return j;
+      });
+    })
     .then(function(j){
       if(j && j.ok){
         // 板块涨幅刷新：触发左侧 board-changes 重拉
@@ -619,7 +624,14 @@ function forceRefresh(){
         // 若当前正展开成分面板 → 重拉成分
         try { if (typeof consDoRefresh === 'function') consDoRefresh(); } catch(_){}
       }
-    }).catch(function(){});
+    }).catch(function(e){
+      showToastBar('板块数据刷新失败：'+escHtml((e && e.message) || '未知错误'));
+    }).finally(function(){
+      // 即使快照端点暂时不可用，也必须重新读取现有服务端数据，不能把
+      // 左侧面板永久留在旧快照。
+      try { if (typeof loadBoardChanges === 'function') loadBoardChanges(); } catch(_){}
+      try { if (typeof consDoRefresh === 'function') consDoRefresh(); } catch(_){}
+    });
   if(_taskCenterOpen){
     setTimeout(function(){ try{ renderTaskCenter(); }catch(e){} }, 400);
   }

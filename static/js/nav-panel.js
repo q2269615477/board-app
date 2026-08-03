@@ -1545,6 +1545,11 @@ function applyBoardChgToDOM(){
       span.title = '';
       delete el.dataset.unavailable;
       el.dataset.chg = numChg;
+    } else if(span && (type === 'industry' || type === 'concept')){
+      span.className = 'board-chg';
+      span.textContent = '--';
+      span.title = '行情等待刷新';
+      delete el.dataset.chg;
     }
   });
 
@@ -1565,13 +1570,19 @@ async function loadBoardChanges(){
     const r = await fetch(API+'/api/board-changes');
     const resp = await r.json();
     var incoming = resp.data || {};
-    var merged = Object.assign({}, _boardChgData || {});
+    var merged = {};
+    Object.entries(_boardChgData || {}).forEach(function(entry){
+      var key = entry[0];
+      if (key.indexOf('index:') === 0) {
+        var code = key.slice(6);
+        merged[key] = entry[1];
+        merged[code] = entry[1];
+      }
+    });
     Object.entries(incoming).forEach(function(entry){
       var key = entry[0];
       var code = key.indexOf(':') >= 0 ? key.split(':').pop() : key;
-      // The index endpoint owns both index:CODE and bare CODE entries. A
-      // later board snapshot must not erase an already loaded index quote or
-      // an unavailable/deprecated marker.
+      // 指数端点拥有 index:CODE 与裸 CODE；板块快照只替换板块部分。
       if (key === 'index:' + code ||
           (key === code && merged['index:' + code] !== undefined)) return;
       merged[key] = entry[1];
@@ -1732,4 +1743,3 @@ function startBoardFallbackPolling() {
   setTimeout(startBoardFallbackPolling, trading ? 60000 : 300000);
 }
 setTimeout(startBoardFallbackPolling, 8000);
-

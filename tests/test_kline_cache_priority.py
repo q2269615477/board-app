@@ -71,6 +71,30 @@ class TestKLineServiceCachePriority:
         assert result['count'] == 5
         assert result['data'][0]['timestamp'] > 0
 
+    def test_board_cache_first_appends_today_snapshot_without_persisting(self):
+        """板块本地历史停在前一交易日时，响应应临时带上今日快照。"""
+        svc = self._make_service(db_has_data=True)
+        snapshot = MagicMock()
+        snapshot.get_board_today.return_value = {
+            'trade_date': '20260803',
+            'open': 101.0,
+            'high': 105.0,
+            'low': 99.0,
+            'close': 104.0,
+            'volume': 1234.0,
+            'amount': 5678.0,
+        }
+        with patch('services.board_snapshot.get_snapshot_cache', return_value=snapshot), \
+             patch.object(svc, '_submit_background_refresh', return_value=True):
+            result, status = svc.get_kline(
+                'industry', 'BK0001', 'daily', cache_first=True, timeout=5
+            )
+
+        assert status == 200
+        assert result['last_date'] == '2026-08-03'
+        assert result['data'][-1]['close'] == 104.0
+        svc._db.save_kline.assert_not_called()
+
     def test_stale_ok_equivalent_to_prefer_cache(self):
         """cache_first=True 等效于旧行为"""
         svc = self._make_service(db_has_data=True)

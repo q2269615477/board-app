@@ -436,13 +436,17 @@ class AppContext:
             self._reload_board_changes()
             self._stop_event.wait(BOARD_CHG_REFRESH_INTERVAL)
 
-    def _reload_board_changes(self):
+    def _reload_board_changes(self, force: bool = False):
         """从统一 BoardSpotCache 派生板块涨跌幅。"""
         try:
             from services.board_spot_cache import get_board_spot_cache
             cache = get_board_spot_cache()
-            cache.get('industry')
-            cache.get('concept')
+            if force:
+                cache.get('industry', force=True)
+                cache.get('concept', force=True)
+            else:
+                cache.get('industry')
+                cache.get('concept')
             result = cache.get_chgs()
         except Exception as e:
             logger.debug(f"[涨跌幅] BoardSpotCache 不可用: {e}")
@@ -451,6 +455,12 @@ class AppContext:
             self.board_chg_cache = result
             if result:
                 logger.info(f"[涨跌幅] BoardSpotCache 已加载 {len(result)} 个板块涨跌幅")
+
+    def refresh_board_changes(self, force: bool = False) -> dict:
+        """立即重建板块涨跌幅缓存并返回快照。"""
+        self._reload_board_changes(force=force)
+        with self.board_chg_lock:
+            return self.board_chg_cache.copy()
 
     def get_board_changes_cached(self) -> dict:
         """获取板块涨跌幅（线程安全，首次调用同步加载）"""

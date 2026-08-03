@@ -333,7 +333,7 @@ class BoardDatafeed {
           ranges: fetchedRanges, complete: !hasWindow
         });
         // stale 后台刷新：海外指数也必须在历史尾部修复完成后重新绘图。
-        var _canBackgroundRefresh = ['stock','index','hk_index','global_index','us'].indexOf(symbol.type) >= 0;
+        var _canBackgroundRefresh = ['stock','index','industry','concept','hk_index','global_index','us'].indexOf(symbol.type) >= 0;
         if(j.stale && j.background_refresh_started && _canBackgroundRefresh){
           var self = this;
           var reSym = symbol; var reSymbolKey = symbolKey; var reKey = cacheKey; var reP = p;

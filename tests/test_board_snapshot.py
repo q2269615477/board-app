@@ -241,6 +241,7 @@ class TestCaptureAll:
         assert cache.capture_all('industry') == 5
         assert len(mock_sess.get_calls) == 3
         assert len(cache.get_all('industry')) == 5
+        assert all('fid=f12' in call[0] for call in mock_sess.get_calls)
 
     @patch('services.board_snapshot.datetime')
     @patch('requests.Session', create=True)

@@ -74,6 +74,16 @@ def test_board_snapshot_merges_without_erasing_index_quotes():
         encoding="utf-8", errors="ignore"
     )
 
-    assert "Object.assign({}, _boardChgData || {})" in source
+    assert "key.indexOf('index:') === 0" in source
     assert "merged['index:' + code] !== undefined" in source
     assert "_boardChgData = merged;" in source
+
+
+def test_board_snapshot_replaces_stale_board_values_and_resets_missing_rows():
+    source = (ROOT / "static" / "js" / "nav-panel.js").read_text(
+        encoding="utf-8", errors="ignore"
+    )
+
+    assert "var merged = {};" in source
+    assert "span.textContent = '--';" in source
+    assert "span.title = '行情等待刷新';" in source

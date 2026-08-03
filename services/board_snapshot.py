@@ -192,7 +192,10 @@ class BoardSnapshotCache:
                         url = (
                             f'{base_url}?pn={page}&pz={_PAGE_SIZE}&po=1&np=1'
                             f'&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2'
-                            f'&fid=f3&fs={fs_val}'
+                            # 分页必须使用稳定字段排序。按涨跌幅(f3)排序时，
+                            # 行情在翻页过程中会变动，导致代码跨页重复/遗漏，
+                            # 最终整批快照被完整性校验拒绝。
+                            f'&fid=f12&fs={fs_val}'
                             f'&fields=f12,f14,f2,f3,f4,f5,f6,f7,f8,f15,f16,f17,f18'
                         )
                         r = session.get(url, headers=_EM_HEADERS, timeout=_REQUEST_TIMEOUT)
