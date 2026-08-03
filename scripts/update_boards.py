@@ -6,19 +6,22 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.env_bootstrap import ensure_tushare_token
+ensure_tushare_token()
 
 import time
 import json
 import logging
-import os
 import sqlite3
 from datetime import datetime, timedelta
-import tushare as ts
 import pandas as pd
 
-os.environ.setdefault('TUSHARE_TOKEN', 'cbd6784d7c5e87d4e5c935983a17a56367bb1a4b589bbc7768c25590')
-ts.set_token(os.environ['TUSHARE_TOKEN'])
-pro = ts.pro_api()
+from data_loader import get_tushare_pro
+
+pro = get_tushare_pro()
+if pro is None:
+    print('错误: TUSHARE_TOKEN 未配置，无法使用 Tushare 数据源', file=sys.stderr)
+    sys.exit(1)
 
 DB_PATH = Path(__file__).resolve().parent.parent / 'data' / 'kline.db'
 LOG_PATH = Path(__file__).resolve().parent.parent / 'data' / 'update_logs'

@@ -1,9 +1,7 @@
-"""
-数据更新调度器
-管理三个时间维度的数据更新：
-- 盘后 (15:05): 更新所有东财板块 + 顶部指数导航栏
-- 午休 (11:35): 更新顶部指数 + 所有东财板块到独立缓存
-- 盘中: 顶部指数 WebSocket 推送 + 搜索实时拉取
+"""数据更新调度门面。
+
+真实时间循环位于 data_update_manager；本模块只提供状态查询和手动触发，
+且所有手动入口必须复用生产数据源，不能另建一套午休/盘后抓取链路。
 """
 import logging
 import threading
@@ -30,80 +28,64 @@ noon_cache_manager = NoonCacheManager()
 
 
 def update_noon_data() -> bool:
-    """
-    更新午休数据
-    - 顶部指数导航栏（QMT）
-    - 所有东财板块（Tushare）
-    - 保存到独立缓存文件
-    
-    Returns:
-        bool: 更新成功返回 True
-    """
+    """把统一行情缓存中的上午收盘快照保存为午休快照。"""
     logger.info("[午休更新] 开始更新午休数据...")
-    
+
     try:
         all_data = {}
-        
-        # 1. 获取顶部指数导航栏数据（QMT）
-        index_codes = [code for code, _, _ in PREWARM_TARGETS if not code.startswith('BK')]
+
+        # 顶部栏：国内标的由 QMT 18080，境外标的由既有 HTTP 聚合器。
         try:
-            from data.qmt_client import get_qmt_client
-            client = get_qmt_client()
-            index_data = client.get_constituents_batch(index_codes)
+            from services.nav_spot_service import fetch_nav_spots
+            nav = fetch_nav_spots(force=True)
+            index_data = nav.get('data') or {}
             all_data.update(index_data)
-            logger.info(f"[午休更新] 指数数据: {len(index_data)} 个")
+            logger.info(f"[午休更新] 顶部行情: {len(index_data)} 个")
         except Exception as e:
-            logger.warning(f"[午休更新] QMT指数获取失败，使用缓存: {e}")
-            # 使用本地缓存兜底
-            try:
-                from data.sqlite_repo import get_cached_prices
-                cached = get_cached_prices(index_codes)
-                all_data.update({k: v for k, v in cached.items() if v})
-            except Exception as cache_e:
-                logger.warning(f"[午休更新] 本地缓存兜底也失败: {cache_e}")
-        
-        # 2. 获取东财板块数据（Tushare）
+            logger.warning(f"[午休更新] 顶部统一行情读取失败: {e}")
+
+        # 板块：BoardSpotCache 在午休阶段冻结上午最后一份 push2delay 快照。
+        # 禁止午休时调用 Tushare；dc_daily 只用于 17:00 后正式结算。
         try:
-            from data import board_api
-            industry_df = board_api.get_industry_boards()
-            concept_df = board_api.get_concept_boards()
-            
-            if industry_df is not None:
-                for _, row in industry_df.iterrows():
-                    code = row.get('板块代码', '')
-                    if code:
-                        all_data[code] = {
-                            'price': row.get('涨跌幅', 0),
-                            'change_pct': row.get('涨跌幅', 0),
-                            'volume': 0,
-                            'source': 'tushare_industry'
-                        }
-            
-            if concept_df is not None:
-                for _, row in concept_df.iterrows():
-                    code = row.get('板块代码', '')
-                    if code:
-                        all_data[code] = {
-                            'price': row.get('涨跌幅', 0),
-                            'change_pct': row.get('涨跌幅', 0),
-                            'volume': 0,
-                            'source': 'tushare_concept'
-                        }
-            
-            logger.info(f"[午休更新] 东财板块数据已获取")
-            
+            from services.board_spot_cache import get_board_spot_cache
+            cache = get_board_spot_cache()
+            board_data = {}
+            for board_type in ('industry', 'concept'):
+                frame = cache.get(board_type)
+                if frame is None:
+                    continue
+                if isinstance(frame, dict):
+                    rows = frame.items()
+                elif hasattr(frame, 'empty') and not frame.empty:
+                    rows = (
+                        (
+                            str(row.get('板块代码') or row.get('code') or ''),
+                            row,
+                        )
+                        for _, row in frame.iterrows()
+                    )
+                else:
+                    continue
+                for frame_code, row in rows:
+                    code = str(
+                        row.get('板块代码') or row.get('code') or frame_code or ''
+                    )
+                    if not code:
+                        continue
+                    change_pct = row.get('涨跌幅')
+                    if change_pct is None:
+                        change_pct = row.get('change_pct')
+                    board_data[code] = {
+                        'price': row.get('最新价') or row.get('price'),
+                        'change_pct': change_pct,
+                        'changePct': change_pct,
+                        'source': 'eastmoney_push2delay_frozen',
+                    }
+            all_data.update(board_data)
+            logger.info(f"[午休更新] 冻结板块快照: {len(board_data)} 个")
         except Exception as e:
-            logger.warning(f"[午休更新] Tushare板块获取失败: {e}")
-            # 使用本地缓存兜底
-            try:
-                from data.sqlite_repo import get_cached_prices
-                board_codes = _get_all_board_codes()
-                cached = get_cached_prices(board_codes)
-                all_data.update({k: v for k, v in cached.items() if v})
-            except Exception as cache_e:
-                logger.warning(f"[午休更新] 板块本地缓存兜底也失败: {cache_e}")
-        
-        # 3. 保存到午休缓存
+            logger.warning(f"[午休更新] 板块统一缓存读取失败: {e}")
+
         if all_data:
             success = noon_cache_manager.save_noon_data(all_data)
             if success:
@@ -120,8 +102,8 @@ def update_noon_data() -> bool:
 def update_daily_close_data() -> bool:
     """
     更新盘后数据（正式数据）
-    - 所有东财板块（Tushare）
-    - 顶部指数导航栏（QMT）
+    - 15:30 后国内指数/个股 QMT 日线
+    - 17:00 后东财板块 Tushare 正式日线
     - 写入主存储（SQLite/CSV）
     
     Returns:
@@ -132,9 +114,10 @@ def update_daily_close_data() -> bool:
     try:
         # 使用现有的 update_all_today 函数
         from data_update_manager import update_all_today
-        update_all_today()
-        logger.info("[盘后更新] 盘后数据更新完成")
-        return True
+        result = update_all_today()
+        ready = bool(result.get('completion_ready'))
+        logger.info("[盘后更新] 完成状态: %s", ready)
+        return ready
         
     except Exception as e:
         logger.error(f"[盘后更新] 更新失败: {e}")

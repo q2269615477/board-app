@@ -58,6 +58,17 @@ def _rows_to_daily_df(rows: list) -> Optional[pd.DataFrame]:
         df['date'] = df['date'].map(_normalize_bar_date)
         df = df.drop_duplicates(subset=['date'], keep='last')
         df = df.sort_values('date').reset_index(drop=True)
+    for col in ('open', 'high', 'low', 'close'):
+        if col not in df.columns:
+            return None
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    df = df.dropna(subset=['open', 'high', 'low', 'close'])
+    if 'volume' not in df.columns:
+        df['volume'] = 0
+    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
+    df = df.reset_index(drop=True)
+    if df.empty:
+        return None
     return df
 
 
@@ -750,3 +761,13 @@ def get_qmt_client() -> QMTClient:
             if _qmt_client is None:
                 _qmt_client = QMTClient()
     return _qmt_client
+
+
+def is_mini_data_ready() -> bool:
+    """检查 Mini QMT 行情端口 58610 是否可达。"""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", 58610), timeout=1):
+            return True
+    except (OSError, TimeoutError):
+        return False

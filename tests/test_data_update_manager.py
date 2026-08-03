@@ -176,7 +176,7 @@ class TestTushareFallback:
             "(code,period,date,open,high,low,close,volume,updated_at) "
             "VALUES (?,?,?,?,?,?,?,?,?)"
         )
-        # code 无 Tushare 映射（如 800000）
+        # code 无 Tushare 映射时，Tushare 兜底保持 no-op。
         written = _tushare_fallback_single_index(
             code='800000',
             name='东方财富全A',
@@ -187,6 +187,15 @@ class TestTushareFallback:
             now_str='',
         )
         assert written == 0
+
+    def test_eastmoney_all_a_is_not_permanently_skipped(self):
+        from data_update_manager import (
+            EASTMONEY_INDEX_CODES,
+            PERMANENT_SKIP_INDICES,
+        )
+
+        assert '800000' in EASTMONEY_INDEX_CODES
+        assert '800000' not in PERMANENT_SKIP_INDICES
 
     def test_fallback_skips_when_already_current(self, tmp_path):
         from data_update_manager import _tushare_fallback_single_index

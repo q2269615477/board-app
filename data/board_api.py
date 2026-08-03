@@ -9,7 +9,6 @@ import threading
 from typing import Optional
 from datetime import datetime
 import pandas as pd
-import tushare as ts
 
 logger = logging.getLogger('board_api')
 
@@ -29,41 +28,15 @@ def _rate_limit():
         _last_call_time = time.time()
 
 
-def _ensure_direct():
-    """板块/Tushare 请求前清代理（防 127.0.0.1:7688 超时）。"""
-    try:
-        from core.env_bootstrap import force_direct_network
-        force_direct_network()
-    except Exception:
-        import os
-        for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY'):
-            os.environ.pop(k, None)
-        os.environ['NO_PROXY'] = '*'
-        os.environ['no_proxy'] = '*'
-
-# ===== Tushare 初始化（复用 data_loader 的全局配置） =====
+# ===== Tushare 初始化（唯一工厂：data_loader.get_tushare_pro） =====
+# _pro 保留模块级兼容缓存语义；创建/刷新一律委托给 data_loader 的惰性单例。
 _pro = None
 try:
-    from data_loader import _tushare_pro as _pro
-except Exception:
-    try:
-        import os
-        _TOKEN = os.environ.get('TUSHARE_TOKEN', '')
-        if not _TOKEN:
-            logging.warning('[board_api] TUSHARE_TOKEN环境变量未设置，Tushare板块数据将不可用')
-        else:
-            try:
-                ts.set_token(_TOKEN)
-                _pro = ts.pro_api()
-            except PermissionError:
-                logging.warning('[board_api] Tushare token写入被沙箱拦截')
-                _pro = None
-            except Exception as e:
-                logging.warning(f'[board_api] Tushare初始化失败: {e}')
-                _pro = None
-    except Exception as e:
-        logging.warning(f'[board_api] Tushare初始化失败: {e}')
-        _pro = None
+    from data_loader import get_tushare_pro
+    _pro = get_tushare_pro()
+except Exception as e:
+    logger.warning('[board_api] Tushare 客户端初始化失败: %s', e)
+    _pro = None
 
 
 def _today() -> str:
@@ -75,6 +48,31 @@ def _date_fmt(d: str) -> str:
     if not d or len(d) < 8:
         return d
     return f'{d[:4]}-{d[4:6]}-{d[6:]}'
+
+
+def _normalize_trade_date(value) -> str:
+    """Normalize a Tushare trade date to YYYYMMDD for comparisons."""
+    if value is None:
+        return ''
+    text = str(value).strip().replace('-', '').replace('/', '')
+    return text[:8] if len(text) >= 8 else text
+
+
+def _select_latest_trade_date(df: pd.DataFrame):
+    """Keep only rows from the newest trade_date returned by Tushare.
+
+    dc_index may return several historical snapshots when no date filter is
+    supplied.  Selecting explicitly prevents later, older rows from
+    overwriting the current board value.
+    """
+    if df is None or df.empty or 'trade_date' not in df.columns:
+        return df, ''
+    dates = df['trade_date'].map(_normalize_trade_date)
+    dates = dates[dates != '']
+    if dates.empty:
+        return df, ''
+    latest = dates.max()
+    return df.loc[dates == latest].copy(), latest
 
 
 # ===== 板块列表 =====
@@ -89,6 +87,7 @@ def get_industry_boards() -> Optional[pd.DataFrame]:
         df = _pro.dc_index(idx_type='行业板块')
         if df is None or df.empty:
             return None
+        df, latest_date = _select_latest_trade_date(df)
         records = []
         for _, row in df.iterrows():
             code = str(row.get('ts_code', '')).replace('.DC', '')
@@ -98,6 +97,8 @@ def get_industry_boards() -> Optional[pd.DataFrame]:
                 '板块代码': code,
                 '板块名称': str(row.get('name', '')),
                 '涨跌幅': float(row.get('pct_change', 0) or 0),
+                'trade_date': latest_date,
+                'source': 'tushare_dc_index',
             })
         return pd.DataFrame(records) if records else None
     except Exception as e:
@@ -115,6 +116,7 @@ def get_concept_boards() -> Optional[pd.DataFrame]:
         df = _pro.dc_index(idx_type='概念板块')
         if df is None or df.empty:
             return None
+        df, latest_date = _select_latest_trade_date(df)
         records = []
         for _, row in df.iterrows():
             code = str(row.get('ts_code', '')).replace('.DC', '')
@@ -124,6 +126,8 @@ def get_concept_boards() -> Optional[pd.DataFrame]:
                 '板块代码': code,
                 '板块名称': str(row.get('name', '')),
                 '涨跌幅': float(row.get('pct_change', 0) or 0),
+                'trade_date': latest_date,
+                'source': 'tushare_dc_index',
             })
         return pd.DataFrame(records) if records else None
     except Exception as e:
@@ -187,9 +191,90 @@ def get_concept_constituents(sector_code: str) -> list:
     return _get_constituents(sector_code)
 
 
+def get_eastmoney_constituents(board_type: str, sector_code: str) -> list:
+    """Fetch board constituents from Eastmoney push2delay as a safe fallback.
+
+    The endpoint is intentionally independent from the Tushare client: a
+    request failure returns an empty list and never changes Tushare behavior.
+    """
+    import requests
+
+    if board_type not in ('industry', 'concept') or not sector_code:
+        return []
+    code = str(sector_code).strip().upper()
+    if not code.startswith('BK'):
+        return []
+    # 局部直连 Session：仅本请求生效，不改全局 requests 默认行为
+    session = requests.Session()
+    session.trust_env = False
+    session.proxies = {}
+    try:
+        response = session.get(
+            'https://push2delay.eastmoney.com/api/qt/clist/get',
+            params={
+                'pn': 1,
+                'pz': 500,
+                'po': 1,
+                'np': 1,
+                'fltt': 2,
+                'invt': 2,
+                'fid': 'f3',
+                'fs': f'b:{code}',
+                'fields': 'f12,f14,f2,f3,f20,f5',
+            },
+            headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': 'https://quote.eastmoney.com/',
+            },
+            timeout=15,
+        )
+        if getattr(response, 'status_code', 200) >= 400:
+            return []
+        payload = response.json() or {}
+        data = payload.get('data') or {}
+        diff = data.get('diff') if isinstance(data, dict) else None
+        if isinstance(diff, dict):
+            diff = list(diff.values())
+        if not isinstance(diff, list):
+            return []
+
+        def number(value, default=0.0):
+            if value in (None, '', '-', '—'):
+                return default
+            try:
+                value = float(value)
+                return value if value == value else default
+            except (TypeError, ValueError):
+                return default
+
+        records = []
+        for row in diff:
+            if not isinstance(row, dict):
+                continue
+            stock_code = str(row.get('f12') or '').strip()
+            stock_name = _clean_stock_name(str(row.get('f14') or '').strip())
+            if not stock_code or not stock_name:
+                continue
+            records.append({
+                'code': stock_code,
+                'name': stock_name,
+                'close': number(row.get('f2'), '-'),
+                'change_pct': number(row.get('f3')),
+                'mkt_cap': number(row.get('f20')) / 1e8,
+                'volume': number(row.get('f5')),
+                'source': 'eastmoney_push2delay',
+            })
+        return records
+    except Exception as e:
+        logger.debug('[EastMoney] get constituents %s/%s failed: %s', board_type, code, e)
+        return []
+    finally:
+        session.close()
+
+
 # ===== 板块实时行情（从 dc_index 最新数据获取） =====
 
-def _get_spot(board_type: str) -> Optional[dict]:
+def _get_spot(board_type: str, expected_trade_date: str = '') -> Optional[dict]:
     """通用板块实时行情"""
     if _pro is None:
         logger.warning('[Tushare] _pro 未初始化，无法获取板块行情')
@@ -200,6 +285,14 @@ def _get_spot(board_type: str) -> Optional[dict]:
         df = _pro.dc_index(idx_type=label)
         if df is None or df.empty:
             return None
+        df, latest_date = _select_latest_trade_date(df)
+        expected = _normalize_trade_date(expected_trade_date)
+        if expected and latest_date != expected:
+            logger.info(
+                '[Tushare] %s dc_index 尚未发布目标交易日: expected=%s actual=%s',
+                board_type, expected, latest_date,
+            )
+            return None
         result = {}
         for _, row in df.iterrows():
             code = str(row.get('ts_code', '')).replace('.DC', '')
@@ -209,6 +302,9 @@ def _get_spot(board_type: str) -> Optional[dict]:
                 '名称': str(row.get('name', '')),
                 '涨跌幅': float(row.get('pct_change', 0) or 0),
                 '最新价': float(row.get('close', 0) or 0),
+                'trade_date': latest_date,
+                'source': 'tushare_dc_index',
+                'settled': bool(expected and latest_date == expected),
             }
         return result
     except Exception as e:
@@ -226,6 +322,55 @@ def get_concept_spot() -> Optional[dict]:
     return _get_spot('concept')
 
 
+def _snap_row_to_spot(row: dict, frozen: bool = False) -> dict:
+    """Convert a push2delay snapshot row to the board spot contract."""
+    return {
+        '名称': str(row.get('name', '') or ''),
+        '涨跌幅': float(row.get('pct', 0) or 0),
+        '最新价': float(row.get('close', 0) or 0),
+        'trade_date': _normalize_trade_date(row.get('trade_date', '')),
+        'source': 'eastmoney_push2delay',
+        'channel': 'eastmoney_push2delay_frozen' if frozen else 'eastmoney_push2delay',
+        'settled': False,
+        'close_candidate': not frozen,
+    }
+
+
+def _fetch_em_board_spot(board_type: str) -> Optional[dict]:
+    """Fetch a complete Eastmoney board snapshot through the shared cache."""
+    try:
+        from services.board_snapshot import get_snapshot_cache
+        snapshot = get_snapshot_cache()
+        snapshot.capture_all(board_type)
+        rows = snapshot.get_all(board_type) or {}
+        if not rows:
+            return None
+        frozen = snapshot.is_frozen()
+        return {
+            code: _snap_row_to_spot(row, frozen=frozen)
+            for code, row in rows.items()
+        }
+    except Exception as e:
+        logger.warning('[EastMoney] _fetch_em_board_spot(%s) 失败: %s', board_type, e)
+        return None
+
+
+def _fetch_tushare_board_spot(
+    board_type: str, expected_trade_date: str = ''
+) -> Optional[dict]:
+    """Fetch a settled Tushare board snapshot for the latest trade date.
+
+    Tushare is allowed to replace an Eastmoney close candidate only when its
+    newest dc_index row is for the expected latest trading day.
+    """
+    try:
+        expected = expected_trade_date or get_last_trading_date()
+        return _get_spot(board_type, expected_trade_date=expected)
+    except Exception as e:
+        logger.warning('[Tushare] _fetch_tushare_board_spot(%s) 失败: %s', board_type, e)
+        return None
+
+
 # ===== 板块K线数据 =====
 
 def _get_board_kline_eastmoney(code: str, start_date: str = '20000101') -> Optional[pd.DataFrame]:
@@ -235,7 +380,6 @@ def _get_board_kline_eastmoney(code: str, start_date: str = '20000101') -> Optio
     """
     import requests
 
-    _ensure_direct()
     code = str(code or '').strip().upper()
     if not code.startswith('BK'):
         return None
@@ -244,8 +388,12 @@ def _get_board_kline_eastmoney(code: str, start_date: str = '20000101') -> Optio
         beg = beg[:8]
     else:
         beg = '20000101'
+    # 局部直连 Session：仅本请求生效，不改全局 requests 默认行为
+    session = requests.Session()
+    session.trust_env = False
+    session.proxies = {}
     try:
-        r = requests.get(
+        r = session.get(
             'https://push2his.eastmoney.com/api/qt/stock/kline/get',
             params={
                 'secid': f'90.{code}',
@@ -298,6 +446,8 @@ def _get_board_kline_eastmoney(code: str, start_date: str = '20000101') -> Optio
     except Exception as e:
         logger.warning(f'[EastMoney] get_board_kline({code}) 失败: {e}')
         return None
+    finally:
+        session.close()
 
 
 def get_board_kline(board_type: str, code: str, start_date: str = '20000101') -> Optional[pd.DataFrame]:
@@ -306,15 +456,13 @@ def get_board_kline(board_type: str, code: str, start_date: str = '20000101') ->
     返回中文列名以兼容 _normalize_df()：['日期','开盘','收盘','最高','最低','成交量','成交额']
     """
     global _pro
-    _ensure_direct()
     if _pro is None:
-        # 延迟再试一次（token 可能刚 bootstrap）
+        # 延迟再试一次（token 可能刚 bootstrap）：只通过 data_loader 唯一工厂创建
         try:
             from core.env_bootstrap import ensure_tushare_token
             ensure_tushare_token()
-            from data_loader import _tushare_pro
-            if _tushare_pro is not None:
-                _pro = _tushare_pro
+            from data_loader import get_tushare_pro
+            _pro = get_tushare_pro()
         except Exception:
             pass
     if _pro is not None:
@@ -498,3 +646,57 @@ def get_index_data_with_fallback(index_code: str) -> Optional[dict]:
         logger.error(f"[指数数据] 本地缓存兜底失败: {e}")
     
     return None
+
+
+# ===== 最近交易日 =====
+
+_last_trade_date_cache = None
+_last_trade_date_cached_at = 0.0
+_TRADE_DATE_CACHE_TTL = 3600  # seconds
+
+
+def get_last_trading_date(ref_date: str = None) -> str:
+    """Return the most recent trading day at or before ref_date (default: today).
+
+    Uses Tushare trade_cal when available; falls back to simple weekday logic.
+    Result is cached for _TRADE_DATE_CACHE_TTL seconds.
+    """
+    import time
+    global _last_trade_date_cache, _last_trade_date_cached_at
+
+    now = time.time()
+    if _last_trade_date_cache is not None and (now - _last_trade_date_cached_at) < _TRADE_DATE_CACHE_TTL:
+        cached = _last_trade_date_cache
+        if ref_date is None or cached <= ref_date:
+            return cached
+
+    # Determine reference date
+    if ref_date:
+        ref = ref_date.strip()
+    else:
+        ref = _today()
+
+    # Try trade calendar
+    cal = get_trade_dates()
+    if cal:
+        # Find the latest date in cal that is <= ref
+        candidates = sorted(d for d in cal if d <= ref)
+        if candidates:
+            result = candidates[-1]
+            _last_trade_date_cache = result
+            _last_trade_date_cached_at = now
+            return result
+
+    # Fall back: skip weekends
+    from datetime import datetime as dt, timedelta
+    try:
+        d = dt.strptime(ref, '%Y-%m-%d')
+    except Exception:
+        return ref
+
+    while d.weekday() >= 5:  # Saturday=5, Sunday=6
+        d -= timedelta(days=1)
+    result = d.strftime('%Y-%m-%d')
+    _last_trade_date_cache = result
+    _last_trade_date_cached_at = now
+    return result

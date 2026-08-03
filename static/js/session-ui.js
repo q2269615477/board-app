@@ -12,24 +12,42 @@
   let pickKActive = false;
 
   // 右侧面板折叠/展开
+  function syncSessionLayout() {
+    var s = document.getElementById('sess-side');
+    var content = document.getElementById('content');
+    if (!s) return;
+    var width = parseFloat(window.getComputedStyle(s).width) || 388;
+    var open = !s.classList.contains('collapsed');
+    document.body.classList.toggle('sess-side-on', open);
+    if (content) content.style.marginRight = open ? Math.ceil(width) + 'px' : '0';
+  }
+
+  function resizeSessionChart() {
+    try {
+      var chart = global.__kline_chart;
+      if (chart && typeof chart.resize === 'function') chart.resize();
+      var pro = global.pro;
+      if (pro && pro !== chart && typeof pro.resize === 'function') pro.resize();
+      global.dispatchEvent(new Event('resize'));
+    } catch (e) {}
+  }
+
+  function scheduleSessionChartResize() {
+    // #content 有 280ms 的 margin 过渡；过渡结束后再重绘，避免 canvas
+    // 读取到中间宽度而停留在旧的可视区域。
+    setTimeout(resizeSessionChart, 320);
+  }
+
   function toggleSessSide() {
     var s = document.getElementById('sess-side');
     if (!s) return;
-    var collapsed = s.classList.toggle('collapsed');
-    var content = document.getElementById('content');
-    if (collapsed) {
-      document.body.classList.remove('sess-side-on');
-      if (content) content.style.marginRight = '0';
-    } else {
-      document.body.classList.add('sess-side-on');
-      if (content) content.style.marginRight = '372px';
-    }
-    // 通知 KLineChart Pro 容器尺寸已变，让图表跟随移动
-    setTimeout(function () {
-      window.dispatchEvent(new Event('resize'));
-    }, 30);
+    s.classList.toggle('collapsed');
+    syncSessionLayout();
+    scheduleSessionChartResize();
   }
   let chartClickBound = false;
+  let tooltipEventsBound = false;
+  let tooltipChartBound = null;
   let overlayHookBound = false;
   let saveTimer = null;
   let lastKey = '';
@@ -42,21 +60,9 @@
     console.log('[SessionUI]', msg);
   }
 
+  // API 通信委托给 session-api.js（已抽取为独立模块）
   async function api(path, opts) {
-    const r = await fetch(API + path, {
-      headers: { 'Content-Type': 'application/json' },
-      ...opts,
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.ok === false || j.success === false) {
-      const err = new Error(j.error || 'HTTP ' + r.status);
-      err.status = r.status;
-      if (j.code) err.code = j.code;
-      if (j.current_rev !== undefined) err.current_rev = j.current_rev;
-      if (j.current_session) err.current_session = j.current_session;
-      throw err;
-    }
-    return j;
+    return global.SessionAPI.api(path, opts);
   }
 
   function panelCtx() {
@@ -76,6 +82,7 @@
       else if (t === 'week') period = 'weekly';
       else if (t === 'month')
         period = m === 3 ? 'quarterly' : m === 12 ? 'yearly' : 'monthly';
+      else if (t === 'year') period = 'yearly';
       else period = 'daily';
     }
     return {
@@ -141,12 +148,16 @@
       for (let i = 0; i < key.length; i++) h = (Math.imul(31, h) + key.charCodeAt(i)) | 0;
       id = 'ovh_' + (h >>> 0).toString(16);
     }
-    return {
+    const normalized = {
       id: String(id),
       type: String(type),
       points: pts,
       styles: o.styles || {},
     };
+    // Custom overlays (for example position-risk tools) keep their calculator
+    // settings here. Preserve it without changing the shape of legacy lines.
+    if (o.extendData !== undefined) normalized.extendData = o.extendData;
+    return normalized;
   }
 
   function getOverlayStore(chart) {
@@ -326,26 +337,26 @@
   // ---------- Right panel UI ----------
   function panelCss() {
     return `
-#sess-side{position:fixed;top:48px;right:0;bottom:0;width:372px;z-index:420;
+#sess-side{position:fixed;top:48px;right:0;bottom:0;width:388px;z-index:420;
   background:linear-gradient(180deg,#12151e 0%,#0e1118 100%);border-left:1px solid #2a2e39;
   display:flex;flex-direction:column;font-size:11px;color:#d1d4dc;
   box-shadow:-6px 0 24px rgba(0,0,0,.4);
   transition:transform .25s ease}
-#sess-side.collapsed{transform:translateX(372px)}
-#sess-toggle-btn{position:absolute;left:-24px;top:50%;transform:translateY(-50%);
-  width:24px;height:64px;background:#1a1e29;border:1px solid #2a2e39;border-right:0;
-  border-radius:4px 0 0 4px;cursor:pointer;color:#434651;font-size:10px;
+#sess-side.collapsed{transform:translateX(388px)}
+#sess-toggle-btn,#sess-expand-btn{width:24px;height:24px;top:8px;transform:none;
+  background:#1a1e29;border:1px solid #2a2e39;
+  border-radius:4px;cursor:pointer;color:#8d9bb0;font-size:10px;
   display:flex;align-items:center;justify-content:center;z-index:11;
   transition:background .12s,color .12s}
+#sess-toggle-btn{position:absolute;left:8px}
 #sess-toggle-btn:hover{background:#2962ff;color:#d1d4dc;border-color:#2962ff}
-#sess-expand-btn{position:fixed;top:50%;right:0;transform:translateY(-50%);
-  width:24px;height:64px;background:#1a1e29;border:1px solid #2a2e39;border-right:0;
+#sess-expand-btn{position:fixed;top:50px;right:0;border-right:0;
   border-radius:4px 0 0 4px;cursor:pointer;color:#434651;font-size:10px;z-index:421;
   display:none;align-items:center;justify-content:center;
   transition:background .12s,color .12s}
 #sess-expand-btn:hover{background:#2962ff;color:#d1d4dc;border-color:#2962ff}
 #sess-side.collapsed+#sess-expand-btn,#sess-side.collapsed~#sess-expand-btn{display:flex}
-#sess-side .hd{padding:11px 14px;background:linear-gradient(90deg,#1a1e29,#161b28);
+#sess-side .hd{padding:11px 14px 11px 44px;background:linear-gradient(90deg,#1a1e29,#161b28);
   border-bottom:1px solid #2a2e39;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
 #sess-side .hd b{font-size:13px;color:#fff;cursor:pointer;letter-spacing:.02em}
 #sess-side .hd b:hover{color:#8ab4ff}
@@ -487,11 +498,11 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 
   function ensureUI() {
     applyPanelCss();
-    // 面板打开时压缩 #content 边距（直接操作 style，不用 body class）
+    // 初始化与点击切换共用同一套布局同步，避免实际宽度与避让距离漂移。
     var sessPanel = document.getElementById('sess-side');
-    if (sessPanel && !sessPanel.classList.contains('collapsed')) {
-      var content = document.getElementById('content');
-      if (content) content.style.marginRight = '372px';
+    if (sessPanel) {
+      syncSessionLayout();
+      scheduleSessionChartResize();
     }
     if (document.getElementById('sess-side')) {
       // 已有面板：确保标题可取消选中
@@ -512,6 +523,8 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 
     const side = document.createElement('div');
     side.id = 'sess-side';
+    // 每次新打开页面都从收缩态开始，用户仍可通过边缘按钮展开。
+    side.classList.add('collapsed');
     side.innerHTML = `
 <div class="hd">
   <b title="点击取消链/事件选中（再点「因」可建新根链）">会话分析</b>
@@ -529,6 +542,11 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
   <button class="btn" type="button" data-act="event" title="仅主动添加：挂到当前选中的因果链">事件</button>
   <button class="btn" type="button" data-act="browse">浏览</button>
   <button class="btn" type="button" data-act="pick_k" title="开关：开启后点图采集一根K，再点关闭；采完自动关">选K</button>
+  <button class="btn" type="button" data-act="level" title="[Alt+H] 支撑/阻力位：画水平线后写入用户标注">支撑</button>
+  <button class="btn" type="button" data-act="reaction" title="[Alt+R] 反应点：为已画支撑/阻力添加反应K">反应</button>
+  <button class="btn" type="button" data-act="levels" title="[Alt+L] 当前标的已保存的支撑/阻力位">位表</button>
+  <button class="btn" type="button" data-act="resonance" title="[Alt+M] 共振扫描：只列候选和来源，不给买卖结论">共振</button>
+  <button class="btn" type="button" data-act="proposal" title="[Alt+P] AI 提议候选支撑位，需用户确认才落库">AI提议</button>
 </div>
 <div class="body" id="sess-body"></div>
 <div class="foot">
@@ -544,6 +562,8 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 <div id="sess-list-drawer" style="display:none;position:absolute;inset:48px 0 0 0;background:#131722;z-index:2;overflow:auto;padding:10px"></div>
 `;
     document.body.appendChild(side);
+    syncSessionLayout();
+    scheduleSessionChartResize();
 
     // 右侧面板折叠按钮（在面板左边缘）
     var tglBtn = document.createElement('button');
@@ -1795,11 +1815,127 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     toast('已在当前链下嵌套子链 L' + d);
   }
 
+  function openSessModal(title, html) {
+    const box = document.getElementById('modal-box');
+    const overlay = document.getElementById('modal-overlay');
+    if (!box || !overlay) {
+      toast(title);
+      return;
+    }
+    box.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+      '<h3 style="margin:0">' + esc(title) + '</h3>' +
+      '<button class="modal-btn" type="button" id="sess-modal-close" style="margin-top:0">关闭</button>' +
+      '</div>' +
+      '<div style="font-size:11px;line-height:1.55;color:#d1d4dc">' + html + '</div>';
+    overlay.classList.add('show');
+    const close = document.getElementById('sess-modal-close');
+    if (close) close.onclick = function () { overlay.classList.remove('show'); };
+  }
+
+  function currentSymbolQuery() {
+    const ctx = panelCtx();
+    return {
+      symbol: ctx.symbol,
+      period: ctx.period || 'daily',
+      symbol_name: ctx.symbol_name || ctx.symbol,
+      asset_type: ctx.asset_type || '',
+    };
+  }
+
+  async function startDrawLevel() {
+    await setTool('level');
+    toast('支撑/阻力模式：请在图上画水平线，完成后填写来源K与备注');
+  }
+
+  async function startReactionMode() {
+    await setTool('reaction');
+    toast('反应点模式：先在位表选择一条支撑/阻力，再点反应K');
+    await openLevelManager();
+  }
+
+  async function openLevelManager() {
+    const ctx = currentSymbolQuery();
+    const url = '/api/annotations?symbol=' + encodeURIComponent(ctx.symbol) +
+      '&period=' + encodeURIComponent(ctx.period) + '&type=level_origin&limit=100';
+    const j = await api(url);
+    const items = j.data || [];
+    const rows = items.map((c) => {
+      const lv = c.level || {};
+      const sb = c.source_bar || {};
+      const role = lv.role === 'resistance' ? '阻力' : '支撑';
+      const status = lv.status || 'active';
+      const price = lv.price != null ? Number(lv.price).toFixed(2) : '—';
+      const note = c.notes || c.note || '';
+      return '<div class="list-line"><b>' + esc(role) + '</b> ' + esc(price) +
+        ' <span class="muted">' + esc(status) + ' · ' + esc(c.period || ctx.period) + '</span>' +
+        '<div class="muted">源K ' + esc(sb.date || sb.timestamp || '—') +
+        ' · ' + esc(c.price_element || 'custom') + '</div>' +
+        (note ? '<div>' + esc(note) + '</div>' : '') + '</div>';
+    }).join('');
+    openSessModal(ctx.symbol_name + ' 位表', rows || '<div class="empty">当前标的/周期暂无已保存的支撑或阻力位。</div>');
+  }
+
+  async function openResonancePanel() {
+    const ctx = currentSymbolQuery();
+    let draft = null;
+    try { draft = JSON.parse(localStorage.getItem('resonance_draft') || 'null'); } catch (e) {}
+    const members = (draft && Array.isArray(draft.members) && draft.members.length)
+      ? draft.members
+      : [{ symbol: ctx.symbol, symbol_name: ctx.symbol_name, asset_type: ctx.asset_type, period: ctx.period }];
+    const j = await api('/api/resonance/matrix', {
+      method: 'POST',
+      body: JSON.stringify({ members, periods: [ctx.period || 'daily'] }),
+    });
+    const data = j.data || {};
+    const aligned = data.aligned || data.cells || [];
+    const summary =
+      '<div class="kv"><span>成员</span><span>' + esc(String(members.length)) + '</span></div>' +
+      '<div class="kv"><span>结果</span><span>' + esc(data.is_resonance ? '候选成立' : '未达到阈值') + '</span></div>' +
+      '<div class="muted" style="margin:8px 0">只按用户已定义支撑位和阈值扫描；这里不输出买卖结论。</div>';
+    const rows = aligned.slice(0, 20).map((x) => {
+      const sym = x.symbol || (x.member || {}).symbol || '';
+      const price = x.level_price || x.hit_level || x.price || '';
+      const dist = x.distance_pct != null ? Number(x.distance_pct).toFixed(2) + '%' : '';
+      const note = x.note || x.notes || x.source_note || '';
+      return '<div class="list-line"><b>' + esc(sym) + '</b> ' + esc(price ? String(price) : '') +
+        ' <span class="muted">' + esc(dist) + '</span>' +
+        (note ? '<div>' + esc(note) + '</div>' : '') + '</div>';
+    }).join('');
+    openSessModal('共振扫描', summary + (rows || '<div class="empty">暂无命中明细。</div>'));
+  }
+
+  async function openProposalPanel() {
+    const ctx = currentSymbolQuery();
+    const url = '/api/levels/propose?symbol=' + encodeURIComponent(ctx.symbol) +
+      '&period=' + encodeURIComponent(ctx.period) + '&top_n=5';
+    const j = await api(url);
+    const data = j.data || {};
+    const items = data.candidates || data.items || [];
+    const rows = items.map((c, i) => {
+      const price = c.price != null ? Number(c.price).toFixed(2) : '—';
+      const role = c.role === 'resistance' ? '阻力' : '支撑';
+      const reason = c.reason || c.evidence || c.note || '';
+      return '<div class="list-line"><b>#' + (i + 1) + ' ' + esc(role) + '</b> ' +
+        esc(price) + (reason ? '<div>' + esc(reason) + '</div>' : '') + '</div>';
+    }).join('');
+    openSessModal(
+      'AI 提议候选位',
+      '<div class="muted" style="margin-bottom:8px">候选位不会自动落库；只有你确认后才会成为正式 level_origin。</div>' +
+      (rows || '<div class="empty">暂无候选。可能是当前样本不足或已有位太近。</div>')
+    );
+  }
+
   async function onTool(act) {
     try {
       if (act === 'list') return openList();
       if (act === 'new') return onNewSession();
       if (act === 'save') return onSaveCommit();
+      if (act === 'level') return startDrawLevel();
+      if (act === 'reaction') return startReactionMode();
+      if (act === 'levels') return openLevelManager();
+      if (act === 'resonance') return openResonancePanel();
+      if (act === 'proposal') return openProposalPanel();
       // 「因」：无选中 → 根链；已选中某链 → 在其下嵌套子链（层级缩进）
       if (act === 'cause') {
         await ensureSession();
@@ -2019,26 +2155,24 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       // 会话无 chart：跳过 replay（前端可走 ensure_chart）
       return { skipped: true, reason: 'no chart in session' };
     }
-    const pro = window.pro;
-    if (!pro || typeof pro.setSymbol !== 'function') {
-      return { skipped: true, reason: 'pro not ready' };
-    }
     // 已显示同 symbol+period → 跳过（避免无谓重载）
     const cur = window.__board_ctx || {};
     if (cur.symbol === chart.symbol && cur.period === chart.period) {
       return { skipped: true, reason: 'same chart' };
     }
-    // setSymbol 触发 K 线重载；overlays 走 collectOverlays 自动同步到 session
-    pro.setSymbol({
-      ticker: chart.symbol,
-      name: chart.symbol_name || chart.symbol,
-      type: chart.asset_type || (chart.symbol && chart.symbol.startsWith('sh') ? 'index' : 'stock'),
-      market: 'A',
-      priceCurrency: 'CNY',
-    });
-    // 切周期（如果 pro 支持）
-    if (chart.period && pro.setPeriod && cur.period !== chart.period) {
-      try { pro.setPeriod(chart.period); } catch (_) {}
+    // 会话恢复：走统一选择链路，确保 UIState / ctx / 标题全部一致
+    window.dispatchEvent(new CustomEvent('select-symbol', {
+      detail: {
+        code: chart.symbol,
+        name: chart.symbol_name || chart.symbol,
+        type: chart.asset_type || (chart.symbol && chart.symbol.startsWith('sh') ? 'index' : 'stock'),
+        source: 'session-ui',
+        trigger: 'restore'
+      }
+    }));
+    // 切周期（通过 UIState → ChartController 链路）
+    if (chart.period && cur.period !== chart.period && window.UIState) {
+      window.UIState.setPeriod(chart.period);
     }
     window.__board_ctx = Object.assign({}, window.__board_ctx, {
       symbol: chart.symbol,
@@ -2297,12 +2431,14 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
   }
 
   function bindChartClick() {
-    if (chartClickBound) return;
-    const wrap =
-      document.querySelector('.klinecharts-pro') ||
-      document.getElementById('chart') ||
-      document.body;
-    wrap.addEventListener(
+    if (chartClickBound) {
+      // 点击事件只绑定一次；下方仍需在 Pro 就绪后补绑十字线和刷新默认信息。
+    } else {
+      const wrap =
+        document.querySelector('.klinecharts-pro') ||
+        document.getElementById('chart') ||
+        document.body;
+      wrap.addEventListener(
       'click',
       async (ev) => {
         if (!pickKActive || !S) return;
@@ -2353,11 +2489,26 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       },
       true
     );
-    chartClickBound = true;
+      chartClickBound = true;
+    }
     // 预创建 tooltip DOM（避免第一次 crosshair 时延迟）
     ensureTooltipEl();
+    if (!tooltipEventsBound) {
+      tooltipEventsBound = true;
+      window.addEventListener('kline-loaded', () => {
+        // 数据事件早于 Pro 的 applyNewData，放到当前任务之后读取最新 bar。
+        setTimeout(showLatestKlineTooltip, 0);
+      });
+      window.addEventListener('kline-chart-ready', () => {
+        setTimeout(showLatestKlineTooltip, 0);
+      });
+      window.addEventListener('chart-theme-change', () => {
+        // 主题切换后重绘现有信息条，避免保留创建时的深色内联样式。
+        if (_tooltipLastKline) updateKlineTooltip({ kLineData: _tooltipLastKline });
+      });
+    }
     const chart = getChart();
-    if (chart && typeof chart.subscribeAction === 'function') {
+    if (chart && chart !== tooltipChartBound && typeof chart.subscribeAction === 'function') {
       try {
         chart.subscribeAction('onCrosshairChange', (data) => {
           if (!data) return;
@@ -2369,90 +2520,100 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
           // 更新 tooltip 浮窗
           updateKlineTooltip(data);
         });
+        tooltipChartBound = chart;
       } catch (e) {}
     }
+    showLatestKlineTooltip();
     // 今日 K 锚点：最新 bar 外框 + 标记
     markLastBarAnchor();
   }
 
   // K 线 tooltip 浮窗
   let _tooltipEl = null;
+  let _tooltipContentEl = null;
+  let _tooltipLastKline = null;
+
+  function showLatestKlineTooltip() {
+    const list = getDataList();
+    if (!list.length) return;
+    const current = list[list.length - 1];
+    _tooltipLastKline = current;
+    updateKlineTooltip({ kLineData: current, prev: list.length > 1 ? list[list.length - 2] : null });
+  }
+
   function ensureTooltipEl() {
     if (_tooltipEl) return _tooltipEl;
     _tooltipEl = document.createElement('div');
     _tooltipEl.id = 'kline-tooltip';
+    _tooltipEl.className = 'kline-tooltip';
+    const light = document.body && document.body.dataset.boardTheme === 'light';
     _tooltipEl.style.cssText =
-      'position:absolute;z-index:10;pointer-events:none;display:none;' +
-      'background:rgba(26,30,41,0.95);color:#d1d4dc;font-size:11px;' +
+      'position:absolute;z-index:30;pointer-events:none;display:none;' +
+      'background:' + (light ? 'rgba(255,255,255,.96)' : 'rgba(26,30,41,.95)') + ';' +
+      'color:' + (light ? '#243142' : '#d1d4dc') + ';font-size:11px;' +
       'padding:6px 10px;border-radius:4px;border:1px solid #2a2e39;' +
-      'white-space:nowrap;line-height:1.6;font-variant-numeric:tabular-nums';
+      'white-space:nowrap;line-height:1.6;font-variant-numeric:tabular-nums;' +
+      'left:10px;right:10px;top:40px;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis';
     const container = document.getElementById('pro-container');
     if (container) container.appendChild(_tooltipEl);
+    _tooltipContentEl = document.createElement('span');
+    _tooltipContentEl.id = 'kline-tooltip-content';
+    _tooltipContentEl.className = 'kline-tooltip-content';
+    _tooltipEl.appendChild(_tooltipContentEl);
+    try {
+      global.dispatchEvent(new CustomEvent('kline-tooltip-ready', { detail: _tooltipEl }));
+    } catch (_) {}
     return _tooltipEl;
   }
 
   function updateKlineTooltip(data) {
     const el = ensureTooltipEl();
-    if (!data || !data.kLineData) {
-      el.style.display = 'none';
-      return;
+    const k = data && data.kLineData ? data.kLineData : _tooltipLastKline;
+    if (!k) return;
+    _tooltipLastKline = k;
+    const list = getDataList();
+    let previous = (data && data.prev) || null;
+    if (!previous && list.length) {
+      const index = list.findIndex((bar) => bar === k || (bar.timestamp != null && bar.timestamp === k.timestamp));
+      if (index > 0) previous = list[index - 1];
     }
-    const k = data.kLineData;
-    const ch = k.close > k.open ? '#ef5350' : k.close < k.open ? '#26a69a' : '#d1d4dc';
-    el.innerHTML =
-      '<span style="color:#787b86">' + (k.date || fmtTs(k.timestamp)) + '</span>' +
-      ' <span style="color:white">O</span>' + fmt(k.open) +
-      ' <span style="color:white">H</span>' + fmt(k.high) +
-      ' <span style="color:white">L</span>' + fmt(k.low) +
-      ' <span style="color:' + ch + '">C</span><b>' + fmt(k.close) + '</b>' +
-      ' <span style="color:#787b86">V</span>' + fmtVol(k.volume);
-    el.style.display = 'block';
-    const container = document.getElementById('pro-container');
-    if (container) {
-      const rect = container.getBoundingClientRect();
-      el.style.left = '10px';
-      el.style.top = '40px';
-    }
-    // 离图表外侧时隐藏
-    const hideTimer = setTimeout(() => {
-      if (_tooltipEl) _tooltipEl.style.display = 'none';
-    }, 3000);
-    if (_tooltipTimer) clearTimeout(_tooltipTimer);
-    _tooltipTimer = hideTimer;
+    const prevClose = previous && previous.close != null ? Number(previous.close) : Number(k.open);
+    const close = Number(k.close);
+    const change = isFinite(close) && isFinite(prevClose) ? close - prevClose : null;
+    const changePct = change != null && prevClose ? (change / prevClose) * 100 : null;
+    const light = document.body && document.body.dataset.boardTheme === 'light';
+    const neutral = light ? '#526274' : '#d1d4dc';
+    const muted = light ? '#718096' : '#787b86';
+    const ch = change > 0 ? '#ef5350' : change < 0 ? '#26a69a' : neutral;
+    const changeText = change == null ? '—' : (change > 0 ? '+' : '') + fmt(change);
+    const pctText = changePct == null ? '—' : (changePct > 0 ? '+' : '') + fmt(changePct) + '%';
+    const changeSummary = changePct == null ? '—' : pctText + ' (' + changeText + ')';
+    el.style.background = light ? 'rgba(255,255,255,.96)' : 'rgba(26,30,41,.95)';
+    el.style.color = light ? '#243142' : '#d1d4dc';
+    el.style.borderColor = light ? '#d7dee8' : '#2a2e39';
+    const content = _tooltipContentEl || document.getElementById('kline-tooltip-content') || el;
+    content.innerHTML =
+      '<span style="color:' + muted + '">' + esc(k.date || fmtTs(k.timestamp)) + '</span>' +
+      ' <span>开盘</span>' + fmt(k.open) +
+      ' <span>最高</span>' + fmt(k.high) +
+      ' <span>最低</span>' + fmt(k.low) +
+      ' <span style="color:' + ch + '">收盘</span><b>' + fmt(k.close) + '</b>' +
+      ' <span style="color:' + muted + '">涨跌</span>' +
+      ' <b style="color:' + ch + '">' + changeSummary + '</b>' +
+      ' <span style="color:' + muted + '">V</span>' + fmtVol(k.volume);
+    el.style.display = 'flex';
   }
-  let _tooltipTimer = null;
 
-  // 今日 K 锚点：最新 bar 外框 + 标记线
+  // 清理旧的最新 K 线锚点，避免热更新或重复初始化残留 marker。
   function markLastBarAnchor() {
     const chart = getChart();
-    if (!chart || typeof chart.createOverlay !== 'function') return;
-    const list = getDataList();
-    if (!list.length) return;
-    // 移除旧锚点
-    if (_anchorOvId && typeof chart.removeOverlay === 'function') {
-      try { chart.removeOverlay({ id: _anchorOvId }); } catch (_) {}
+    const baseId = _anchorOvId || 'sess_last_bar_anchor';
+    if (chart && typeof chart.removeOverlay === 'function') {
+      [baseId, baseId + '_lo'].forEach((id) => {
+        try { chart.removeOverlay({ id }); } catch (_) {}
+      });
     }
-    try {
-      const last = list[list.length - 1];
-      const isUp = last.close >= last.open;
-      const color = isUp ? '#ef5350' : '#26a69a';
-      _anchorOvId = 'sess_last_bar_anchor';
-      chart.createOverlay({
-        name: 'simpleAnnotation',
-        id: _anchorOvId,
-        points: [{ timestamp: last.timestamp, value: last.high }],
-        styles: { line: { color: color, size: 2, style: 2 /* dashed */ } },
-        extendData: { type: 'anchor' },
-      });
-      // 第二个 marker：低端
-      chart.createOverlay({
-        name: 'simpleAnnotation',
-        id: _anchorOvId + '_lo',
-        points: [{ timestamp: last.timestamp, value: last.low }],
-        styles: { line: { color: color, size: 1, style: 2 } },
-        extendData: { type: 'anchor' },
-      });
-    } catch (e) {}
+    _anchorOvId = null;
   }
   let _anchorOvId = null;
 
@@ -2464,6 +2625,12 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       if (isNaN(d.getTime())) return String(ts).slice(0,10);
       return d.toISOString().slice(0,10);
     } catch(e) { return String(ts).slice(0,10); }
+  }
+
+  function sessionPanelIsActive() {
+    if (document.hidden) return false;
+    const panel = document.getElementById('sess-side');
+    return !!panel && !panel.classList.contains('collapsed') && !panel.hidden;
   }
 
   function bindOverlayHooks() {
@@ -2520,6 +2687,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       if (!global.__sess_ov_poll) {
         let lastSig = '';
         global.__sess_ov_poll = setInterval(() => {
+          if (!sessionPanelIsActive()) return;
           const c = getChart();
           if (!c) return;
           const st = getOverlayStore(c);
@@ -2563,7 +2731,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 
   function hookCtxPoll() {
     setInterval(async () => {
-      if (!S) return;
+      if (!S || !sessionPanelIsActive()) return;
       const ctx = panelCtx();
       const key = ctx.symbol + '|' + ctx.period;
       if (key !== lastKey) {
@@ -2582,14 +2750,34 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
         }
       }
     }, 1200);
-    // 定时刷新采集面板上的「图上当前画线」
-    setInterval(() => {
-      if (S && document.getElementById('sess-side')) render();
-    }, 2500);
+  }
+
+  function bindHotkeys() {
+    if (global.__sess_hotkeys_bound) return;
+    global.__sess_hotkeys_bound = true;
+    document.addEventListener('keydown', (e) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const tag = (e.target && e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      const key = String(e.key || '').toLowerCase();
+      const map = {
+        h: 'level',
+        r: 'reaction',
+        l: 'levels',
+        m: 'resonance',
+        p: 'proposal',
+        k: 'pick_k',
+      };
+      const act = map[key];
+      if (!act) return;
+      e.preventDefault();
+      onTool(act);
+    });
   }
 
   async function boot() {
     ensureUI();
+    bindHotkeys();
     // 若 chart 已在模块加载前 init，直接用；否则等事件 / 轮询
     global.addEventListener('kline-chart-ready', () => {
       overlayHookBound = false;

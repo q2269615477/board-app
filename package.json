@@ -1,0 +1,9 @@
+{
+  "name": "board-app-frontend-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test \"static/js/tests/**/*.test.js\""
+  },
+  "devDependencies": {}
+}

@@ -6,6 +6,7 @@ from flask import Blueprint, request, jsonify
 from services.signal_service import get_signal_service
 from services.ai_service import get_ai_service
 from data.sqlite_repo import get_sqlite_repo
+from api.auth_guard import write_protected
 
 bp = Blueprint('signal_ai', __name__, url_prefix='')
 
@@ -20,6 +21,7 @@ def get_signals_route(board_code):
 
 
 @bp.route('/api/signals/<board_code>', methods=['POST'])
+@write_protected
 def post_signals_route(board_code):
     """提交板块信号"""
     service = get_signal_service()
@@ -36,6 +38,7 @@ def post_signals_route(board_code):
 # ---- AI 分析接口 ----
 
 @bp.route('/api/ai/result', methods=['POST'])
+@write_protected
 def api_ai_result_post_route():
     """POST /api/ai/result — WorkBuddy Hook 推送AI分析结论"""
     data = request.get_json() or {}
@@ -57,6 +60,7 @@ def api_ai_result_get_route(board_code):
 
 
 @bp.route('/api/ai/result/<board_code>/clear', methods=['POST'])
+@write_protected
 def api_ai_result_clear_route(board_code):
     """清除指定板块的AI分析结论"""
     service = get_ai_service()
@@ -206,6 +210,7 @@ def mcp_list_tools_route():
 
 
 @bp.route('/mcp/call', methods=['POST'])
+@write_protected
 def mcp_call_tool_route():
     """统一 MCP 工具调用入口（arguments 或 params 均可）。"""
     data = request.get_json() or {}
@@ -421,6 +426,7 @@ def mcp_sse_route():
 # ---- MCP 事件端点 ----
 
 @bp.route('/mcp/event', methods=['POST'])
+@write_protected
 def mcp_event_route():
     """接收Agent事件并广播到前端"""
     from mcp.sse import sse_manager
@@ -451,10 +457,12 @@ def api_hooks_status_route():
 
 
 @bp.route('/api/ai/hooks/stop', methods=['POST'])
+@write_protected
 def hook_stop_route():
     return jsonify({'ok': True})
 
 
 @bp.route('/api/ai/hooks/subagent-stop', methods=['POST'])
+@write_protected
 def hook_subagent_stop_route():
     return jsonify({'ok': True})

@@ -13,6 +13,7 @@ blinker==1.9.0
 simple-websocket==1.1.0
 
 pandas==3.0.3
+pandas-market-calendars==5.4.0
 numpy==2.5.0
 python-dateutil==2.9.0.post0
 tzdata==2026.2

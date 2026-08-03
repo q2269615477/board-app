@@ -54,6 +54,8 @@ class BacktestService:
                 '回测引擎尚未对齐真实 K 线数据，已停用模拟结果。'
                 '请等待 vectorbt 与 kline 表打通后再用。'
             ),
+            'signals': [],
+            'metrics': {},
             'http_status': 503,
         }
 

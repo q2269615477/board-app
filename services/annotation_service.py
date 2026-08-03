@@ -67,7 +67,7 @@ class AnnotationService:
         agent.setdefault("distillable", True)
         agent.setdefault("quality", 3 if (case.get("notes") or "").strip() else 2)
         case["agent"] = agent
-        case.setdefault("status", "open")
+        case.setdefault("status", "active")
         case.setdefault("outcome", {"status": "pending"})
 
         self.repo.upsert_case(case)
@@ -96,6 +96,7 @@ class AnnotationService:
         level = case.get("level") or {}
         level["price"] = price
         level.setdefault("role", "support")
+        level.setdefault("status", "active")
         case["level"] = level
         # 校验
         if pe != "custom" and abs(float(level["price"]) - float(ohlc[pe])) > 1e-6:
@@ -136,11 +137,16 @@ class AnnotationService:
         case = self.repo.get_case(case_id)
         if not case:
             raise KeyError(case_id)
-        # 禁止静默改写无关字段策略：浅合并
+        # 禁止静默改写无关字段策略：浅合并（level 子字段深合并）
         for k, v in patch.items():
             if k in ("id", "created_at"):
                 continue
-            case[k] = v
+            if k == "level" and isinstance(v, dict) and isinstance(case.get("level"), dict):
+                merged = dict(case["level"])
+                merged.update(v)
+                case[k] = merged
+            else:
+                case[k] = v
         case["updated_at"] = _now()
         if case.get("type") == "level_origin" and (
             "source_bar" in patch or "price_element" in patch or "level" in patch

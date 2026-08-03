@@ -8,9 +8,10 @@ from datetime import datetime
 from pathlib import Path
 
 # 设置 Tushare Token
-os.environ['TUSHARE_TOKEN'] = 'cbd6784d7c5e87d4e5c935983a17a56367bb1a4b589bbc7768c25590'
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.env_bootstrap import ensure_tushare_token
+ensure_tushare_token()
 
 print('='*70)
 print('数据系统全面自动化状态检查')
@@ -37,9 +38,10 @@ print(f'    市场状态: {market_status}')
 # 2. Tushare 连接状态
 print('\n[2] Tushare 连接状态:')
 try:
-    import tushare as ts
-    ts.set_token(os.environ['TUSHARE_TOKEN'])
-    pro = ts.pro_api()
+    from data_loader import get_tushare_pro
+    pro = get_tushare_pro()
+    if pro is None:
+        raise RuntimeError('TUSHARE_TOKEN 未配置或 Tushare 客户端初始化失败')
     df = pro.dc_index(idx_type='行业板块', limit=1)
     print('    ✓ Tushare 连接正常')
     print(f'    ✓ 可获取东财板块数据')
@@ -95,7 +97,7 @@ from core.config import DATA_DIR
 # 检查 Tushare 缓存
 tushare_cache = DATA_DIR / 'tushare_cache'
 if tushare_cache.exists():
-    today_file = tushare_cache / f'{now.strftime(\"%Y%m%d\")}.json'
+    today_file = tushare_cache / f'{now.strftime("%Y%m%d")}.json'
     if today_file.exists():
         print(f'    ✓ 今日 Tushare 缓存: {today_file.name}')
     else:
@@ -104,7 +106,7 @@ if tushare_cache.exists():
 # 检查午休缓存
 noon_cache = DATA_DIR / 'noon_cache'
 if noon_cache.exists():
-    today_noon = noon_cache / f'noon_cache_{now.strftime(\"%Y%m%d\")}.json'
+    today_noon = noon_cache / f'noon_cache_{now.strftime("%Y%m%d")}.json'
     if today_noon.exists():
         print(f'    ✓ 今日午休缓存: {today_noon.name}')
     else:

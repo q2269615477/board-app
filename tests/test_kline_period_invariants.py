@@ -57,6 +57,23 @@ def test_resample_15m_ohlc_agg():
         assert float(out.iloc[0]["high"]) == float(window["high"].max())
 
 
+def test_resample_240m_combines_both_a_share_sessions_into_one_daily_bar():
+    svc = KLineService.__new__(KLineService)
+    df_1m = _make_1m_session()
+    in_session = df_1m[
+        ~pd.to_datetime(df_1m["date"]).dt.strftime("%H:%M").isin(["11:30", "15:00"])
+    ]
+
+    out = svc._resample_from_1m(df_1m, "240m")
+
+    assert list(out["date"]) == ["2024-01-02 09:30"]
+    assert float(out.iloc[0]["open"]) == float(in_session.iloc[0]["open"])
+    assert float(out.iloc[0]["close"]) == float(in_session.iloc[-1]["close"])
+    assert float(out.iloc[0]["high"]) == float(in_session["high"].max())
+    assert float(out.iloc[0]["low"]) == float(in_session["low"].min())
+    assert float(out.iloc[0]["volume"]) == float(in_session["volume"].sum())
+
+
 def test_daily_drop_duplicate_dates():
     from services.kline_service import dedupe_kline_df
 

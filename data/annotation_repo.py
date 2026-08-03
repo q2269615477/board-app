@@ -23,6 +23,7 @@ class AnnotationRepo:
         self.db_path = Path(db_path or ANNOTATION_INDEX_DB)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        self._mutate_lock = threading.Lock()
         self._init_schema()
 
     def _conn(self) -> sqlite3.Connection:
@@ -69,6 +70,36 @@ class AnnotationRepo:
                 status TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_reminders_at ON reminders(at, status);
+
+            CREATE TABLE IF NOT EXISTS runs (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                theme TEXT,
+                day TEXT,
+                status TEXT,
+                payload_json TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS groups (
+                id TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS proposal_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT,
+                period TEXT,
+                price REAL,
+                role TEXT,
+                verdict TEXT,
+                reason TEXT,
+                candidate_json TEXT,
+                created_at TEXT
+            );
             """
         )
         c.commit()
@@ -245,6 +276,173 @@ class AnnotationRepo:
             """,
             (now,),
         ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── runs ───────────────────────────────────────────────
+
+    def upsert_run(self, run: Dict[str, Any]) -> None:
+        now = _now_iso()
+        run_id = run["id"]
+        c = self._conn()
+        existing = c.execute(
+            "SELECT 1 FROM runs WHERE id=?", (run_id,)
+        ).fetchone()
+        if existing:
+            run["updated_at"] = now
+            c.execute(
+                """
+                UPDATE runs SET title=?, theme=?, day=?, status=?,
+                    payload_json=?, updated_at=?
+                WHERE id=?
+                """,
+                (
+                    run.get("title", ""),
+                    run.get("theme", ""),
+                    run.get("day", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
+                    run.get("status", "open"),
+                    json.dumps(run, ensure_ascii=False),
+                    now,
+                    run_id,
+                ),
+            )
+        else:
+            run.setdefault("created_at", now)
+            run["updated_at"] = now
+            c.execute(
+                """
+                INSERT INTO runs (id, title, theme, day, status,
+                    payload_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    run.get("title", ""),
+                    run.get("theme", ""),
+                    run.get("day", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
+                    run.get("status", "open"),
+                    json.dumps(run, ensure_ascii=False),
+                    run.get("created_at", now),
+                    now,
+                ),
+            )
+        c.commit()
+
+    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        row = self._conn().execute(
+            "SELECT payload_json FROM runs WHERE id=?", (run_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["payload_json"])
+
+    def latest_open_run(self) -> Optional[Dict[str, Any]]:
+        row = self._conn().execute(
+            "SELECT payload_json FROM runs WHERE status='open' ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["payload_json"])
+
+    def list_runs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        rows = self._conn().execute(
+            "SELECT payload_json FROM runs ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [json.loads(r["payload_json"]) for r in rows]
+
+    def mutate_run(self, run_id: str, mutator) -> Optional[Dict[str, Any]]:
+        with self._mutate_lock:
+            run = self.get_run(run_id)
+            if run is None:
+                return None
+            result = mutator(run)
+            # mutators often modify in-place and return None; fall back to run
+            mutated = result if result is not None else run
+            self.upsert_run(mutated)
+            return mutated
+
+    # ── groups ─────────────────────────────────────────────
+
+    def upsert_group(self, group: Dict[str, Any]) -> None:
+        now = _now_iso()
+        group_id = group["id"]
+        c = self._conn()
+        existing = c.execute(
+            "SELECT 1 FROM groups WHERE id=?", (group_id,)
+        ).fetchone()
+        if existing:
+            group["updated_at"] = now
+            c.execute(
+                "UPDATE groups SET payload_json=?, updated_at=? WHERE id=?",
+                (json.dumps(group, ensure_ascii=False), now, group_id),
+            )
+        else:
+            group.setdefault("created_at", now)
+            group["updated_at"] = now
+            c.execute(
+                "INSERT INTO groups (id, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (
+                    group_id,
+                    json.dumps(group, ensure_ascii=False),
+                    group.get("created_at", now),
+                    now,
+                ),
+            )
+        c.commit()
+
+    def get_group(self, group_id: str) -> Optional[Dict[str, Any]]:
+        row = self._conn().execute(
+            "SELECT payload_json FROM groups WHERE id=?", (group_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["payload_json"])
+
+    def list_groups(self, limit: int = 100) -> List[Dict[str, Any]]:
+        rows = self._conn().execute(
+            "SELECT payload_json FROM groups ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [json.loads(r["payload_json"]) for r in rows]
+
+    def delete_group(self, group_id: str) -> None:
+        self._conn().execute("DELETE FROM groups WHERE id=?", (group_id,))
+        self._conn().commit()
+
+    # ── proposal_feedback ──────────────────────────────────
+
+    def record_proposal_feedback(self, feedback: Dict[str, Any]) -> None:
+        now = _now_iso()
+        c = self._conn()
+        c.execute(
+            """
+            INSERT INTO proposal_feedback
+                (symbol, period, price, role, verdict, reason, candidate_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                feedback.get("symbol", ""),
+                feedback.get("period", ""),
+                feedback.get("price"),
+                feedback.get("role", ""),
+                feedback.get("verdict", ""),
+                feedback.get("reason", ""),
+                json.dumps(feedback, ensure_ascii=False),
+                now,
+            ),
+        )
+        c.commit()
+
+    def list_proposal_feedback(
+        self, verdict: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM proposal_feedback"
+        params: List[Any] = []
+        if verdict is not None:
+            sql += " WHERE verdict=?"
+            params.append(verdict)
+        sql += " ORDER BY created_at DESC"
+        rows = self._conn().execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
 

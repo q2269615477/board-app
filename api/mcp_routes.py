@@ -18,6 +18,7 @@ from services.vectorbt_backtest import vectorbt_service
 from services.qmt_xtquant import qmt_service
 from services.ai_integration import ai_service, ChartEvent
 from services.overlay_service import get_overlay_service
+from api.auth_guard import write_protected
 
 logger = logging.getLogger('mcp_api')
 
@@ -48,6 +49,7 @@ def get_tools():
 
 
 @mcp_api.route('/api/mcp/call', methods=['POST'])
+@write_protected
 def call_tool():
     """【兼容别名】正式契约为 POST /mcp/call（params 与 arguments 均可）。"""
     try:
@@ -118,6 +120,7 @@ def sse_stream():
 
 
 @mcp_api.route('/api/mcp/event', methods=['POST'])
+@write_protected
 def report_event():
     """接收前端事件上报"""
     try:
@@ -176,6 +179,7 @@ def get_cached_prices():
 
 
 @mcp_api.route('/api/cache/watch', methods=['POST'])
+@write_protected
 def watch_codes():
     """添加关注标的"""
     try:
@@ -199,6 +203,7 @@ def watch_codes():
 
 
 @mcp_api.route('/api/cache/unwatch', methods=['POST'])
+@write_protected
 def unwatch_codes():
     """移除关注标的"""
     try:
@@ -224,6 +229,7 @@ def unwatch_codes():
 # ==================== 回测API ====================
 
 @mcp_api.route('/api/backtest/run', methods=['POST'])
+@write_protected
 def run_backtest():
     """运行回测（不可用时 503 + BACKTEST_UNAVAILABLE）"""
     try:
@@ -275,6 +281,7 @@ def get_strategies():
 # ==================== vectorbt回测API ====================
 
 @mcp_api.route('/api/vectorbt/backtest', methods=['POST'])
+@write_protected
 def run_vectorbt_backtest():
     """运行vectorbt回测（schema 未对齐时诚实 503）"""
     try:
@@ -342,6 +349,7 @@ def get_vectorbt_strategies():
 # ==================== QMT xtquant API ====================
 
 @mcp_api.route('/api/qmt/connect', methods=['POST'])
+@write_protected
 def qmt_connect():
     """连接QMT"""
     try:
@@ -359,6 +367,7 @@ def qmt_connect():
 
 
 @mcp_api.route('/api/qmt/subscribe', methods=['POST'])
+@write_protected
 def qmt_subscribe():
     """订阅QMT行情"""
     try:
@@ -440,6 +449,7 @@ def qmt_get_kline():
 # ==================== AI分析API ====================
 
 @mcp_api.route('/api/ai/analyze', methods=['POST'])
+@write_protected
 def ai_analyze_event():
     """AI分析图表事件"""
     try:
@@ -473,6 +483,7 @@ def ai_analyze_event():
 
 
 @mcp_api.route('/api/ai/analyze_context', methods=['POST'])
+@write_protected
 def ai_analyze_context():
     """AI分析图表上下文"""
     try:
@@ -520,6 +531,7 @@ def ai_get_history():
 # ==================== 画线同步API ====================
 
 @mcp_api.route('/api/mcp/overlays/sync', methods=['POST'])
+@write_protected
 def sync_overlays():
     """同步画线状态（前端上报）"""
     try:

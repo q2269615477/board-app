@@ -17,6 +17,7 @@ logger = logging.getLogger('lifecycle')
 
 from core.config import (
     QMT_PYTHON_PATH, QMT_DIR, QMT_ENABLED, QMT_AUTO_START, QMT_DATA_DIR,
+    QMT_STARTUP_HISTORY_SYNC, STARTUP_PREWARM,
     BASE_DIR, DATA_DIR, PREWARM_TARGETS, BOARD_CHG_REFRESH_INTERVAL
 )
 from services.data_update_scheduler import data_update_scheduler
@@ -55,6 +56,8 @@ class AppContext:
         self.qmt_available = False
         self._threads: list[threading.Thread] = []
         self._stop_event = threading.Event()
+        self._start_lock = threading.Lock()
+        self._started = False
         self.board_chg_cache: dict = {}
         self.board_chg_lock = threading.Lock()
         self._qmt_warning: str = ""
@@ -82,24 +85,34 @@ class AppContext:
 
         主通道：完整 QMT 登录后走 58600 RPC（不依赖 MiniQMT）。
         MiniQMT 仅当 QMT_AUTO_START=1 时由应用托管；默认可不启动。
+
+        启动锁覆盖整个启动序列，保证并发调用只执行一次。只有完整序列
+        成功后才标记为已启动。依赖检查阶段失败可安全重试；后台线程启动
+        后的异常由各启动步骤自行隔离，避免重复创建后台资源。
         """
-        logger.info("=== 应用启动 ===")
-        # 注入 TUSHARE_TOKEN 等本地 env（.env / ~/.board-app.env）
-        try:
-            from core.env_bootstrap import ensure_tushare_token
-            if ensure_tushare_token():
-                logger.info("[OK] TUSHARE_TOKEN 已就绪")
-            else:
-                logger.warning("[WARN] TUSHARE_TOKEN 未就绪，Tushare 回填/板块日更将失败")
-        except Exception as e:
-            logger.warning(f"[WARN] env bootstrap 失败: {e}")
-        self._check_dependencies()
-        self._start_background_services()  # 可选 MiniQMT + 真实日更调度
-        self._start_qmt()  # 异步探测完整 QMT / 58600
-        kill_orphaned()
-        write_pid()
-        register_cleanup()
-        logger.info("=== 启动完成 ===")
+        with self._start_lock:
+            if self._started:
+                logger.debug("=== 应用已启动，跳过重复启动 ===")
+                return
+
+            logger.info("=== 应用启动 ===")
+            # 注入 TUSHARE_TOKEN 等本地 env（.env / ~/.board-app.env）
+            try:
+                from core.env_bootstrap import ensure_tushare_token
+                if ensure_tushare_token():
+                    logger.info("[OK] TUSHARE_TOKEN 已就绪")
+                else:
+                    logger.warning("[WARN] TUSHARE_TOKEN 未就绪，Tushare 回填/板块日更将失败")
+            except Exception as e:
+                logger.warning(f"[WARN] env bootstrap 失败: {e}")
+            self._check_dependencies()
+            self._start_background_services()  # 可选 MiniQMT + 真实日更调度
+            self._start_qmt()  # 异步探测完整 QMT / 58600
+            kill_orphaned()
+            write_pid()
+            register_cleanup()
+            self._started = True
+            logger.info("=== 启动完成 ===")
 
     def _check_dependencies(self):
         from core.config import Config
@@ -170,7 +183,7 @@ class AppContext:
                     logger.info(
                         f"[QMT] ✓ 公式口就绪 rows={formula_rows} last={formula_last!r}"
                     )
-                    threading.Thread(target=self._qmt_sync_all, daemon=True).start()
+                    self._start_qmt_history_sync()
                     return
                 logger.info(f"[QMT] 公式口探测未就绪: {probe}")
             except Exception as e:
@@ -264,7 +277,7 @@ class AppContext:
                     f"detail_ok={detail_ok} sector_n={sector_n} "
                     f"client_data_dir={client_data_dir!r}"
                 )
-                threading.Thread(target=self._qmt_sync_all, daemon=True).start()
+                self._start_qmt_history_sync()
                 return
 
             if connected and not data_ok:
@@ -295,6 +308,18 @@ class AppContext:
             logger.warning(f"[QMT] RPC验证失败: {e}")
             self._qmt_warning = f"QMT连接失败: {str(e)[:100]}。请检查完整 QMT 是否已登录"
         logger.info("[QMT] ⚠️ 使用缓存/Tushare 回退（QMT 行情未就绪）")
+
+    def _start_qmt_history_sync(self):
+        """Run the legacy startup history sync only when explicitly enabled."""
+        if not QMT_STARTUP_HISTORY_SYNC:
+            logger.info(
+                "[QMT同步] 跳过启动全历史同步；日更管线按需维护数据 "
+                "(QMT_STARTUP_HISTORY_SYNC=1 可恢复旧行为)"
+            )
+            return
+        t = threading.Thread(target=self._qmt_sync_all, daemon=True)
+        t.start()
+        self._threads.append(t)
 
     def _qmt_sync_all(self):
         """后台同步常用标的到 SQLite（优先 qmt_api 公式口日线）"""
@@ -366,9 +391,15 @@ class AppContext:
         t1.start()
         self._threads.append(t1)
 
-        t2 = threading.Thread(target=self._prewarm_indices, daemon=True)
-        t2.start()
-        self._threads.append(t2)
+        if STARTUP_PREWARM:
+            t2 = threading.Thread(target=self._prewarm_indices, daemon=True)
+            t2.start()
+            self._threads.append(t2)
+        else:
+            logger.info(
+                "[生命周期] 跳过启动指数预热；首屏按缓存优先加载 "
+                "(BOARD_APP_STARTUP_PREWARM=1 可恢复旧行为)"
+            )
 
         # MiniQMT 可选：默认关闭（完整 QMT 已登录即可）；需托管时设 QMT_AUTO_START=1
         if QMT_AUTO_START:
@@ -406,57 +437,27 @@ class AppContext:
             self._stop_event.wait(BOARD_CHG_REFRESH_INTERVAL)
 
     def _reload_board_changes(self):
-        """读取CSV获取板块涨跌幅（用 reader 按列定位，兼容 DictReader 无表头问题）"""
-        import csv
-        import re
-        result = {}
-        base = DATA_DIR
-        for dirname, dtype in [('行业板块K线数据', 'industry'), ('概念板块K线数据', 'concept')]:
-            d = base / dirname
-            if not d.exists():
-                continue
-            for fn in d.iterdir():
-                if not fn.name.endswith('.csv'):
-                    continue
-                m = re.match(r'.+_(BK\d+)\.csv$', fn.name)
-                if not m:
-                    continue
-                code = m.group(1)
-                try:
-                    with open(fn, 'r', encoding='utf-8-sig') as f:
-                        f.seek(0, 2)
-                        size = f.tell()
-                        if size < 50:
-                            continue
-                        f.seek(max(0, size - 500))
-                        lines = f.read().strip().split('\n')
-                        if len(lines) < 2:
-                            continue
-                        # 读最后两行：CSV列位 收盘=2, 涨跌幅=5
-                        last = list(csv.reader([lines[-1]]))[0]
-                        if len(last) >= 6 and last[5]:
-                            chg = round(float(last[5]), 2)
-                        elif len(last) >= 3 and last[2]:
-                            prev = list(csv.reader([lines[-2]]))[0]
-                            c0 = float(last[2])
-                            c1 = float(prev[2]) if len(prev) >= 3 else c0
-                            chg = round((c0 / c1 - 1) * 100, 2) if c1 != 0 else 0
-                        else:
-                            continue
-                        result[f'{dtype}:{code}'] = chg
-                except Exception as e:
-                    logger.debug(f"[涨跌幅] 读取 {code} CSV 失败: {e}")
+        """从统一 BoardSpotCache 派生板块涨跌幅。"""
+        try:
+            from services.board_spot_cache import get_board_spot_cache
+            cache = get_board_spot_cache()
+            cache.get('industry')
+            cache.get('concept')
+            result = cache.get_chgs()
+        except Exception as e:
+            logger.debug(f"[涨跌幅] BoardSpotCache 不可用: {e}")
+            result = {}
         with self.board_chg_lock:
             self.board_chg_cache = result
             if result:
-                logger.info(f"[涨跌幅] 已加载 {len(result)} 个板块涨跌幅")
+                logger.info(f"[涨跌幅] BoardSpotCache 已加载 {len(result)} 个板块涨跌幅")
 
     def get_board_changes_cached(self) -> dict:
         """获取板块涨跌幅（线程安全，首次调用同步加载）"""
         with self.board_chg_lock:
             if self.board_chg_cache:
                 return self.board_chg_cache.copy()
-        # 首次调用：同步加载（991个CSV约1-2秒），后续由后台线程刷新
+        # 首次调用同步触发统一缓存，后续由后台线程按 TTL 刷新
         self._reload_board_changes()
         with self.board_chg_lock:
             return self.board_chg_cache.copy()
@@ -471,7 +472,8 @@ class AppContext:
         except Exception:
             pass
 
-        from data_loader import load_index_kline, load_hk_index_kline, load_board_kline
+        from data.market_kline import load_index_kline, load_hk_index_kline
+        from data.board_kline import load_board_kline
         logger.info("[预热] 预加载顶部指数...")
         for code, name, typ in PREWARM_TARGETS:
             if self._stop_event.is_set():
@@ -491,12 +493,15 @@ class AppContext:
 
 # 全局应用上下文
 _app_context: Optional[AppContext] = None
+_app_context_lock = threading.Lock()
 
 
 def get_app_context() -> AppContext:
     global _app_context
     if _app_context is None:
-        _app_context = AppContext()
+        with _app_context_lock:
+            if _app_context is None:
+                _app_context = AppContext()
     return _app_context
 
 

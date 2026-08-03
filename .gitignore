@@ -1,4 +1,3 @@
-
 # secrets
 .env
 *.env
@@ -6,6 +5,9 @@
 
 # Python
 __pycache__/
+/.pytest_cache/
+/.pytest-pycache/
+/.pytest-tmp-*/
 *.pyc
 *.pyo
 
@@ -13,14 +15,50 @@ __pycache__/
 *.log
 nul
 background_captures/
+logtools/
+board_list.txt
 
 # SQLite 运行时（含大文件，>100MB 不入 Git）
 *.db-shm
 *.db-wal
+*.sqlite-shm
+*.sqlite-wal
 data/*.sqlite
 data/*.db
+/kline.db
+data/kline.db
 data/backup/
 data/概念板块K线数据/
+
+# 行情数据缓存（tushare / QMT / 本地缓存，非项目产物）
+data/tushare_cache/
+data/noon_cache/
+data/行业板块K线数据/
+data/个股K线缓存/
+data/港股K线缓存/
+data/个股数据/
+data/constituents_update_*.json
+data/stock_ledger.json
+data/signals.json
+/signals.json
+
+# 数据更新日志（运行时产物）
+data/update_logs/
+data/update_status.json
+data/search_history.json
+data/history_repair_status.json
+
+# 搜索索引（构建产物，由 build_search_index.py 生成）
+static/search_index.json
+
+# 运行时状态 JSON（非源码，由应用写入）
+scripts/data/update_status.json
+data/update_status.json
+/.port
+/.port.lock
+
+# QMT HTTP Server 真实配置（含账号凭据，只跟踪 .example）
+qmt-http-server/deploy/server_config.json
 
 # WorkBuddy 内部
 .workbuddy/
@@ -33,3 +71,58 @@ data/qmt_export/
 
 # 系统
 .DS_Store
+
+# Local agent / browser / audit scratch
+.opencode/
+.playwright-mcp/
+.graft/
+graft/
+audit/
+oneshot_work/
+tmp/
+
+# Generated screenshots and probes
+*.png
+*.tmp
+data/_mini_*
+data/_qmt_diag_*
+data/remaining.txt
+data/unassigned_boards.txt
+
+# Legacy one-file frontend and backups
+static/_archive/
+static/index-local*.html
+static/*.bak
+static/*.backup.json
+api/*.bak
+services/*.bak
+data/*.bak
+backup/
+docs/*.dtmp
+
+# scripts 归档（历史实验脚本，保留本地但不入 Git）
+scripts/_archive/
+scripts/_probe/
+scripts/__pycache__/
+scripts/*.pyc
+_all_boards.txt
+scripts/_fetch_dc_daily.py
+scripts/tushare_board_update.py
+
+# scripts 诊断脚本的运行时产物
+scripts/check_progress.json
+
+# 本地便利脚本（不入 Git，仅本地运行）
+*.bat
+
+# 嵌入的独立 git 仓库（外部依赖，不嵌入主仓库）
+qmt-http-server/repo/
+
+# 临时重构文档（非项目产物，仅本地参考）
+前端统一选择链路与脚本清理整改方案.md
+第二轮重构审阅与循环目标建议.md
+项目重构实施路线图.md
+数据更新机制.md
+board-app板块面板tags开发进度审查与整改方案.md
+诊断报告_全面复盘.md
+技术文档/

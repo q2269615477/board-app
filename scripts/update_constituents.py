@@ -11,7 +11,6 @@
   python scripts/update_constituents.py --board=BK1170     # 仅更新指定板块
 """
 import sys
-import os
 import json
 import time
 import re
@@ -22,15 +21,16 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import tushare as ts
+# 加载 .env 中的 TUSHARE_TOKEN 等环境变量
+from core.env_bootstrap import load_env_files
+load_env_files()
 
-TOKEN = os.environ.get('TUSHARE_TOKEN')
-try:
-    ts.set_token(TOKEN)
-except PermissionError:
-    pass
+from data_loader import get_tushare_pro
 
-pro = ts.pro_api()
+pro = get_tushare_pro()
+if pro is None:
+    print('错误: TUSHARE_TOKEN 未配置，无法更新成分股数据', file=sys.stderr)
+    sys.exit(1)
 
 DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
 STATE_FILE = DATA_DIR / 'constituents_update_state.json'

@@ -5,6 +5,7 @@ sqlite_repo.py — SQLite数据访问层
 import sqlite3
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +14,26 @@ import pandas as pd
 from core.config import Config
 
 logger = logging.getLogger('sqlite')
+
+
+def _finite_float(value):
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(num):
+        return None
+    return num
+
+
+def _row_amount(row):
+    """Return source-provided turnover amount without estimating from price/volume."""
+    for key in ('amount', 'turnover', '成交额'):
+        value = row.get(key)
+        if value is not None and not pd.isna(value):
+            amount = _finite_float(value)
+            return amount if amount is not None and amount > 0 else None
+    return None
 
 
 def normalize_date(date_str) -> str:
@@ -71,10 +92,21 @@ class SqliteRepo:
                     period TEXT NOT NULL,
                     date TEXT NOT NULL,
                     open REAL, high REAL, low REAL, close REAL, volume INTEGER,
+                    updated_at TEXT,
                     PRIMARY KEY (code, period, date)
                 );
                 CREATE INDEX IF NOT EXISTS idx_kline_code_period ON kline(code, period);
                 CREATE INDEX IF NOT EXISTS idx_kline_date ON kline(date);
+                CREATE TABLE IF NOT EXISTS kline_amount (
+                    code TEXT NOT NULL,
+                    period TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    amount REAL NOT NULL DEFAULT 0,
+                    updated_at TEXT,
+                    PRIMARY KEY (code, period, date)
+                );
+                CREATE INDEX IF NOT EXISTS idx_kline_amount_code_period
+                    ON kline_amount(code, period);
                 CREATE TABLE IF NOT EXISTS kline_meta (
                     code TEXT NOT NULL,
                     period TEXT NOT NULL,
@@ -94,6 +126,74 @@ class SqliteRepo:
                     mkt_cap REAL, updated_at TEXT
                 );
             """)
+            # Migration: add updated_at column if missing
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(kline)").fetchall()}
+            if cols and 'updated_at' not in cols:
+                conn.execute("ALTER TABLE kline ADD COLUMN updated_at TEXT")
+        finally:
+            conn.close()
+
+    def replace_kline_period(self, code: str, period: str, df: pd.DataFrame,
+                             name: str = '', data_type: str = '') -> int:
+        """Atomically replace one complete code/period recomputation."""
+        if df is None or df.empty:
+            return 0
+        conn = self._get_conn()
+        try:
+            conn.execute('BEGIN')
+            now_str = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+            records = []
+            amount_records = []
+            for _, row in df.iterrows():
+                date_raw = normalize_date(row.get('date', ''))
+                if not date_raw:
+                    continue
+                values = [_finite_float(row.get(column))
+                          for column in ('open', 'high', 'low', 'close')]
+                if any(value is None for value in values):
+                    continue
+                volume_v = _finite_float(row.get('volume', 0)) or 0
+                records.append((
+                    code, period, date_raw, values[0], values[1],
+                    values[2], values[3], int(volume_v), now_str,
+                ))
+                amount_v = _row_amount(row)
+                if amount_v is not None:
+                    amount_records.append((code, period, date_raw, amount_v, now_str))
+            if not records:
+                conn.rollback()
+                return 0
+            conn.execute('DELETE FROM kline WHERE code=? AND period=?', (code, period))
+            conn.executemany(
+                'INSERT OR REPLACE INTO kline '
+                '(code, period, date, open, high, low, close, volume, updated_at) '
+                'VALUES (?,?,?,?,?,?,?,?,?)',
+                records,
+            )
+            conn.execute(
+                'DELETE FROM kline_amount WHERE code=? AND period=? '
+                'AND date NOT IN (SELECT date FROM kline WHERE code=? AND period=?)',
+                (code, period, code, period),
+            )
+            if amount_records:
+                conn.executemany(
+                    'INSERT OR REPLACE INTO kline_amount '
+                    '(code, period, date, amount, updated_at) VALUES (?,?,?,?,?)',
+                    amount_records,
+                )
+            conn.execute(
+                'INSERT OR REPLACE INTO kline_meta '
+                '(code, period, rows, first_date, last_date, updated_at) '
+                'VALUES (?,?,?,?,?,?)',
+                (code, period, len(records), min(r[2] for r in records),
+                 max(r[2] for r in records), now_str),
+            )
+            conn.commit()
+            return len(records)
+        except Exception as exc:
+            conn.rollback()
+            logger.warning(f'[SQLite] replace_kline_period {code}/{period}: {exc}')
+            raise
         finally:
             conn.close()
 
@@ -103,13 +203,19 @@ class SqliteRepo:
         conn = self._get_conn()
         try:
             cur = conn.execute(
-                'SELECT date, open, high, low, close, volume '
-                'FROM kline WHERE code=? AND period=? ORDER BY date',
+                'SELECT k.date, k.open, k.high, k.low, k.close, k.volume, '
+                'COALESCE(a.amount, 0) '
+                'FROM kline AS k LEFT JOIN kline_amount AS a '
+                'ON a.code=k.code AND a.period=k.period AND a.date=k.date '
+                'WHERE k.code=? AND k.period=? ORDER BY k.date',
                 (code, period)
             )
             rows = cur.fetchall()
             if rows:
-                return pd.DataFrame(rows, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                return pd.DataFrame(
+                    rows,
+                    columns=['date', 'open', 'high', 'low', 'close', 'volume', 'amount'],
+                )
         finally:
             conn.close()
         return None
@@ -120,30 +226,64 @@ class SqliteRepo:
         conn = self._get_conn()
         try:
             conn.execute('BEGIN')
+            now_str = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
             records = []
+            amount_records = []
             for _, row in df.iterrows():
                 date_raw = normalize_date(row.get('date', ''))
                 if not date_raw:
                     continue
+                open_v = _finite_float(row.get('open'))
+                high_v = _finite_float(row.get('high'))
+                low_v = _finite_float(row.get('low'))
+                close_v = _finite_float(row.get('close'))
+                if None in (open_v, high_v, low_v, close_v):
+                    continue
+                volume_v = _finite_float(row.get('volume', 0)) or 0
                 records.append((
                     code, period, date_raw,
-                    float(row['open']) if pd.notna(row.get('open', 0)) else 0,
-                    float(row['high']) if pd.notna(row.get('high', 0)) else 0,
-                    float(row['low']) if pd.notna(row.get('low', 0)) else 0,
-                    float(row['close']) if pd.notna(row.get('close', 0)) else 0,
-                    int(float(row.get('volume', 0)) if pd.notna(row.get('volume', 0)) else 0)
+                    open_v,
+                    high_v,
+                    low_v,
+                    close_v,
+                    int(volume_v),
+                    now_str
                 ))
+                amount_v = _row_amount(row)
+                if amount_v is not None:
+                    amount_records.append((code, period, date_raw, amount_v, now_str))
+            if not records:
+                conn.rollback()
+                return
             conn.executemany(
                 'INSERT OR REPLACE INTO kline '
-                '(code, period, date, open, high, low, close, volume) '
-                'VALUES (?,?,?,?,?,?,?,?)', records
+                '(code, period, date, open, high, low, close, volume, updated_at) '
+                'VALUES (?,?,?,?,?,?,?,?,?)', records
             )
-            last_date = normalize_date(df['date'].max() if 'date' in df.columns else '')
+            if amount_records:
+                conn.executemany(
+                    'INSERT OR REPLACE INTO kline_amount '
+                    '(code, period, date, amount, updated_at) VALUES (?,?,?,?,?)',
+                    amount_records,
+                )
+            # Check existing meta to avoid row count regression
+            existing = conn.execute(
+                'SELECT rows FROM kline_meta WHERE code=? AND period=?', (code, period)
+            ).fetchone()
+            existing_rows = existing[0] if existing else 0
+            # Count actual rows after insert to get the true total
+            actual_count = conn.execute(
+                'SELECT COUNT(*) FROM kline WHERE code=? AND period=?', (code, period)
+            ).fetchone()[0]
+            actual_last_date = conn.execute(
+                'SELECT MAX(date) FROM kline WHERE code=? AND period=?', (code, period)
+            ).fetchone()[0]
+            new_rows = max(actual_count, existing_rows)  # non-retrogression
+            last_date = normalize_date(actual_last_date or '')
             conn.execute(
                 'INSERT OR REPLACE INTO kline_meta '
                 '(code, period, rows, last_date, updated_at) VALUES (?,?,?,?,?)',
-                (code, period, len(df), last_date,
-                 pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'))
+                (code, period, new_rows, last_date, now_str)
             )
             conn.commit()
         except Exception as e:
@@ -160,6 +300,23 @@ class SqliteRepo:
                 (code, period)
             )
             return cur.fetchone() is not None
+        finally:
+            conn.close()
+
+    def delete_kline(self, code: str, period: str = None) -> int:
+        """Delete kline rows for a code, optionally filtered by period. Returns count deleted."""
+        conn = self._get_conn()
+        try:
+            if period:
+                cur = conn.execute(
+                    'DELETE FROM kline WHERE code=? AND period=?', (code, period))
+                conn.execute(
+                    'DELETE FROM kline_amount WHERE code=? AND period=?', (code, period))
+            else:
+                cur = conn.execute('DELETE FROM kline WHERE code=?', (code,))
+                conn.execute('DELETE FROM kline_amount WHERE code=?', (code,))
+            conn.commit()
+            return cur.rowcount
         finally:
             conn.close()
 

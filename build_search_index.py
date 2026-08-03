@@ -5,6 +5,7 @@ build_search_index.py - 构建全市场搜索索引
 import json
 import time
 import logging
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -28,11 +29,46 @@ KNOWN_INDICES = {
     'HSTECH': ('恒生科技', 'HSTECH.HK', '港股指数'),
 }
 
+_CHAR_MAP = None
+
+
+def _load_char_map() -> dict:
+    """Load the local Chinese initial map used by the browser.
+
+    The pinyin_helper.js file uses single-quoted JS object syntax, which is
+    not valid JSON. We parse it with a regex that extracts individual
+    'char': 'initial' pairs instead of relying on json.loads.
+    """
+    global _CHAR_MAP
+    if _CHAR_MAP is not None:
+        return _CHAR_MAP
+    helper = BASE_DIR / 'static' / 'js' / 'pinyin_helper.js'
+    try:
+        text = helper.read_text(encoding='utf-8')
+        # Extract the object block first
+        m = re.search(
+            r'(?:_CHAR_MAP|FALLBACK_INITIALS)\s*=\s*(\{[^}]+\})',
+            text, re.S,
+        )
+        if not m:
+            _CHAR_MAP = {}
+            return _CHAR_MAP
+        block = m.group(1)
+        # Parse 'char': 'letter' pairs (single or double quoted keys/values)
+        pairs = re.findall(
+            r"""['"](.{1,4})['"]\s*:\s*['"]([a-zA-Z])['"]""",
+            block,
+        )
+        _CHAR_MAP = {k: v for k, v in pairs}
+    except Exception:
+        _CHAR_MAP = {}
+    return _CHAR_MAP
+
 
 def compute_initials(name: str) -> list[str]:
     """计算中文拼音首字母"""
-    from pypinyin import lazy_pinyin, Style
     try:
+        from pypinyin import lazy_pinyin, Style
         py = lazy_pinyin(name, style=Style.FIRST_LETTER)
         initials = []
         for i, ch in enumerate(name):
@@ -43,7 +79,14 @@ def compute_initials(name: str) -> list[str]:
                 initials.append(p.upper() if p else '')
         return initials
     except Exception:
-        return [c.upper() if c.isalpha() else '' for c in name]
+        char_map = _load_char_map()
+        initials = []
+        for ch in str(name or ''):
+            if ch.isascii() and ch.isalnum():
+                initials.append(ch.upper())
+            else:
+                initials.append(str(char_map.get(ch, '')).upper())
+        return initials
 
 
 def build_stock_index() -> list[dict]:
@@ -114,6 +157,39 @@ def build_stock_index() -> list[dict]:
     return all_stocks
 
 
+def build_stock_index_from_constituents() -> list[dict]:
+    """从本地板块成分股缓存构建个股索引，作为 QMT 不可用时的权威兜底。"""
+    stocks = {}
+    for filename in ('industry_constituents.json', 'concept_constituents.json'):
+        path = BASE_DIR / 'data' / filename
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except Exception as e:
+            logger.warning(f"读取 {filename} 失败: {e}")
+            continue
+        for board in payload.values():
+            for item in board.get('cons') or []:
+                code = str(item.get('code') or '').strip()
+                name = str(item.get('name') or '').strip()
+                if len(code) == 6 and name and not name.startswith('个股 '):
+                    stocks[code] = name
+
+    result = []
+    for code, name in sorted(stocks.items()):
+        result.append({
+            'code': code,
+            'name': name,
+            'type': 'stock',
+            'category': '个股',
+            'initials': compute_initials(name),
+            'full_code': code,
+        })
+    logger.info(f"本地成分股个股索引: {len(result)} 条")
+    return result
+
+
 def build_index_sectors() -> list[dict]:
     """从 QMT 获取全量指数列表"""
     try:
@@ -175,8 +251,53 @@ def build_index_sectors() -> list[dict]:
     return result
 
 
-def build_index_json():
-    """构建完整的搜索索引 JSON"""
+def _generate_tags(name: str, category: str, board_type: str) -> list[str]:
+    """根据板块名称和分类自动生成标签列表"""
+    tags = []
+    # 板块名称本身作为标签
+    if name:
+        tags.append(name)
+    # 分类名作为标签
+    if category:
+        tags.append(category)
+    # 从名称中提取子关键词（去掉常见后缀后的核心词）
+    for suffix in ('概念', 'Ⅱ', 'Ⅲ', '概念Ⅱ', '概念Ⅲ'):
+        name = name.replace(suffix, '')
+    # 按常见分隔符拆分
+    for part in [p.strip() for p in name.replace('（', '(').replace('）', ')').split('/') if p.strip()]:
+        if part and part not in tags:
+            tags.append(part)
+    # AI 相关板块添加通用标签
+    upper_name = name.upper()
+    if 'AI' in upper_name or '人工智能' in name:
+        for t in ('AI', '科技', 'AI科技'):
+            if t not in tags:
+                tags.append(t)
+    # 半导体相关
+    if '半导体' in name or '芯片' in name:
+        if '半导体' not in tags:
+            tags.append('半导体')
+    return tags
+
+
+def _iter_classification_boards(nodes):
+    """Yield board dicts from nested classification nodes."""
+    for node in nodes or []:
+        for board in node.get('boards') or []:
+            yield board
+        for key in ('subcategories', 'children', 'categories'):
+            yield from _iter_classification_boards(node.get(key) or [])
+
+
+def build_index_json(output_path=None):
+    """构建完整的搜索索引 JSON
+
+    Args:
+        output_path: 可选输出路径。为 None 时使用模块级 INDEX_FILE（默认
+            static/search_index.json）。传入路径允许测试或自定义部署
+            将索引写到非默认位置。
+    """
+    index_file = Path(output_path) if output_path is not None else INDEX_FILE
 
     # 1. 从板块分类导入
     result = {}
@@ -184,19 +305,21 @@ def build_index_json():
     try:
         with open(cf, 'r', encoding='utf-8') as f:
             cats = json.load(f).get('categories', [])
-        for cat in cats:
-            for b in cat.get('boards', []):
-                name = b.get('name', '')
-                code = b.get('code', '')
-                if not code:
-                    continue
-                initials = compute_initials(name)
-                result[code] = {
-                    'name': name,
-                    'type': b.get('type', ''),
-                    'category': cat.get('name', ''),
-                    'initials': initials,
-                }
+        for b in _iter_classification_boards(cats):
+            name = b.get('name', '')
+            code = b.get('code', '')
+            if not code:
+                continue
+            cat_name = b.get('primary_category') or b.get('secondary_category') or b.get('category') or ''
+            initials = compute_initials(name)
+            tags = list(dict.fromkeys((b.get('tags') or []) + _generate_tags(name, cat_name, b.get('type', ''))))
+            result[code] = {
+                'name': name,
+                'type': b.get('type', ''),
+                'category': cat_name,
+                'initials': initials,
+                'tags': tags,
+            }
         logger.info(f"板块索引: {len([k for k in result if result[k]['type'] in ('industry','concept')])} 条")
     except Exception as e:
         logger.warning(f"读取板块分类失败: {e}")
@@ -210,6 +333,7 @@ def build_index_json():
                 'type': 'index',
                 'category': cat,
                 'initials': initials,
+                'tags': _generate_tags(name, cat, 'index'),
             }
     logger.info(f"已知指数: {len([k for k in result if result[k]['type'] == 'index'])} 条")
 
@@ -224,6 +348,7 @@ def build_index_json():
                     'type': 'index',
                     'category': '指数',
                     'initials': idx['initials'],
+                    'tags': _generate_tags(idx['name'], '指数', 'index'),
                 }
         logger.info(f"QMT指数: {len([k for k in result if result[k]['type'] == 'index'])} 条")
     except Exception as e:
@@ -234,18 +359,36 @@ def build_index_json():
         stocks = build_stock_index()
         for s in stocks:
             code = s['code']
-            if code not in result:
+            if code not in result or str(result[code].get('name', '')).startswith('个股 '):
                 result[code] = {
                     'name': s['name'],
                     'type': 'stock',
                     'category': '个股',
                     'initials': s['initials'],
+                    'tags': _generate_tags(s['name'], '个股', 'stock'),
                 }
         logger.info(f"个股索引: {len([k for k in result if result[k]['type'] == 'stock'])} 条")
     except Exception as e:
         logger.warning(f"获取个股失败: {e}")
 
-    # 4. 补充港股指数
+    # 5. 从本地成分股缓存补全个股名称/拼音。此路径不依赖 QMT。
+    try:
+        local_stocks = build_stock_index_from_constituents()
+        for s in local_stocks:
+            code = s['code']
+            if code not in result or result[code].get('type') == 'stock':
+                result[code] = {
+                    'name': s['name'],
+                    'type': 'stock',
+                    'category': '个股',
+                    'initials': s['initials'],
+                    'tags': _generate_tags(s['name'], '个股', 'stock'),
+                }
+        logger.info(f"个股索引(含本地补全): {len([k for k in result if result[k]['type'] == 'stock'])} 条")
+    except Exception as e:
+        logger.warning(f"本地成分股个股索引失败: {e}")
+
+    # 6. 补充港股指数
     hk_indices = [
         ('HSI', '恒生指数', '港股指数'),
         ('HSTECH', '恒生科技', '港股指数'),
@@ -253,7 +396,8 @@ def build_index_json():
     for code, name, cat in hk_indices:
         if code not in result:
             initials = compute_initials(name)
-            result[code] = {'name': name, 'type': 'hk_index', 'category': cat, 'initials': initials}
+            result[code] = {'name': name, 'type': 'hk_index', 'category': cat, 'initials': initials,
+                            'tags': _generate_tags(name, cat, 'hk_index')}
 
     # 写入文件
     output = {
@@ -263,11 +407,11 @@ def build_index_json():
         'items': result,
     }
 
-    INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(INDEX_FILE, 'w', encoding='utf-8') as f:
+    index_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(index_file, 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False, indent=1)
 
-    logger.info(f"搜索索引已保存: {INDEX_FILE}")
+    logger.info(f"搜索索引已保存: {index_file}")
     logger.info(f"  总计: {len(result)} 条")
     for t in set(v['type'] for v in result.values()):
         count = len([v for v in result.values() if v['type'] == t])

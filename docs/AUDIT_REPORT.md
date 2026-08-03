@@ -1,8 +1,8 @@
-# board-app 项目合理性全面审查与修复审计报告
+﻿# board-app 项目合理性全面审查与修复审计报告
 
 > **审查时间**：2026-07-02
 > **审计人员**：Tabbit (Browser Automation Agent)
-> **项目根路径**：`D:\.workbuddy\2026-06-27-21-35-52oard-app\` (容器映射路径: `/mnt/local/board-app/`)
+> **项目根路径（历史记录）**：D:\.workbuddy\2026-06-27-21-35-52\board-app\ (容器映射路径: /mnt/local/board-app/)（路径可能已变化，请核实）
 
 ---
 
@@ -57,7 +57,8 @@
 2. **运行后端服务**：
    * 在需要本地完整联盘时，确保首先双击打开本地的 QMT 极速策略交易终端（XtMiniQmt.exe），然后通过以下命令启动后端服务：
      ```bash
-     cd D:\.workbuddy\2026-06-27-21-35-52oard-app\
+     # cd D:\.workbuddy\2026-06-27-21-35-52\board-app\    # 历史路径，替换为实际目录
+     cd .\board-app
      python app.py
      ```
    * 并在浏览器或 WorkBuddy 侧边栏中打开修复后的本地路径或 `http://127.0.0.1:5000/`。

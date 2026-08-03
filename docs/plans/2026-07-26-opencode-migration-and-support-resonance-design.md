@@ -397,7 +397,7 @@ score = f(len(aligned)/len(members), 各 dist 的紧密度)   # 0-100，仅排�
 
 ### Phase 0
 
-- [x] **T0.1** 前端去 CSP 依赖 —— 现役前端 `static/js/*`（`nav-panel.js` fetch `/api/classification/load`、`chart-core.js` fetch `/api/kline`）**已无 `__init_data__` 依赖**（残留仅在 `static/_archive/`）。真实浏览器验证：导航(990板块)/指数栏/会话面板正常渲染，控制台零报错。
+- [x] **T0.1** 前端去 CSP 依赖 —— 现役前端 `static/js/*`（`nav-panel.js` fetch `/api/classification/load`、`chart-core.js` fetch `/api/kline`）**已无 `__init_data__` 依赖**（旧入口与归档目录已在 2026-07-30 清理）。真实浏览器验证：导航(990板块)/指数栏/会话面板正常渲染，控制台零报错。
 - [x] **T0.2** `app.py` `/` 路由简化 —— 65 行→8 行，移除分类文件读取 + DB/QMT 读 K 线 + `__init_data__` 注入。验证 `/` 返回 200 且 `__init_data__` 计数=0。
 - [~] **T0.3** OpenCode 接入 —— 创建 `opencode.json`（`mcp.board-app`→`node mcp_board_bridge.js`）。桥 stdio 路径已端到端验证：`initialize`→board-app 3.0.0、`tools/list`→27 工具、`tools/call get_panel_context`→返回上下文。**待用户装 OpenCode 读取该配置。**
 - [x] **T0.4** OpenCode「盘面分析师」agent 指令文件 —— 创建 `AGENTS.md`（角色 + 铁律 + 精确/模糊分离 + 工具清单 + 工作流）。

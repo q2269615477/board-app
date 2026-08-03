@@ -1,6 +1,12 @@
+# Current Runtime Note (2026-07-30)
+
+The legacy one-file frontend `static/index-local.html` / `static/index-local-fixed.html` has been removed. The supported runtime entry is `static/index.html` plus modular files under `static/js/`. For active development constraints, see `docs/development-constraints.md` and `技术文档/项目清理与开发约束.md`. Older sections below are historical unless they match those constraints.
+
+---
+
 # panel-ai-trader — 技术架构文档  
 > **生成时间**：2026-07-02 · **维护者**：Admin（运城市委编办资深AI量化分析师）  
-> **代码位置**：`D:\.workbuddy\2026-06-27-21-35-52\board-app\`  
+> **代码位置（历史记录）**：`D:\.workbuddy\2026-06-27-21-35-52\board-app\`（现应以仓库根目录为准，路径可能已变化）  
 > **用途**：面向其他模型 / 开发者的全量审核与协作底档
 
 ---
@@ -721,8 +727,9 @@ curl -s http://127.0.0.1:5000/api/kline/index/sh000001?period=15m | python -c "i
 
 检查：
 ```bash
-# 单独运行 scanner 看日志
-cd D:\.workbuddy\2026-06-27-21-35-52\board-app
+# 单独运行 scanner 看日志（请 cd 到项目根目录，以下为历史示例路径）
+# cd D:\.workbuddy\2026-06-27-21-35-52\board-app
+cd .\board-app    # 或你的实际项目目录
 python board_scanner.py
 ```
 
@@ -750,7 +757,8 @@ print(len(get_event_bus()._listeners))
 检查：
 ```bash
 # 查看 MCP 桥接器是否正常响应
-cd D:\.workbuddy\2026-06-27-21-35-52\board-app
+# cd D:\.workbuddy\2026-06-27-21-35-52\board-app    # 历史路径，请替换为实际目录
+cd .\board-app
 node mcp_board_bridge.js
 # 在另一个终端 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node mcp_board_bridge.js
 ```
@@ -812,7 +820,8 @@ schedule:
   hour: 2
   minute: 0
 tasks:
-  - python D:\.workbuddy\2026-06-27-21-35-52\board-app\board_scanner.py
+  # python D:\.workbuddy\2026-06-27-21-35-52\board-app\board_scanner.py  # 历史路径，请替换
+  - python ./board_scanner.py
 ```
 
 ## 附录 C：关键数据schema

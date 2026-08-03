@@ -9,6 +9,7 @@ import logging
 from flask import Blueprint, jsonify, request
 
 from services.annotation_service import get_annotation_service
+from api.auth_guard import write_protected
 
 logger = logging.getLogger("annotation_api")
 
@@ -57,7 +58,28 @@ def list_annotations():
         return _err(str(e), 500)
 
 
+@bp.route("/api/annotations/counts", methods=["GET"])
+def annotation_counts():
+    """Per-symbol annotation counts for the classification nav badges."""
+    try:
+        conn = _svc().repo._conn()
+        rows = conn.execute(
+            """
+            SELECT symbol, COUNT(*) AS n
+            FROM cases
+            WHERE symbol IS NOT NULL AND symbol != ''
+            GROUP BY symbol
+            """
+        ).fetchall()
+        data = {row["symbol"]: int(row["n"]) for row in rows}
+        return jsonify({"ok": True, "success": True, "data": data})
+    except Exception as e:
+        logger.exception("annotation_counts")
+        return _err(str(e), 500)
+
+
 @bp.route("/api/annotations", methods=["POST"])
+@write_protected
 def create_annotation():
     try:
         payload = request.get_json(force=True, silent=True) or {}
@@ -100,6 +122,7 @@ def patch_annotation(case_id: str):
 
 
 @bp.route("/api/annotations/<case_id>/reactions", methods=["POST"])
+@write_protected
 def add_reaction(case_id: str):
     try:
         reaction = request.get_json(force=True, silent=True) or {}
@@ -143,6 +166,7 @@ def list_relations():
 
 
 @bp.route("/api/relations", methods=["POST"])
+@write_protected
 def create_relation():
     try:
         payload = request.get_json(force=True, silent=True) or {}
@@ -189,6 +213,7 @@ def patch_relation(rel_id: str):
 
 
 @bp.route("/api/relations/<rel_id>/members", methods=["POST"])
+@write_protected
 def add_relation_member(rel_id: str):
     try:
         member = request.get_json(force=True, silent=True) or {}

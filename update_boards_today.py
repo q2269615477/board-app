@@ -41,7 +41,7 @@ if not need_codes:
     logger.info("所有板块已是最新，无需更新")
     sys.exit(0)
 
-from data_loader import load_board_kline
+from data.board_kline import load_board_kline
 
 success = 0
 failed = 0

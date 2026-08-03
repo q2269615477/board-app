@@ -5,6 +5,7 @@ WorkBuddy MCP Tool 通过此接口获取当前面板显示的标的、周期信�
 from flask import Blueprint, jsonify, request
 
 from core.context_bridge import get_context, update_context
+from api.auth_guard import write_protected
 
 bp = Blueprint('ctx', __name__)
 
@@ -16,6 +17,7 @@ def ctx_get():
 
 
 @bp.route('/api/ctx', methods=['POST'])
+@write_protected
 def ctx_post():
     """前端更新面板上下文"""
     data = request.get_json() or {}

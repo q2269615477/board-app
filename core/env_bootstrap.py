@@ -25,7 +25,6 @@ _CANDIDATES = (
     Path.home() / '.board-app.env',
 )
 
-
 def _parse_env_line(line: str):
     line = line.strip()
     if not line or line.startswith('#'):
@@ -111,84 +110,33 @@ def load_env_files(force: bool = False) -> dict:
             logger.info(f"[env] 自 {path.name} 加载 {count} 项")
     if not applied:
         logger.debug("[env] 未加载新环境变量（文件缺失或均已存在）")
-    # .env 若误写 HTTP_PROXY=7688，加载后强制清掉（国内行情永远直连）
-    try:
-        force_direct_network()
-    except Exception:
-        pass
     return applied
 
 
-_DIRECT_PATCHED = False
-
-
 def force_direct_network(for_domestic: bool = True) -> dict:
-    """国内行情/Tushare **必须直连，不走 7688 VPN 代理**。
+    """Deprecated no-op retained for compatibility with old callers.
 
-    交接约定：WorkBuddy/面板访问国内行情 proxySupport:off。
-    - 清除进程内 HTTP(S)_PROXY / ALL_PROXY
-    - NO_PROXY=*
-    - 禁用 requests/urllib 读取系统代理（含 Windows 注册表代理）
-
-    返回被清理的环境变量名列表。
+    Direct routing is now scoped to ``data_loader.get_tushare_pro``. This
+    compatibility function intentionally does not change proxy environment
+    variables, urllib's default opener, or ``requests.Session`` globally.
     """
-    global _DIRECT_PATCHED
-    cleared = {}
-    keys = (
-        'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy',
-        'all_proxy', 'FTP_PROXY', 'ftp_proxy',
-    )
-    for k in keys:
-        if k in os.environ and os.environ.get(k):
-            cleared[k] = os.environ.get(k)
-            del os.environ[k]
-    # * = 全部主机不走代理
-    os.environ['NO_PROXY'] = '*'
-    os.environ['no_proxy'] = '*'
-    if cleared:
-        logger.info(f"[env] 已清除代理（国内直连，不走 7688）: {list(cleared.keys())}")
-
-    if not _DIRECT_PATCHED:
-        # urllib：空 ProxyHandler = 强制直连
-        try:
-            import urllib.request
-            _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            urllib.request.install_opener(_opener)
-        except Exception as e:
-            logger.debug(f"[env] urllib 直连 patch 跳过: {e}")
-        # requests：Session 默认 trust_env 会读系统代理
-        try:
-            import requests
-            _orig_init = requests.Session.__init__
-
-            def _session_init_no_proxy(self, *a, **kw):
-                _orig_init(self, *a, **kw)
-                self.trust_env = False
-                self.proxies = {}
-
-            requests.Session.__init__ = _session_init_no_proxy  # type: ignore
-            _DIRECT_PATCHED = True
-            logger.info("[env] requests Session 已强制 trust_env=False（不走系统代理）")
-        except Exception as e:
-            logger.debug(f"[env] requests 直连 patch 跳过: {e}")
-    return cleared
+    del for_domestic
+    return {}
 
 
 def ensure_tushare_token() -> bool:
-    """确保 TUSHARE_TOKEN 可用；必要时重初始化 data_loader._tushare_pro。"""
+    """加载并校验 TUSHARE_TOKEN，然后交给 data_loader 的唯一工厂。"""
     load_env_files()
-    force_direct_network()
     token = (os.environ.get('TUSHARE_TOKEN') or '').strip()
     if not token:
         logger.warning("[env] TUSHARE_TOKEN 仍未设置（请写 .env 或系统环境变量）")
         return False
     try:
-        import tushare as ts
-        import data_loader as dl
-        if getattr(dl, '_tushare_pro', None) is None:
-            ts.set_token(token)
-            dl._tushare_pro = ts.pro_api()
-            logger.info("[env] data_loader._tushare_pro 已延迟初始化")
+        from data_loader import get_tushare_pro
+        client = get_tushare_pro()
+        if client is None:
+            logger.warning("[env] Tushare 客户端初始化失败")
+            return False
         return True
     except Exception as e:
         logger.warning(f"[env] Tushare 初始化失败: {e}")

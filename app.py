@@ -1,37 +1,33 @@
 import os
 import sys
-import json
 import logging
 import secrets
-import time
+import threading
+from collections.abc import Mapping
 from pathlib import Path
-from datetime import datetime
 
 # 确保当前目录在 sys.path 中（支持直接运行 python app.py）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # 尽早加载 .env（须在 data_loader / board_api 等模块 import 前）
-# 并强制国内行情直连（清除 HTTP(S)_PROXY→7688 等，避免 Tushare 超时）
+# 国内行情直连由各市场数据客户端的局部 Session 负责，启动时不再改写全局网络。
 try:
-    from core.env_bootstrap import load_env_files, force_direct_network
+    from core.env_bootstrap import load_env_files
     load_env_files()
-    force_direct_network()
 except Exception:
     pass
 
-from flask import Flask, request, jsonify, send_from_directory, Response
+from flask import Flask, send_from_directory, Response
 from flask_cors import CORS
-from flask_sock import Sock
 
-from services.realtime_websocket import realtime_websocket
+from services.realtime_websocket import RealtimeWebSocket
 
 # ============================================================
 # 配置与基础设施
 # ============================================================
 
 from core.config import Config
-from core.cache import get_cache
-from core.lifecycle import start_app, get_app_context, is_qmt_available
+from core.lifecycle import start_app
 
 # 日志配置
 logging.basicConfig(
@@ -40,32 +36,19 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-app = Flask(__name__, static_folder=Config.STATIC_DIR)
-
-# 初始化 WebSocket
-sock = Sock(app)
-realtime_websocket.init_app(app)
-
-# ============================================================
-# 安全配置（Phase 2.1 安全加固）
-# ============================================================
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-# 请求体大小限制（1MB）
-app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024
-
-# CORS 仅允许本地来源（5000+/3000开发）
-CORS(app, resources={
-    r"/*": {"origins": ["http://127.0.0.1:5000", "http://localhost:5000",
-                           "http://127.0.0.1:3000", "http://localhost:3000"]}
-})
-
 logger = logging.getLogger('app')
+
+# Runtime 是进程级资源（调度器、PID、信号处理和广播线程），只能有一个
+# Flask app 持有它。锁同时覆盖启动序列，避免两个 app 并发抢占。
+_runtime_lock = threading.Lock()
+_runtime_owner = None
+_runtime_context = None
+_runtime_websocket_started = False
 
 
 # ============================================================
 # 安全头
 # ============================================================
-@app.after_request
 def add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
@@ -73,47 +56,57 @@ def add_security_headers(response):
     return response
 
 
-# ============================================================
-# 启动应用
-# ============================================================
-def _bootstrap():
-    """应用启动时执行：依赖检查 → QMT启动 → 预热 → 后台服务"""
-    logger.info("=" * 60)
-    logger.info("AI炒股面板 v3.0")
-    logger.info("=" * 60)
-    missing = Config.validate()
-    if missing:
-        logger.warning(f"依赖检查未通过，缺失文件: {missing}")
-    else:
-        logger.info("[OK] 依赖检查通过")
-    ctx = start_app()
-    
-    # 启动 WebSocket 实时推送服务
-    try:
-        realtime_websocket.start()
-        logger.info("[BOOTSTRAP] WebSocket 实时推送服务已启动")
-    except Exception as e:
-        logger.error(f"[BOOTSTRAP] WebSocket 启动失败: {e}")
-    
-    return ctx
+def _bootstrap(flask_app=None):
+    """显式启动应用 runtime：依赖检查 → 后台服务 → WebSocket。"""
+    global _runtime_owner, _runtime_context, _runtime_websocket_started
+
+    flask_app = flask_app or app
+    with _runtime_lock:
+        if _runtime_owner is not None:
+            if _runtime_owner is not flask_app:
+                raise RuntimeError(
+                    "runtime already owned by another Flask app; "
+                    "only one runtime may run per process"
+                )
+
+            # 同一个 app 的重复 bootstrap 只在此前 WebSocket 启动失败时重试；
+            # 成功后不再次调用 start，避免重复广播线程。
+            if not _runtime_websocket_started:
+                try:
+                    flask_app.extensions['realtime_websocket'].start()
+                    _runtime_websocket_started = True
+                    logger.info("[BOOTSTRAP] WebSocket 实时推送服务已启动")
+                except Exception as e:
+                    logger.error(f"[BOOTSTRAP] WebSocket 启动失败: {e}")
+            return _runtime_context
+
+        logger.info("=" * 60)
+        logger.info("AI炒股面板 v3.0")
+        logger.info("=" * 60)
+        missing = Config.validate()
+        if missing:
+            logger.warning(f"依赖检查未通过，缺失文件: {missing}")
+        else:
+            logger.info("[OK] 依赖检查通过")
+        ctx = start_app()
+
+        # 生命周期启动成功后立即保留 owner；若 WebSocket 后续失败，
+        # 仍只允许这个 app 重试，不能让另一个 app 造成第二套 runtime。
+        _runtime_owner = flask_app
+        _runtime_context = ctx
+        flask_app.extensions['app_context'] = ctx
+
+        # 启动 WebSocket 实时推送服务
+        try:
+            flask_app.extensions['realtime_websocket'].start()
+            _runtime_websocket_started = True
+            logger.info("[BOOTSTRAP] WebSocket 实时推送服务已启动")
+        except Exception as e:
+            logger.error(f"[BOOTSTRAP] WebSocket 启动失败: {e}")
+
+        return ctx
 
 
-# 模块级 bootstrap：仅当 BOARD_APP_AUTO_BOOTSTRAP != '0' 时执行
-if os.environ.get('BOARD_APP_AUTO_BOOTSTRAP', '1') != '0':
-    _bootstrap()
-
-
-# ============================================================
-# 注册蓝图路由（分层组织）
-# ============================================================
-from api import register_routes
-register_routes(app)
-
-
-# ============================================================
-# 静态文件
-# ============================================================
-@app.route('/favicon.ico')
 def favicon():
     """浏览器默认请求；避免控制台 404 噪音。"""
     fav = Config.STATIC_DIR / 'favicon.ico'
@@ -123,7 +116,6 @@ def favicon():
     return Response(status=204)
 
 
-@app.route('/')
 def index():
     """Serve main panel.
 
@@ -139,23 +131,66 @@ def index():
 
 
 # ============================================================
-# 运行入口
+# 应用工厂
 # ============================================================
-def create_app(auto_bootstrap: bool = True):
-    """返回模块级 app 实例。
+def create_app(config=None, start_runtime=False):
+    """创建一个独立 Flask 应用实例。
 
-    注意：当前实现并非真正的 Flask app factory。
-    app 对象在模块导入时已创建并注册路由，bootstrap 依赖
-    BOARD_APP_AUTO_BOOTSTRAP 环境变量控制。
-    auto_bootstrap 参数保留为接口预留，暂无实际效果。
-    真正的工厂改造另开任务。
+    ``start_runtime`` 明确控制生命周期、调度器、QMT 和 WebSocket 的启动；
+    默认只组装 Flask 路由和扩展，不启动任何后台运行时。
     """
-    return app
+    flask_app = Flask(__name__, static_folder=Config.STATIC_DIR)
+
+    # ============================================================
+    # 安全配置（Phase 2.1 安全加固）
+    # ============================================================
+    flask_app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+    # 请求体大小限制（1MB）
+    flask_app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024
+
+    if config is not None:
+        if isinstance(config, Mapping):
+            flask_app.config.from_mapping(config)
+        else:
+            flask_app.config.from_object(config)
+
+    # CORS 仅允许本地来源（5000+/3000开发）
+    CORS(flask_app, resources={
+        r"/*": {"origins": ["http://127.0.0.1:5000", "http://localhost:5000",
+                               "http://127.0.0.1:3000", "http://localhost:3000"]}
+    })
+
+    # 每个 Flask app 都拥有自己的 Sock/WebSocket 生命周期对象。
+    websocket = RealtimeWebSocket()
+    websocket.init_app(flask_app)
+    flask_app.extensions['realtime_websocket'] = websocket
+
+    flask_app.after_request(add_security_headers)
+
+    # 注册蓝图路由（分层组织）。蓝图本身不启动 runtime。
+    from api import register_routes
+    register_routes(flask_app)
+
+    # 注册应用内置路由。
+    flask_app.add_url_rule('/favicon.ico', endpoint='favicon', view_func=favicon)
+    flask_app.add_url_rule('/', endpoint='index', view_func=index)
+
+    if start_runtime:
+        _bootstrap(flask_app)
+
+    return flask_app
+
+
+# 保留模块级 app 和旧的模块级扩展名，供现有 WSGI/测试导入使用；默认不启动 runtime。
+app = create_app()
+realtime_websocket = app.extensions['realtime_websocket']
+sock = realtime_websocket.sock
 
 
 if __name__ == '__main__':
-    from core.lifecycle import get_app_context
-    ctx = get_app_context()
+    app = create_app(start_runtime=True)
+    realtime_websocket = app.extensions['realtime_websocket']
+    sock = realtime_websocket.sock
     from core.config import FLASK_HOST, FLASK_PORT, DEBUG
     logger.info(f"面板启动: http://{FLASK_HOST}:{FLASK_PORT}")
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=DEBUG)

@@ -11,6 +11,7 @@ from services.session_service import (
     RevisionConflictError,
     get_session_service,
 )
+from api.auth_guard import write_protected
 
 logger = logging.getLogger("session_api")
 bp = Blueprint("session", __name__)
@@ -63,6 +64,7 @@ def list_sessions():
 
 
 @bp.route("/api/sessions", methods=["POST"])
+@write_protected
 def create_session():
     try:
         body = request.get_json(force=True, silent=True) or {}
@@ -97,6 +99,7 @@ def get_session(session_id: str):
 
 
 @bp.route("/api/sessions/<session_id>/activate", methods=["POST"])
+@write_protected
 def activate_session(session_id: str):
     try:
         body = request.get_json(force=True, silent=True) or {}
@@ -111,6 +114,7 @@ def activate_session(session_id: str):
 
 
 @bp.route("/api/sessions/<session_id>/clone", methods=["POST"])
+@write_protected
 def clone_session(session_id: str):
     """基于已有会话（含 committed）克隆为新 drafting 会话。"""
     try:
@@ -229,6 +233,7 @@ def save_session(session_id: str):
 
 
 @bp.route("/api/sessions/<session_id>/commit", methods=["POST"])
+@write_protected
 def commit_session(session_id: str):
     try:
         body = request.get_json(force=True, silent=True) or {}
@@ -280,6 +285,7 @@ def commit_session(session_id: str):
 
 
 @bp.route("/api/sessions/<session_id>/actions", methods=["POST"])
+@write_protected
 def session_action(session_id: str):
     """
     统一动作 body: { action, session?, ...args }
