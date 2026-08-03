@@ -15,6 +15,9 @@
   if (!replayGeometry) throw new Error('ReplayTradeGeometry must load before ReplayTradeUI');
   var overlayRenderer = global.ReplayTradeOverlayRenderer;
   if (!overlayRenderer) throw new Error('ReplayTradeOverlayRenderer must load before ReplayTradeUI');
+  var interactionControllerFactory = global.ReplayTradeInteractionController;
+  if (!interactionControllerFactory) throw new Error('ReplayTradeInteractionController must load before ReplayTradeUI');
+  var interactionController = null;
   var EVENT_NAMES = [
     'bar-replay-state',
     'bar-replay-start',
@@ -34,7 +37,6 @@
   var state = {
     initialized: false,
     active: false,
-    mode: null,
     chart: null,
     mainDom: null,
     controls: null,
@@ -52,16 +54,6 @@
     eventUnbinds: [],
     chartUnbinds: [],
     pollTimer: null,
-    selectedBar: null,
-    presetSelection: {
-      active: false,
-      side: null,
-      amount: null,
-      previewPrice: null,
-      previewY: null,
-      previewX: null,
-    },
-    presetSelectionUnbinds: [],
     presetDrag: {
       active: false,
       role: null,
@@ -210,6 +202,70 @@
     attr: attr,
     text: text,
   };
+
+  function interactionState() {
+    if (interactionController && typeof interactionController.getState === 'function') {
+      try { return interactionController.getState() || {}; } catch (e) {}
+    }
+    return { mode: null, selectedBar: null, presetSelection: {
+      active: false, side: null, amount: null, previewPrice: null, previewY: null, previewX: null,
+    } };
+  }
+
+  function setSelectingClass(dom, className, enabled) {
+    safeClassList(dom, enabled ? 'add' : 'remove', className);
+  }
+
+  function consumeSelectionClickSuppression() {
+    if (!state.summaryDrag || !state.summaryDrag.suppressClick) return false;
+    state.summaryDrag.suppressClick = false;
+    return true;
+  }
+
+  function closeSelectionPanels(kind) {
+    if (kind === 'preset') {
+      closePanel(state.presetPanel);
+      closePanel(state.recordsPanel);
+      return;
+    }
+    closePanel(state.picker);
+    closePanel(state.presetPanel);
+    closePanel(state.recordsPanel);
+    closePanel(state.editPanel);
+    closePanel(state.bracketOrdersPanel);
+    clearPresetDrag();
+  }
+
+  function createInteractionController() {
+    if (!interactionControllerFactory || typeof interactionControllerFactory.create !== 'function') return null;
+    return interactionControllerFactory.create({
+      root: global,
+      eventTarget: global,
+      getMainDom: function () { return state.mainDom || getMainDom(getChart()); },
+      isReplayActive: function () { return replayActive(); },
+      geometry: {
+        pointFromEvent: function (event) { return getPointFromEvent(event || {}, getChart(), state.mainDom || getMainDom(getChart())); },
+        priceFromEvent: function (event) { return convertPixelToPrice(event || {}, getChart(), state.mainDom || getMainDom(getChart())); },
+        eventCoordinates: function (event) { return eventCoordinates(event || {}, state.mainDom || getMainDom(getChart())); },
+      },
+      callbacks: {
+        normalizeSide: sideOf,
+        normalizeRole: presetRole,
+        roleLabel: presetRoleLabel,
+        closePanels: closeSelectionPanels,
+        setSelectingClass: setSelectingClass,
+        consumeClickSuppression: consumeSelectionClickSuppression,
+        onTradePoint: function (side, point) { showPricePicker(point, side); },
+        onPresetPoint: function (side, amount, point) {
+          return submitPresetAtPrice(side, point && point.price, amount, point);
+        },
+        onPresetState: function () {},
+        redraw: redraw,
+        setStatus: setStatus,
+        updateControls: updateControls,
+      },
+    });
+  }
 
   function clear(node) {
     if (!node) return;
@@ -595,14 +651,15 @@
     var controls = state.controls || byId('bar-replay-controls');
     if (!controls) return;
     state.controls = controls;
+    var interaction = interactionState();
     var active = replayActive();
     ['replay-trade-buy', 'replay-trade-sell', 'replay-trade-preset', 'replay-trade-records'].forEach(function (id) {
       var button = byId(id);
       if (!button) return;
       button.hidden = !active;
       button.disabled = !active;
-      var ordinaryActive = state.mode && id === 'replay-trade-' + state.mode;
-      var presetActive = state.presetSelection.active && id === 'replay-trade-preset';
+      var ordinaryActive = interaction.mode && id === 'replay-trade-' + interaction.mode;
+      var presetActive = interaction.presetSelection && interaction.presetSelection.active && id === 'replay-trade-preset';
       attr(button, 'data-active', ordinaryActive || presetActive ? 'true' : 'false');
     });
     if (controls.style && controls.style.display === 'none') {
@@ -619,6 +676,9 @@
     if (!mainDom || typeof mainDom.appendChild !== 'function') return false;
     if (state.mainDom !== mainDom) {
       state.mainDom = mainDom;
+      if (interactionController && typeof interactionController.attachMainDom === 'function') {
+        interactionController.attachMainDom(mainDom);
+      }
       safeClassList(mainDom, 'add', 'replay-trade-main');
       state.overlaySvg = null;
       state.summarySvg = null;
@@ -658,7 +718,10 @@
     chart = getChart(chart);
     if (!chart) return false;
     if (state.chart === chart && state.mainDom) return true;
-    if (state.presetSelection.active) cancelPresetSelection(true);
+    var interaction = interactionState();
+    if (interaction.presetSelection && interaction.presetSelection.active && interactionController) {
+      interactionController.cancelPresetSelection(true);
+    }
     unbindChart();
     state.chart = chart;
     ensureOverlayDom(chart);
@@ -742,150 +805,12 @@
     return { index: index, row: rows[index], x: x, y: y };
   }
 
-  function selectionHandler(event) {
-    if (state.summaryDrag.suppressClick) {
-      state.summaryDrag.suppressClick = false;
-      return;
-    }
-    if (!state.mode || !replayActive()) return;
-    var chart = getChart();
-    var dom = state.mainDom || getMainDom(chart);
-    var point = getPointFromEvent(event || {}, chart, dom);
-    if (!point) return;
-    if (event && typeof event.preventDefault === 'function') event.preventDefault();
-    showPricePicker(point, state.mode);
-  }
-
-  function bindSelection() {
-    if (!state.mainDom || typeof state.mainDom.addEventListener !== 'function') return false;
-    if (state.mainDom._replayTradeSelectionBound) return true;
-    state.mainDom.addEventListener('click', selectionHandler);
-    state.mainDom._replayTradeSelectionBound = true;
-    return true;
-  }
-
-  function unbindSelection() {
-    if (!state.mainDom || !state.mainDom._replayTradeSelectionBound) return;
-    try { state.mainDom.removeEventListener('click', selectionHandler); } catch (e) {}
-    state.mainDom._replayTradeSelectionBound = false;
-  }
-
-  function unbindPresetSelection() {
-    state.presetSelectionUnbinds.forEach(function (unbind) {
-      try { unbind(); } catch (e) {}
-    });
-    state.presetSelectionUnbinds = [];
-  }
-
-  function clearPresetPreview() {
-    state.presetSelection.previewPrice = null;
-    state.presetSelection.previewY = null;
-    state.presetSelection.previewX = null;
-    redraw();
-  }
-
   function cancelPresetSelection(silent) {
-    var wasActive = !!state.presetSelection.active;
-    unbindPresetSelection();
-    state.presetSelection.active = false;
-    state.presetSelection.side = null;
-    state.presetSelection.amount = null;
-    state.presetSelection.previewPrice = null;
-    state.presetSelection.previewY = null;
-    state.presetSelection.previewX = null;
-    if (state.mainDom) safeClassList(state.mainDom, 'remove', 'replay-trade-preset-selecting');
-    if (wasActive && !silent) setStatus('已取消预设选点');
-    updateControls();
-    redraw();
-  }
-
-  function presetSelectionPoint(event) {
-    var chart = getChart();
-    var dom = state.mainDom || getMainDom(chart);
-    var point = convertPixelToPrice(event || {}, chart, dom);
-    if (!point) {
-      cancelPresetSelection(true);
-      setStatus('无法转换水平价格，已取消预设选点');
-      return null;
-    }
-    return point;
-  }
-
-  function updatePresetPreview(event) {
-    if (!state.presetSelection.active || !replayActive()) return;
-    var point = presetSelectionPoint(event);
-    if (!point) return;
-    state.presetSelection.previewPrice = point.price;
-    state.presetSelection.previewY = point.y;
-    state.presetSelection.previewX = point.x;
-    setStatus('移动鼠标选择水平价格，点击确认' + presetRoleLabel(state.presetSelection.side));
-    redraw();
-  }
-
-  function commitPresetPreview(event) {
-    if (!state.presetSelection.active || !replayActive()) return;
-    var dom = state.mainDom || getMainDom(getChart());
-    var coordinates = eventCoordinates(event || {}, dom);
-    var preview = state.presetSelection;
-    var sameHorizontalPixel = preview.previewPrice != null && preview.previewY != null &&
-      (coordinates.y == null || Math.abs(Number(coordinates.y) - Number(preview.previewY)) <= 2);
-    var point = sameHorizontalPixel
-      ? { price: Number(preview.previewPrice), x: preview.previewX, y: Number(preview.previewY) }
-      : presetSelectionPoint(event);
-    if (!point) return;
-    if (event && typeof event.preventDefault === 'function') event.preventDefault();
-    var side = state.presetSelection.side;
-    var amount = state.presetSelection.amount;
-    submitPresetAtPrice(side, point.price, amount, point);
-  }
-
-  function presetKeydown(event) {
-    if (event && event.key === 'Escape') {
-      if (event.preventDefault) event.preventDefault();
-      cancelPresetSelection(false);
-    }
-  }
-
-  function bindPresetSelection() {
-    if (!state.mainDom || typeof state.mainDom.addEventListener !== 'function') return false;
-    unbindPresetSelection();
-    var moveHandler = function (event) { updatePresetPreview(event); };
-    var clickHandler = function (event) { commitPresetPreview(event); };
-    state.mainDom.addEventListener('mousemove', moveHandler);
-    state.mainDom.addEventListener('click', clickHandler);
-    state.presetSelectionUnbinds.push(function () { state.mainDom.removeEventListener('mousemove', moveHandler); });
-    state.presetSelectionUnbinds.push(function () { state.mainDom.removeEventListener('click', clickHandler); });
-    if (global && typeof global.addEventListener === 'function') {
-      global.addEventListener('keydown', presetKeydown);
-      state.presetSelectionUnbinds.push(function () { global.removeEventListener('keydown', presetKeydown); });
-    }
-    return true;
+    return interactionController ? interactionController.cancelPresetSelection(!!silent) : false;
   }
 
   function enterPresetSelection(side, amount) {
-    side = presetRole(side);
-    if (!side) return false;
-    if (!replayActive()) {
-      setStatus('请先开启回放，再选择预设价格');
-      return false;
-    }
-    if (side === 'buy' && (amount == null || amount <= 0)) {
-      setStatus('买入金额必须大于 0');
-      return false;
-    }
-    cancelSelection();
-    cancelPresetSelection(true);
-    closePanel(state.presetPanel);
-    closePanel(state.recordsPanel);
-    state.presetSelection.active = true;
-    state.presetSelection.side = side;
-    state.presetSelection.amount = side === 'buy' ? Number(amount) : null;
-    bindPresetSelection();
-    if (state.mainDom) safeClassList(state.mainDom, 'add', 'replay-trade-preset-selecting');
-    updateControls();
-    setStatus('移动鼠标选择水平价格，点击确认' + presetRoleLabel(side));
-    redraw();
-    return true;
+    return interactionController ? interactionController.enterPresetSelection(side, amount) : false;
   }
 
   function positionPanel(panel, x, y, width) {
@@ -909,13 +834,9 @@
   }
 
   function closeTransientPanels() {
-    closePanel(state.picker);
-    closePanel(state.presetPanel);
-    closePanel(state.recordsPanel);
-    closePanel(state.editPanel);
-    closePanel(state.bracketOrdersPanel);
-    if (state.presetSelection.active) cancelPresetSelection(true);
-    clearPresetDrag();
+    closeSelectionPanels();
+    var interaction = interactionState();
+    if (interaction.presetSelection && interaction.presetSelection.active) cancelPresetSelection(true);
   }
 
   function inputValue(id, fallback) {
@@ -1070,30 +991,11 @@
   }
 
   function enterSelection(side) {
-    side = sideOf(side);
-    if (!side) return false;
-    if (!replayActive()) {
-      setStatus('请先开启回放，再选择交易价格');
-      return false;
-    }
-    closeTransientPanels();
-    state.mode = side;
-    bindSelection();
-    ['replay-trade-buy', 'replay-trade-sell'].forEach(function (id) {
-      var button = byId(id);
-      if (button) attr(button, 'data-active', id.indexOf(side) >= 0 ? 'true' : 'false');
-    });
-    if (state.mainDom) safeClassList(state.mainDom, 'add', 'replay-trade-selecting');
-    setStatus(side === 'buy' ? '点击当前可见 K 线选择买入价格' : '点击当前可见 K 线选择卖出价格');
-    return true;
+    return interactionController ? interactionController.enterSelection(side) : false;
   }
 
   function cancelSelection() {
-    state.mode = null;
-    state.selectedBar = null;
-    unbindSelection();
-    if (state.mainDom) safeClassList(state.mainDom, 'remove', 'replay-trade-selecting');
-    updateControls();
+    return interactionController ? interactionController.cancelSelection() : false;
   }
 
   function invokeEngine(names, payload) {
@@ -1423,7 +1325,10 @@
   function cancelPreset(side) {
     var request = side && typeof side === 'object' ? side : null;
     side = presetRole(request ? (request.side || request.role || request.type) : side);
-    if (state.presetSelection.active && state.presetSelection.side === side) cancelPresetSelection(true);
+    var interaction = interactionState();
+    if (interaction.presetSelection && interaction.presetSelection.active && interaction.presetSelection.side === side) {
+      cancelPresetSelection(true);
+    }
     var payload = { side: side, action: 'cancel-preset-' + side, source: 'replay-trade-ui' };
     var engine = getEngine();
     var result = { called: false, value: null };
@@ -3054,7 +2959,7 @@
       drawPreset(state.overlaySvg, takeProfitPreset, 'takeProfit', width, height, rows, entryReference);
       drawPreset(state.overlaySvg, stopLossPreset, 'stopLoss', width, height, rows, entryReference);
     }
-    drawPresetPreview(state.overlaySvg, state.presetSelection, width, height, rows);
+    drawPresetPreview(state.overlaySvg, interactionState().presetSelection, width, height, rows);
     drawCompletedBracketGhosts(state.overlaySvg, normalized, width, height, rows);
     state.bracketDrafts.forEach(function (draft) {
       drawBracketDraft(state.overlaySvg, draft, width, height, rows, normalized);
@@ -3212,6 +3117,9 @@
   function init() {
     if (state.initialized) return api;
     state.initialized = true;
+    interactionController = createInteractionController();
+    if (!interactionController) throw new Error('unable to create ReplayTradeInteractionController');
+    interactionController.init();
     injectStyles();
     bindEvents();
     bindChart(getChart());
@@ -3228,7 +3136,7 @@
     state.eventUnbinds = [];
     state.eventUnbinds._domBound = false;
     unbindChart();
-    unbindSelection();
+    if (interactionController) interactionController.destroy();
     clearExecutionDrag();
     clearSummaryDrag();
     closeTransientPanels();
@@ -3237,7 +3145,6 @@
     if (state.bracketConfirmBar && state.bracketConfirmBar.parentNode) state.bracketConfirmBar.parentNode.removeChild(state.bracketConfirmBar);
     state.initialized = false;
     state.active = false;
-    state.mode = null;
     state.chart = null;
     state.mainDom = null;
     state.overlaySvg = null;
@@ -3246,6 +3153,7 @@
     state.bracketDraft = null;
     state.bracketDrafts = [];
     state.bracketDraftedExecutionIds = Object.create(null);
+    interactionController = null;
     return true;
   }
 
@@ -3264,9 +3172,9 @@
     getState: function () {
       return {
         active: state.active,
-        mode: state.mode,
-        presetSelection: Object.assign({}, state.presetSelection),
-        selectedBar: state.selectedBar,
+        mode: interactionState().mode,
+        presetSelection: Object.assign({}, interactionState().presetSelection),
+        selectedBar: interactionState().selectedBar,
         records: readRecords(),
         presets: state.localPresets,
         bracketDraft: state.bracketDraft ? Object.assign({}, state.bracketDraft) : null,

@@ -307,6 +307,7 @@ function makeIntegrationHarness() {
     'replay-trade-state-model.js',
     'replay-trade-geometry.js',
     'replay-trade-overlay-renderer.js',
+    'replay-trade-interaction-controller.js',
     'replay-trade-ui.js',
   ].map((name) => path.join(JS_ROOT, name));
   files.forEach((file) => assert.ok(fs.existsSync(file), `missing production module: ${file}`));

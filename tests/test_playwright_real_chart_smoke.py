@@ -650,6 +650,27 @@ def test_real_replay_trade_marker_survives_zoom_and_drag(page: Page):
           window.__kline_chart?.getDom?.('candle_pane', window.klinecharts.DomPosition.Main)"""
     )
 
+    page.locator("#replay-trade-preset").click()
+    page.locator("#replay-trade-preset-takeProfit-select").click()
+    page.wait_for_function(
+        """() => window.ReplayTradeUI?.getState?.().presetSelection?.active === true &&
+          window.ReplayTradeUI.getState().presetSelection.side === 'takeProfit'""",
+        timeout=CHART_TIMEOUT_MS,
+    )
+    page.mouse.move(target["x"], target["y"] - 55)
+    page.wait_for_function(
+        """() => document.querySelectorAll(
+          '#replay-trade-overlay .replay-trade-preset-preview-takeProfit'
+        ).length >= 1""",
+        timeout=CHART_TIMEOUT_MS,
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_function(
+        """() => window.ReplayTradeUI?.getState?.().presetSelection?.active === false &&
+          !document.querySelector('#replay-trade-overlay .replay-trade-preset-preview')""",
+        timeout=CHART_TIMEOUT_MS,
+    )
+
     marker = page.locator("#replay-trade-overlay .replay-trade-buy-marker")
     before = page.evaluate(
         """() => {
