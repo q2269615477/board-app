@@ -118,6 +118,7 @@ def test_replay_trading_modules_are_loaded_in_contract_order():
         "static/js/bar-replay-events.js",
         "static/js/bar-replay.js",
         "static/js/replay-trade-engine.js",
+        "static/js/replay-trade-state-model.js",
         "static/js/chart-comparison.js",
         "static/js/replay-trade-ui.js",
         "static/js/app-init.js",
@@ -133,7 +134,9 @@ def test_replay_trading_modules_are_loaded_in_contract_order():
     for method in ("openManual", "closeManual", "setPendingOrder", "cancelPending"):
         assert method in engine
         assert method in ui
-    assert "value === null || value === undefined || value === ''" in ui
+    state_model = (ROOT / "static/js/replay-trade-state-model.js").read_text(encoding="utf-8")
+    assert "value === null || value === undefined || value === ''" in state_model
+    assert "ReplayTradeStateModel must load before ReplayTradeUI" in ui
     assert "events.emit(name, detail); emittedByBus = true" in ui
 
 

@@ -304,6 +304,7 @@ function makeIntegrationHarness() {
     'bar-replay-events.js',
     'bar-replay.js',
     'replay-trade-engine.js',
+    'replay-trade-state-model.js',
     'replay-trade-ui.js',
   ].map((name) => path.join(JS_ROOT, name));
   files.forEach((file) => assert.ok(fs.existsSync(file), `missing production module: ${file}`));
