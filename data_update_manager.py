@@ -1408,13 +1408,23 @@ def _make_board_update_service() -> _BoardUpdateService:
     return _BoardUpdateService(
         _BoardUpdateDependencies(
             get_tushare_pro=_get_tushare_pro,
+            load_status=_load_status,
+            save_status=_save_status,
             update_status=_update_status,
             append_board_row_csv=_append_board_row_csv,
             normalize_board_update_rows=_normalize_board_update_rows,
             write_board_rows_sqlite=_write_board_rows_sqlite,
+            load_classified_boards=_load_classified_boards,
+            update_single_board=_update_single_board,
+            lagging_board_codes=_lagging_board_codes,
+            get_last_trading_date=_get_last_trading_date,
+            claim_update=_claim_board_update,
+            release_update=_release_board_update,
             path_factory=Path,
             logger=logger,
             now=datetime.now,
+            sleep=time.sleep,
+            random_uniform=random.uniform,
         )
     )
 
@@ -1435,6 +1445,29 @@ def _load_classified_boards(include_types=None):
     return _board_load_classified_boards(Path, include_types)
 
 
+def _get_last_trading_date():
+    from data.board_api import get_last_trading_date
+
+    return get_last_trading_date()
+
+
+def _claim_board_update() -> bool:
+    """Atomically claim the board-update slot owned by this manager."""
+    global _update_in_progress
+    with _update_lock:
+        if _update_in_progress:
+            return False
+        _update_in_progress = True
+        return True
+
+
+def _release_board_update() -> None:
+    """Release the manager-owned board-update slot."""
+    global _update_in_progress
+    with _update_lock:
+        _update_in_progress = False
+
+
 def _update_single_board(
     board_type: str,
     name: str,
@@ -1452,50 +1485,11 @@ def _update_single_board(
 
 
 def update_failed_boards(max_retries: int = 2, limit: int = 50) -> dict:
-    """仅重试 update_status 中 status=failed 的板块（修 Errno 22 后首选用）。"""
-    status = _load_status()
-    boards_st = status.get('boards') or {}
-    failed_codes = [
-        code for code, v in boards_st.items()
-        if isinstance(v, dict) and v.get('status') == 'failed'
-    ]
-    if not failed_codes:
-        return {'success': 0, 'failed': 0, 'total': 0, 'message': '无失败板块'}
-
-    # 从分类表还原 type/name，兼容新版二级分类结构。
-    try:
-        meta = {
-            code: (board_type, name, code)
-            for board_type, name, code in _load_classified_boards(
-                ('industry', 'concept')
-            )
-        }
-    except Exception:
-        return {'success': 0, 'failed': 0, 'error': 'board_classification.json 缺失'}
-
-    targets = []
-    for code in failed_codes:
-        if code in meta:
-            targets.append(meta[code])
-    if limit and limit > 0:
-        targets = targets[: int(limit)]
-
-    result = {'success': 0, 'failed': 0, 'total': len(targets)}
-    logger.info(f"[板块重试] 共 {len(targets)} 个失败项 (limit={limit})")
-    for btype, name, code in targets:
-        ok = False
-        for attempt in range(max_retries):
-            ok = _update_single_board(btype, name, code)
-            if ok:
-                break
-            time.sleep(1.0 + attempt)
-        if ok:
-            result['success'] += 1
-        else:
-            result['failed'] += 1
-        time.sleep(random.uniform(0.3, 0.8))
-    logger.info(f"[板块重试] 完成 success={result['success']} failed={result['failed']}")
-    return result
+    """仅重试 update_status 中 status=failed 的板块。"""
+    return _make_board_update_service().update_failed_boards(
+        max_retries=max_retries,
+        limit=limit,
+    )
 
 
 def materialize_higher_periods(codes=None, periods=None) -> dict:
@@ -1628,158 +1622,12 @@ def update_all_boards(
     from_full=False,
     only_lagging: bool = False,
 ) -> dict:
-    global _update_in_progress
-    if _update_in_progress:
-        logger.warning("[板块] 上次更新尚未完成，跳过")
-        return {'success': 0, 'failed': 0, 'total': 0, 'error': '上次更新进行中'}
-
-    _update_in_progress = True
-    result = {'success': 0, 'failed': 0, 'total': 0}
-
-    try:
-        boards = _load_classified_boards(('industry', 'concept'))
-        requested_total = len(boards)
-        requested_codes = {code for _board_type, _name, code in boards}
-        result['requested_total'] = requested_total
-
-        target = datetime.now().strftime('%Y%m%d')
-        if from_full or only_lagging:
-            try:
-                from data.board_api import get_last_trading_date
-                candidate = str(get_last_trading_date() or '').replace('-', '')[:8]
-                if candidate:
-                    target = candidate
-            except Exception:
-                pass
-        result['only_lagging'] = bool(only_lagging)
-        if only_lagging:
-            lagging_codes = _lagging_board_codes(boards, target)
-            boards = [board for board in boards if board[2] in lagging_codes]
-            result['lagging_total'] = len(boards)
-        result['total'] = len(boards)
-        logger.info(
-            "[板块] 共 %s 个%s",
-            len(boards),
-            f"（分类总数 {requested_total}，仅欠更）" if only_lagging else '',
-        )
-        if only_lagging and not boards:
-            result.update({
-                'skipped': True,
-                'target_trade_date': target,
-                'completion_ready': True,
-                'message': '板块日线均已是目标交易日',
-            })
-            return result
-        pro = _get_tushare_pro()
-        raw_all = pro.dc_daily(
-            trade_date=target,
-            start_date=target,
-            end_date=target,
-        )
-        if raw_all is None:
-            raw_all = pd.DataFrame()
-        if from_full and not raw_all.empty and 'trade_date' in raw_all.columns:
-            actual_dates = {
-                str(value).replace('-', '')[:8]
-                for value in raw_all['trade_date'].dropna().tolist()
-            }
-            if actual_dates != {target}:
-                return {
-                    **result,
-                    'error': f'Tushare板块日期不匹配 target={target} actual={sorted(actual_dates)}',
-                    'target_trade_date': target,
-                    'completion_ready': False,
-                }
-
-        source_codes = set()
-        if not raw_all.empty and 'ts_code' in raw_all.columns:
-            source_codes = {
-                str(value).upper().split('.')[0]
-                for value in raw_all['ts_code'].dropna().tolist()
-            }
-        required_codes = {code for _btype, _name, code in boards}
-        settled_codes = sorted(required_codes & source_codes)
-        unavailable_codes = sorted(required_codes - source_codes)
-        coverage = (
-            len(settled_codes) / len(required_codes)
-            if required_codes else 0.0
-        )
-        result.update({
-            'source_coverage': round(coverage, 6),
-            'settled_codes': settled_codes,
-            'unavailable': len(unavailable_codes),
-            'unavailable_codes': unavailable_codes,
-        })
-        outcomes = {}
-        for idx, (btype, name, code) in enumerate(boards):
-            if cancel_check is not None and callable(cancel_check) and cancel_check():
-                result['canceled'] = True
-                break
-            if code not in source_codes:
-                outcomes[code] = ('unavailable', name)
-                continue
-            # One dc_daily target-date query serves the whole board universe.
-            ok = _update_single_board(
-                btype,
-                name,
-                code,
-                raw_override=raw_all,
-                record_status=False,
-            )
-            if ok is True:
-                result['success'] += 1
-                outcomes[code] = ('success', name)
-            elif ok is False:
-                result['failed'] += 1
-                outcomes[code] = ('failed', name)
-            else:
-                outcomes[code] = ('unavailable', name)
-            # else None → empty data, skip (not counted)
-            logger.info(f"[板块更新] {idx+1}/{len(boards)} {name}({code}) {'✓' if ok is True else ('✗' if ok is False else '○')}")
-
-        if outcomes:
-            updated_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-            def mark_board_batch(status):
-                board_status = status.setdefault('boards', {})
-                # A lagging-only run must not delete status entries for boards
-                # that were intentionally filtered out because they are fresh.
-                valid_codes = (
-                    set(requested_codes) if only_lagging else set(required_codes)
-                )
-                for stale_code in list(board_status):
-                    if str(stale_code).startswith('BK') and stale_code not in valid_codes:
-                        board_status.pop(stale_code, None)
-                for board_code, (state, board_name) in outcomes.items():
-                    item = {
-                        'last_update': updated_at,
-                        'status': state,
-                        'name': board_name,
-                    }
-                    if state == 'unavailable':
-                        item['reason'] = '目标交易日不在Tushare dc_daily活动板块集合'
-                    elif state == 'failed':
-                        item['error'] = '目标交易日写入失败'
-                    board_status[board_code] = item
-
-            _update_status(mark_board_batch)
-
-        result['target_trade_date'] = target
-        result['source_rows'] = len(raw_all)
-        source_ready = bool(raw_all is not None and not raw_all.empty and coverage >= 0.95)
-        result['completion_ready'] = (
-            not result.get('canceled')
-            and source_ready
-            and result['failed'] == 0
-            and result['success'] == len(settled_codes)
-        )
-        logger.info(f"[板块] 完成: 成功={result['success']}, 失败={result['failed']}, 共={result['total']}")
-    except Exception as e:
-        logger.error(f"[板块] 异常: {e}")
-    finally:
-        _update_in_progress = False
-
-    return result
+    return _make_board_update_service().update_all_boards(
+        max_retries=max_retries,
+        cancel_check=cancel_check,
+        from_full=from_full,
+        only_lagging=only_lagging,
+    )
 
 
 # ===== Tushare 个股尾部补齐（QMT 公式口本地滞后时） =====

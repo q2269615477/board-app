@@ -195,3 +195,93 @@ def test_single_board_failure_records_failure_status(monkeypatch, tmp_path):
     assert service.update_single_board("industry", "行业A", "BK1001", raw_override=_raw_board()) is False
     assert statuses[0]["boards"]["BK1001"]["status"] == "failed"
     assert "csv unavailable" in statuses[0]["boards"]["BK1001"]["error"]
+
+
+def test_failed_board_retry_uses_injected_status_and_sleep_seams():
+    attempts = []
+    sleeps = []
+    outcomes = iter([False, True])
+
+    def update_single(*args, **kwargs):
+        attempts.append(args[-1])
+        return next(outcomes)
+
+    service = BoardUpdateService(
+        _deps(
+            load_status=lambda: {
+                "boards": {
+                    "BK1001": {"status": "failed"},
+                    "BK2001": {"status": "success"},
+                }
+            },
+            load_classified_boards=lambda include_types: [
+                ("industry", "行业A", "BK1001"),
+            ],
+            update_single_board=update_single,
+            sleep=sleeps.append,
+            random_uniform=lambda low, high: 0.4,
+        )
+    )
+
+    result = service.update_failed_boards(max_retries=2)
+
+    assert result == {"success": 1, "failed": 0, "total": 1}
+    assert attempts == ["BK1001", "BK1001"]
+    assert sleeps == [1.0, 0.4]
+
+
+def test_all_board_orchestration_injects_lagging_cancel_progress_and_claim():
+    raw = pd.DataFrame(
+        [
+            {"ts_code": "BK1001.DC", "trade_date": "20260803"},
+            {"ts_code": "BK2001.DC", "trade_date": "20260803"},
+        ]
+    )
+    updated = []
+    statuses = []
+    progress = []
+    claims = []
+    cancel_calls = []
+
+    def update_status(mutator):
+        state = {"boards": {"BK9999": {"status": "success"}}}
+        mutator(state)
+        statuses.append(state)
+
+    def cancel():
+        cancel_calls.append(True)
+        return len(cancel_calls) > 1
+
+    service = BoardUpdateService(
+        _deps(
+            get_tushare_pro=lambda: type(
+                "Pro", (), {"dc_daily": lambda self, **kwargs: raw}
+            )(),
+            update_status=update_status,
+            load_classified_boards=lambda include_types: [
+                ("industry", "行业A", "BK1001"),
+                ("concept", "概念B", "BK2001"),
+            ],
+            lagging_board_codes=lambda boards, target: {"BK1001", "BK2001"},
+            update_single_board=lambda board_type, name, code, **kwargs: updated.append(
+                code
+            )
+            or True,
+            get_last_trading_date=lambda: "20260803",
+            now=lambda: pd.Timestamp("2026-08-04").to_pydatetime(),
+            claim_update=lambda: claims.append("claim") or True,
+            release_update=lambda: claims.append("release"),
+            progress=lambda *args: progress.append(args),
+            cancel=cancel,
+        )
+    )
+
+    result = service.update_all_boards(only_lagging=True)
+
+    assert result["canceled"] is True
+    assert result["success"] == 1
+    assert result["total"] == 2
+    assert updated == ["BK1001"]
+    assert claims == ["claim", "release"]
+    assert progress[0][:3] == ("boards", 1, 2)
+    assert statuses[0]["boards"]["BK1001"]["status"] == "success"

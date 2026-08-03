@@ -15,7 +15,9 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import random
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -259,6 +261,21 @@ class BoardUpdateDependencies:
 
     get_tushare_pro: Callable[[], Any]
     update_status: Callable[[Callable[[dict], None]], Any]
+    # Orchestration seams.  ``update_all_boards`` and ``update_failed_boards``
+    # intentionally receive these from the manager so old monkeypatch points
+    # keep working without importing the manager here.
+    load_status: Callable[[], dict] = lambda: {}
+    save_status: Callable[[dict], Any] = lambda status: None
+    load_classified_boards: Callable[..., list] | None = None
+    update_single_board: Callable[..., Any] | None = None
+    lagging_board_codes: Callable[..., set] | None = None
+    get_last_trading_date: Callable[[], Any] | None = None
+    sleep: Callable[[float], Any] = time.sleep
+    random_uniform: Callable[[float, float], float] = random.uniform
+    progress: Callable[..., Any] | None = None
+    cancel: Callable[[], bool] | None = None
+    claim_update: Callable[[], bool] | None = None
+    release_update: Callable[[], Any] | None = None
     append_board_row_csv: Callable[..., bool] = append_board_row_csv
     normalize_board_update_rows: Callable[..., pd.DataFrame] = normalize_board_update_rows
     write_board_rows_sqlite: Callable[..., None] = write_board_rows_sqlite
@@ -291,7 +308,287 @@ class BoardUpdateService:
         return self.dependencies.normalize_board_update_rows(raw, code)
 
     def load_classified_boards(self, include_types=None):
+        loader = self.dependencies.load_classified_boards
+        if loader is not None:
+            return loader(include_types)
         return load_classified_boards(self.dependencies.path_factory, include_types)
+
+    def _update_single_board(self, board_type, name, code, **kwargs):
+        updater = self.dependencies.update_single_board
+        if updater is not None:
+            return updater(board_type, name, code, **kwargs)
+        return self.update_single_board(board_type, name, code, **kwargs)
+
+    def _lagging_board_codes(self, boards, target):
+        provider = self.dependencies.lagging_board_codes
+        if provider is None:
+            # A standalone service can still perform the conservative query by
+            # accepting a provider from its caller.  There is deliberately no
+            # manager import or hidden database path here.
+            return {str(code) for _typ, _name, code in boards if code}
+        return provider(boards, target)
+
+    def _target_trade_date(self, from_full=False, only_lagging=False):
+        now = self.dependencies.now
+        target = now().strftime("%Y%m%d")
+        if from_full or only_lagging:
+            getter = self.dependencies.get_last_trading_date
+            if getter is None:
+                try:
+                    from data.board_api import get_last_trading_date
+
+                    getter = get_last_trading_date
+                except Exception:
+                    getter = None
+            if getter is not None:
+                try:
+                    candidate = str(getter() or "").replace("-", "")[:8]
+                    if candidate:
+                        target = candidate
+                except Exception:
+                    pass
+        return target
+
+    def _claim_or_skip(self):
+        claim = self.dependencies.claim_update
+        if claim is None:
+            return True
+        if claim():
+            return True
+        self.dependencies.logger.warning("[板块] 上次更新尚未完成，跳过")
+        return False
+
+    def _release(self):
+        release = self.dependencies.release_update
+        if release is not None:
+            release()
+
+    def update_failed_boards(self, max_retries: int = 2, limit: int = 50) -> dict:
+        """Retry boards marked ``failed`` in the update status store."""
+        deps = self.dependencies
+        status = deps.load_status()
+        boards_st = status.get("boards") or {}
+        failed_codes = [
+            code
+            for code, value in boards_st.items()
+            if isinstance(value, dict) and value.get("status") == "failed"
+        ]
+        if not failed_codes:
+            return {"success": 0, "failed": 0, "total": 0, "message": "无失败板块"}
+
+        try:
+            meta = {
+                code: (board_type, name, code)
+                for board_type, name, code in self.load_classified_boards(
+                    ("industry", "concept")
+                )
+            }
+        except Exception:
+            return {"success": 0, "failed": 0, "error": "board_classification.json 缺失"}
+
+        targets = [meta[code] for code in failed_codes if code in meta]
+        if limit and limit > 0:
+            targets = targets[: int(limit)]
+
+        result = {"success": 0, "failed": 0, "total": len(targets)}
+        deps.logger.info("[板块重试] 共 %s 个失败项 (limit=%s)", len(targets), limit)
+        for board_type, name, code in targets:
+            ok = False
+            for attempt in range(max_retries):
+                ok = self._update_single_board(board_type, name, code)
+                if ok:
+                    break
+                deps.sleep(1.0 + attempt)
+            if ok:
+                result["success"] += 1
+            else:
+                result["failed"] += 1
+            deps.sleep(deps.random_uniform(0.3, 0.8))
+        deps.logger.info(
+            "[板块重试] 完成 success=%s failed=%s",
+            result["success"],
+            result["failed"],
+        )
+        return result
+
+    def update_all_boards(
+        self,
+        max_retries: int = 3,
+        cancel_check=None,
+        from_full=False,
+        only_lagging: bool = False,
+    ) -> dict:
+        """Fetch one target-day snapshot and persist the requested boards."""
+        deps = self.dependencies
+        if not self._claim_or_skip():
+            return {"success": 0, "failed": 0, "total": 0, "error": "上次更新进行中"}
+
+        result = {"success": 0, "failed": 0, "total": 0}
+        try:
+            boards = self.load_classified_boards(("industry", "concept"))
+            requested_total = len(boards)
+            requested_codes = {code for _board_type, _name, code in boards}
+            result["requested_total"] = requested_total
+
+            target = self._target_trade_date(
+                from_full=from_full, only_lagging=only_lagging
+            )
+            result["only_lagging"] = bool(only_lagging)
+            if only_lagging:
+                lagging_codes = self._lagging_board_codes(boards, target)
+                boards = [board for board in boards if board[2] in lagging_codes]
+                result["lagging_total"] = len(boards)
+            result["total"] = len(boards)
+            deps.logger.info(
+                "[板块] 共 %s 个%s",
+                len(boards),
+                "（分类总数 %s，仅欠更）" % requested_total if only_lagging else "",
+            )
+            if only_lagging and not boards:
+                result.update(
+                    {
+                        "skipped": True,
+                        "target_trade_date": target,
+                        "completion_ready": True,
+                        "message": "板块日线均已是目标交易日",
+                    }
+                )
+                return result
+
+            pro = deps.get_tushare_pro()
+            raw_all = pro.dc_daily(
+                trade_date=target,
+                start_date=target,
+                end_date=target,
+            )
+            if raw_all is None:
+                raw_all = pd.DataFrame()
+            if from_full and not raw_all.empty and "trade_date" in raw_all.columns:
+                actual_dates = {
+                    str(value).replace("-", "")[:8]
+                    for value in raw_all["trade_date"].dropna().tolist()
+                }
+                if actual_dates != {target}:
+                    return {
+                        **result,
+                        "error": (
+                            f"Tushare板块日期不匹配 target={target} "
+                            f"actual={sorted(actual_dates)}"
+                        ),
+                        "target_trade_date": target,
+                        "completion_ready": False,
+                    }
+
+            source_codes = set()
+            if not raw_all.empty and "ts_code" in raw_all.columns:
+                source_codes = {
+                    str(value).upper().split(".")[0]
+                    for value in raw_all["ts_code"].dropna().tolist()
+                }
+            required_codes = {code for _btype, _name, code in boards}
+            settled_codes = sorted(required_codes & source_codes)
+            unavailable_codes = sorted(required_codes - source_codes)
+            coverage = (
+                len(settled_codes) / len(required_codes) if required_codes else 0.0
+            )
+            result.update(
+                {
+                    "source_coverage": round(coverage, 6),
+                    "settled_codes": settled_codes,
+                    "unavailable": len(unavailable_codes),
+                    "unavailable_codes": unavailable_codes,
+                }
+            )
+            outcomes = {}
+            total = len(boards)
+            for idx, (board_type, name, code) in enumerate(boards):
+                check_cancel = cancel_check or deps.cancel
+                if callable(check_cancel) and check_cancel():
+                    result["canceled"] = True
+                    break
+                if code not in source_codes:
+                    outcomes[code] = ("unavailable", name)
+                    continue
+                ok = self._update_single_board(
+                    board_type,
+                    name,
+                    code,
+                    raw_override=raw_all,
+                    record_status=False,
+                )
+                if ok is True:
+                    result["success"] += 1
+                    outcomes[code] = ("success", name)
+                elif ok is False:
+                    result["failed"] += 1
+                    outcomes[code] = ("failed", name)
+                else:
+                    outcomes[code] = ("unavailable", name)
+                if callable(deps.progress):
+                    try:
+                        deps.progress("boards", idx + 1, total, f"{name}({code})")
+                    except Exception as exc:
+                        deps.logger.debug("[板块] progress ignored: %s", exc)
+                deps.logger.info(
+                    "[板块更新] %s/%s %s(%s) %s",
+                    idx + 1,
+                    total,
+                    name,
+                    code,
+                    "✓" if ok is True else ("✗" if ok is False else "○"),
+                )
+
+            if outcomes:
+                updated_at = deps.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                def mark_board_batch(status):
+                    board_status = status.setdefault("boards", {})
+                    valid_codes = (
+                        set(requested_codes) if only_lagging else set(required_codes)
+                    )
+                    for stale_code in list(board_status):
+                        if (
+                            str(stale_code).startswith("BK")
+                            and stale_code not in valid_codes
+                        ):
+                            board_status.pop(stale_code, None)
+                    for board_code, (state, board_name) in outcomes.items():
+                        item = {
+                            "last_update": updated_at,
+                            "status": state,
+                            "name": board_name,
+                        }
+                        if state == "unavailable":
+                            item["reason"] = "目标交易日不在Tushare dc_daily活动板块集合"
+                        elif state == "failed":
+                            item["error"] = "目标交易日写入失败"
+                        board_status[board_code] = item
+
+                deps.update_status(mark_board_batch)
+
+            result["target_trade_date"] = target
+            result["source_rows"] = len(raw_all)
+            source_ready = bool(
+                raw_all is not None and not raw_all.empty and coverage >= 0.95
+            )
+            result["completion_ready"] = (
+                not result.get("canceled")
+                and source_ready
+                and result["failed"] == 0
+                and result["success"] == len(settled_codes)
+            )
+            deps.logger.info(
+                "[板块] 完成: 成功=%s, 失败=%s, 共=%s",
+                result["success"],
+                result["failed"],
+                result["total"],
+            )
+        except Exception as exc:
+            deps.logger.error("[板块] 异常: %s", exc)
+        finally:
+            self._release()
+
+        return result
 
     def update_single_board(
         self,
