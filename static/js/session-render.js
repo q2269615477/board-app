@@ -31,15 +31,15 @@
   function renderSessionBody(session, context, chartOverlays, options) {
     if (!session) return '<div class="empty">无会话</div>';
 
-    var S = session;
-    var ui = S.ui || {};
+    var snapshot = session;
+    var ui = snapshot.ui || {};
     var ctx = context || {};
     var chartOvs = Array.isArray(chartOverlays) ? chartOverlays : [];
     var opts = options || {};
     var pickKActive = !!opts.pickKActive;
-    var causes = Array.isArray(S.causes) ? S.causes : [];
-    var effects = Array.isArray(S.effects) ? S.effects : [];
-    var events = Array.isArray(S.events) ? S.events : [];
+    var causes = Array.isArray(snapshot.causes) ? snapshot.causes : [];
+    var effects = Array.isArray(snapshot.effects) ? snapshot.effects : [];
+    var events = Array.isArray(snapshot.events) ? snapshot.events : [];
     var activeC = causes.find(function (c) { return c.id === ui.active_cause_id; });
     var activeE = effects.find(function (e) { return e.id === ui.active_effect_id; });
     var causeMap = {};
@@ -173,7 +173,7 @@
       return html + '</div>';
     }
 
-    var rootItems = Array.isArray(S.root_order) ? S.root_order.slice() : [];
+    var rootItems = Array.isArray(snapshot.root_order) ? snapshot.root_order.slice() : [];
     if (!rootItems.length) {
       causes
         .filter(function (c) { return !c.parent_id; })
