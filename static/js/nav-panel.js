@@ -1592,7 +1592,8 @@ async function loadBoardChanges(){
   } catch(e){}
 }
 
-function loadIndexBoardChanges(){
+function loadIndexBoardChanges(force){
+  force = force === true;
   if (_indexChgLoadPromise) return _indexChgLoadPromise;
   const rows = Array.from(document.querySelectorAll('.board-item[data-type="index"], .board-item[data-type="hk_index"]'));
   const codes = Array.from(new Set(rows.filter(function(el){
@@ -1602,16 +1603,18 @@ function loadIndexBoardChanges(){
       ? _boardChgData[type + ':' + code]
       : _boardChgData[code]);
     const span = el.querySelector('.board-chg');
-    return code && _boardChgNumber(cached) == null && span && span.textContent.trim() === '--';
+    return code && (force || (_boardChgNumber(cached) == null && span && span.textContent.trim() === '--'));
   }).map(function(el){ return el.dataset.code; }).filter(function(code){
-    return code && !_indexChgRequested.has(code);
+    return code && (force || !_indexChgRequested.has(code));
   })));
   if (!codes.length) return Promise.resolve();
 
   codes.forEach(function(code){ _indexChgRequested.add(code); });
 
-  const query = encodeURIComponent(codes.join(','));
-  _indexChgLoadPromise = fetch(API + '/api/spot/indices?tickers=' + query)
+  const params = new URLSearchParams();
+  params.set('tickers', codes.join(','));
+  if (force) params.set('force', '1');
+  _indexChgLoadPromise = fetch(API + '/api/spot/indices?' + params.toString())
     .then(function(r){ return r.ok ? r.json() : null; })
     .then(function(resp){
       const data = resp && resp.data;

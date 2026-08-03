@@ -2075,7 +2075,12 @@ def _verify_board_daily_target(expected_codes=None, target_date=None) -> dict:
         return {'target_date': target, 'verified': False, 'error': str(exc)[:160]}
 
 
-def update_all_today(max_retries: int = 3, cancel_check=None, progress_callback=None) -> dict:
+def update_all_today(
+    max_retries: int = 3,
+    cancel_check=None,
+    progress_callback=None,
+    force: bool = False,
+) -> dict:
     """
     每日全量更新入口（数据源纪律）：
     1. 指数 → 仅 QMT
@@ -2087,7 +2092,7 @@ def update_all_today(max_retries: int = 3, cancel_check=None, progress_callback=
         cancel_check: 可选 callable，返回 True 时中断
         progress_callback: 可选 callable(code, index, total)，报告进度
     """
-    if is_today_updated():
+    if is_today_updated() and not force:
         logger.info("[日更] 今天已更新，跳过")
         return {'skipped': True, 'message': '今日已更新'}
     if _is_trading_day() and not _is_at_or_after(15, 30):
@@ -2499,6 +2504,131 @@ def get_sse_events(last_index: int = 0):
 
 
 # ===== 状态查询 =====
+
+def _daily_debt_bucket(codes, target_by_code, sample_limit=5) -> dict:
+    """Compare tracked daily metadata with each symbol's expected session."""
+    ordered = list(dict.fromkeys(str(code) for code in codes if code))
+    meta = {}
+    try:
+        conn = _sqlite3.connect(_LEDGER_DB)
+        try:
+            for start in range(0, len(ordered), 500):
+                chunk = ordered[start:start + 500]
+                if not chunk:
+                    continue
+                placeholders = ','.join('?' for _ in chunk)
+                rows = conn.execute(
+                    "SELECT code, last_date, rows FROM kline_meta "
+                    f"WHERE period='daily' AND code IN ({placeholders})",
+                    chunk,
+                ).fetchall()
+                meta.update({str(code): (last_date, int(count or 0))
+                             for code, last_date, count in rows})
+        finally:
+            conn.close()
+    except Exception as exc:
+        return {
+            'total': len(ordered), 'lagging': len(ordered), 'up_to_date': 0,
+            'max_lag': 0, 'samples': [], 'error': str(exc)[:160],
+        }
+
+    lagging = []
+    max_lag = 0
+    for code in ordered:
+        last_date, count = meta.get(code, (None, 0))
+        target = str(target_by_code.get(code) or '').replace('-', '')[:8]
+        latest = str(last_date or '').replace('-', '')[:8]
+        if not target or latest != target or count <= 0:
+            lag_days = 0
+            try:
+                lag_days = max(
+                    0,
+                    (datetime.strptime(target, '%Y%m%d')
+                     - datetime.strptime(latest, '%Y%m%d')).days,
+                )
+            except Exception:
+                lag_days = 0
+            max_lag = max(max_lag, lag_days)
+            lagging.append({
+                'code': code,
+                'last_date': last_date,
+                'target_date': target,
+                'rows': count,
+                'lag_days': lag_days,
+            })
+    return {
+        'total': len(ordered),
+        'lagging': len(lagging),
+        'up_to_date': len(ordered) - len(lagging),
+        'max_lag': max_lag,
+        'samples': lagging[:max(0, int(sample_limit or 0))],
+    }
+
+
+def scan_update_debt(sample_limit: int = 5) -> dict:
+    """Scan stock, index and board daily metadata for missing latest bars."""
+    try:
+        from services.exchange_calendar_service import (
+            MARKET_A_SHARE,
+            latest_expected_session_date,
+        )
+        a_share_day = latest_expected_session_date(MARKET_A_SHARE)
+        a_share_target = a_share_day.strftime('%Y%m%d') if a_share_day else ''
+    except Exception:
+        a_share_target = _target_trade_day_str().replace('-', '')[:8]
+
+    try:
+        stock_rows = get_all_cached_stocks()
+        stock_codes = [
+            row if isinstance(row, str) else row[0]
+            for row in (stock_rows or [])
+        ]
+    except Exception:
+        stock_codes = []
+
+    index_codes = [
+        code for code, _name, _typ in PREWARM_TARGETS
+        if ((code in QMT_INDEX_MAP or code in EASTMONEY_INDEX_CODES)
+            and code not in BOARD_ONLY_PREWARM
+            and code not in PERMANENT_SKIP_INDICES)
+    ]
+    index_targets = {}
+    for code in index_codes:
+        target, _is_open = _index_session_target(
+            code, fallback_td_norm=a_share_target
+        )
+        index_targets[code] = target
+
+    try:
+        board_codes = [
+            code for _typ, _name, code
+            in _load_classified_boards(('industry', 'concept'))
+        ]
+    except Exception:
+        board_codes = []
+
+    stocks = _daily_debt_bucket(
+        stock_codes, {code: a_share_target for code in stock_codes}, sample_limit
+    )
+    indices = _daily_debt_bucket(index_codes, index_targets, sample_limit)
+    boards = _daily_debt_bucket(
+        board_codes, {code: a_share_target for code in board_codes}, sample_limit
+    )
+    needs = any(bucket.get('lagging', 0) > 0 for bucket in (stocks, indices, boards))
+    return {
+        'target_trade_date': a_share_target,
+        'target': a_share_target,
+        'needs_catchup': needs,
+        'summary': (
+            f"欠更扫描：个股 {stocks['lagging']}/{stocks['total']}，"
+            f"指数 {indices['lagging']}/{indices['total']}，"
+            f"板块 {boards['lagging']}/{boards['total']}"
+        ),
+        'stocks': stocks,
+        'indices': indices,
+        'boards': boards,
+        'skipped': False,
+    }
 
 def get_update_status() -> dict:
     status = _load_status()

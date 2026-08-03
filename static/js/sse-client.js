@@ -775,12 +775,14 @@ function forceRefresh(){
       }
     }).catch(function(e){
       showToastBar('板块数据刷新失败：'+escHtml((e && e.message) || '未知错误'));
-    }).finally(function(){
-      // 即使快照端点暂时不可用，也必须重新读取现有服务端数据，不能把
-      // 左侧面板永久留在旧快照。
-      try { if (typeof loadBoardChanges === 'function') loadBoardChanges(); } catch(_){}
-      try { if (typeof consDoRefresh === 'function') consDoRefresh(); } catch(_){}
     });
+  // 顶部和左侧指数必须走同步 force 路径，不能等待下一轮后台轮询。
+  var idxP = Promise.all([
+    (typeof refreshIdxPrices === 'function' ? refreshIdxPrices(true) : Promise.resolve()),
+    (typeof loadIndexBoardChanges === 'function' ? loadIndexBoardChanges(true) : Promise.resolve())
+  ]).catch(function(e){
+    showToastBar('指数数据刷新失败：'+escHtml((e && e.message) || '未知错误'));
+  });
   if(_taskCenterOpen){
     setTimeout(function(){ try{ renderTaskCenter(); }catch(e){} }, 400);
   }
@@ -805,7 +807,7 @@ function forceRefresh(){
     })
     .catch(function(){});
   // 等两个都触发后，立即重绘当前图（不等 task 完成）
-  Promise.all([snapP, taskP]).then(function(){
+  Promise.all([snapP, taskP, idxP]).then(function(){
     _reloadSelectedChart();
   }).catch(function(){});
   return snapP;

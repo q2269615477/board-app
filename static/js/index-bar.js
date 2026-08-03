@@ -371,9 +371,10 @@ function _watchIdxRealtimeBus() {
   }
 }
 
-function refreshIdxPrices() {
-  if (document.hidden) return Promise.resolve(null);
-  if (window.boardPollingLeader && !window.boardPollingLeader.isLeader()) {
+function refreshIdxPrices(force) {
+  force = force === true;
+  if (document.hidden && !force) return Promise.resolve(null);
+  if (!force && window.boardPollingLeader && !window.boardPollingLeader.isLeader()) {
     return Promise.resolve(null);
   }
   if (_idxRefreshPromise) return _idxRefreshPromise;
@@ -386,14 +387,16 @@ function refreshIdxPrices() {
     const apiBase = (typeof API !== 'undefined' && API) ? API : '';
     const params = new URLSearchParams();
     if (tickers) params.set('tickers', tickers);
-    const url = apiBase + '/api/spot/indices' + (tickers ? '?' + params.toString() : '');
+    if (force) params.set('force', '1');
+    const query = params.toString();
+    const url = apiBase + '/api/spot/indices' + (query ? '?' + query : '');
     let j = null;
 
     if (typeof window.apiFetch === 'function') {
       const response = await window.apiFetch(url, {
         timeout: 7000,
         retries: 0,
-        dedupeKey: 'top-index-quotes'
+        dedupeKey: force ? 'top-index-quotes-force' : 'top-index-quotes'
       });
       j = response && response.data;
     } else {
@@ -601,4 +604,3 @@ if (document.readyState === 'loading') {
   renderIndexBar();
   _watchIdxRealtimeBus();
 }
-

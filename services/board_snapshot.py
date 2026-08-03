@@ -139,6 +139,7 @@ class BoardSnapshotCache:
             return
         self._data: Dict[str, dict] = {}
         self._last_capture_ts: float = 0.0
+        self._last_refresh: dict = {}
         self._initialized = True
 
     def _ensure_today(self, date_str: str):
@@ -274,6 +275,80 @@ class BoardSnapshotCache:
 
         return len(result)
 
+    def refresh_snapshot(self, force: bool = False) -> dict:
+        """Refresh the current snapshot and describe what this attempt did.
+
+        ``available`` answers whether callers may read a snapshot. ``refreshed``
+        answers the more important question for a manual refresh: whether both
+        board families were fetched by this attempt.  Keeping those concepts
+        separate prevents an old morning snapshot from being reported as a
+        successful afternoon refresh.
+        """
+        today = _today_str()
+        self._ensure_today(today)
+        today_data = self._data[today]
+
+        def finish(**values):
+            result = {
+                'available': bool(
+                    today_data.get('industry') or today_data.get('concept')
+                ),
+                'refreshed': False,
+                'partial': False,
+                'stale': False,
+                'reason': '',
+                'attempted_at': time.time(),
+                'captured_at': today_data.get('captured_at') or None,
+                'industry_refreshed': 0,
+                'concept_refreshed': 0,
+                **values,
+            }
+            self._last_refresh = dict(result)
+            return result
+
+        if _is_lunch_break():
+            today_data['frozen'] = True
+            return finish(reason='lunch_frozen', frozen=True)
+
+        if not _is_a_share_session():
+            return finish(reason='market_closed', frozen=False)
+
+        today_data['frozen'] = False
+        now = time.time()
+        if not force and (now - self._last_capture_ts) < _MIN_CAPTURE_INTERVAL:
+            return finish(reason='throttled', frozen=False)
+
+        previous_capture = today_data.get('captured_at') or None
+        try:
+            n_ind = self.capture_all('industry')
+            n_con = self.capture_all('concept')
+            self._last_capture_ts = time.time()
+            refreshed = n_ind > 0 and n_con > 0
+            partial = (n_ind > 0) != (n_con > 0)
+            return finish(
+                refreshed=refreshed,
+                partial=partial,
+                stale=not refreshed,
+                reason=(
+                    'refreshed' if refreshed else
+                    'partial_refresh' if partial else 'refresh_failed'
+                ),
+                frozen=False,
+                previous_captured_at=previous_capture,
+                captured_at=today_data.get('captured_at') or previous_capture,
+                industry_refreshed=n_ind,
+                concept_refreshed=n_con,
+            )
+        except Exception as exc:
+            logger.warning('[board_snapshot] capture 异常，保留上次数据: %s', exc)
+            return finish(
+                stale=True,
+                reason='refresh_error',
+                error=str(exc)[:200],
+                frozen=False,
+                previous_captured_at=previous_capture,
+            )
+
     def ensure_snapshot(self, force: bool = False) -> bool:
         """确保今日快照已生成（实时模式）。
 
@@ -290,39 +365,7 @@ class BoardSnapshotCache:
         Returns:
             当前是否有数据
         """
-        today = _today_str()
-
-        # 午休：只返回上午最后快照，绝不重新访问外部接口。
-        if _is_lunch_break():
-            self._ensure_today(today)
-            self._data[today]['frozen'] = True
-            return bool(self._data[today].get('industry') or self._data[today].get('concept'))
-
-        # 非交易日 / 15:05 后：不 capture，返回当前是否有数据
-        if not _is_a_share_session():
-            self._ensure_today(today)
-            return bool(self._data[today].get('industry') or self._data[today].get('concept'))
-
-        # 盘中
-        self._ensure_today(today)
-        today_data = self._data[today]
-        # 13:00 后恢复实时模式。
-        today_data['frozen'] = False
-
-        # 节流检查：非 force 且距上次 capture < 阈值，跳过
-        now = time.time()
-        if not force and (now - self._last_capture_ts) < _MIN_CAPTURE_INTERVAL:
-            return bool(today_data.get('industry') or today_data.get('concept'))
-
-        # capture（实时模式，不 freeze）
-        try:
-            n_ind = self.capture_all('industry')
-            n_con = self.capture_all('concept')
-            self._last_capture_ts = time.time()
-            return n_ind > 0 or n_con > 0
-        except Exception as e:
-            logger.warning('[board_snapshot] capture 异常，保留上次数据: %s', e)
-            return bool(today_data.get('industry') or today_data.get('concept'))
+        return bool(self.refresh_snapshot(force=force).get('available'))
 
     def get_board_today(self, board_type: str, code: str) -> Optional[dict]:
         """获取今日某板块的快照数据。
@@ -380,6 +423,7 @@ class BoardSnapshotCache:
             'frozen': frozen,
             'captured_at': d.get('captured_at'),
             'mode': mode,
+            'last_refresh': dict(self._last_refresh),
         }
 
     def get_date(self) -> Optional[str]:

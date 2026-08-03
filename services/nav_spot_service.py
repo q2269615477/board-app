@@ -364,8 +364,24 @@ def fetch_nav_spots(force: bool = False) -> Dict[str, Any]:
             _inflight_evt.clear()
 
     if wait:
-        # Another tab is already refreshing. Never make an existing usable
-        # snapshot wait behind a slow external quote source.
+        # Ordinary polling never waits behind another tab. A manual refresh is
+        # different: wait for the in-flight single-flight request so the user
+        # does not receive the cache they explicitly asked to replace.
+        if force:
+            _inflight_evt.wait(timeout=8)
+            data = _annotate_snapshot(_cache, targets=targets, now=wall_now)
+            return {
+                "data": data,
+                "meta": {
+                    **dict(_cache_meta),
+                    **current_market_meta,
+                    "waited_for_refresh": True,
+                },
+                "stale": bool(_cache) and (time.time() - _cache_ts) > ttl,
+                "from_cache": True,
+            }
+        # Another tab is already refreshing. Never make ordinary polling wait
+        # behind a slow external quote source.
         if _cache:
             data = _annotate_snapshot(_cache, targets=targets, now=wall_now)
             return {
@@ -391,6 +407,7 @@ def fetch_nav_spots(force: bool = False) -> Dict[str, Any]:
         previous_cache = dict(_cache)
     t0 = time.time()
     data: Dict[str, Any] = {}
+    refreshed_codes = set()
     meta: Dict[str, Any] = {
         "channels": {},
         "ok": False,
@@ -436,6 +453,7 @@ def fetch_nav_spots(force: bool = False) -> Dict[str, Any]:
                     for code, row in items.items()
                 }
                 refreshed_qmt_codes = set(normalized)
+                refreshed_codes.update(refreshed_qmt_codes)
                 data.update(normalized)
                 meta["channels"]["qmt"] = {
                     "count": len(normalized),
@@ -475,6 +493,7 @@ def fetch_nav_spots(force: bool = False) -> Dict[str, Any]:
                     data_type=target_types.get(code),
                     now=wall_now,
                 )
+            refreshed_codes.update(http_data)
         else:
             meta["channels"]["http"] = {
                 "count": 0,
@@ -490,15 +509,31 @@ def fetch_nav_spots(force: bool = False) -> Dict[str, Any]:
             _domestic_phase_data = dict(domestic_snapshot)
 
         data = _annotate_snapshot(data, targets=targets, now=wall_now)
+        active_codes = {
+            code for code, _name, data_type in targets
+            if market_state(code, now=wall_now, data_type=data_type)['market_open']
+        }
+        stale_active_codes = sorted(active_codes - refreshed_codes)
         meta["ok"] = bool(data)
         meta["elapsed_ms"] = int((time.time() - t0) * 1000)
         meta["count"] = len(data)
+        meta["refreshed_codes"] = sorted(refreshed_codes)
+        meta["stale_active_codes"] = stale_active_codes
 
         if data:
             _cache = data
-            _cache_ts = time.time()
+            # A failed remote cycle must not make an old snapshot young again.
+            # Partial success may advance the cache while explicitly reporting
+            # which active symbols remain stale.
+            if refreshed_codes or not active_codes:
+                _cache_ts = time.time()
             _cache_meta = meta
-            return {"data": dict(data), "meta": meta, "stale": False, "from_cache": False}
+            return {
+                "data": dict(data),
+                "meta": meta,
+                "stale": bool(stale_active_codes),
+                "from_cache": not bool(refreshed_codes),
+            }
 
         # total failure → last good
         if _cache:

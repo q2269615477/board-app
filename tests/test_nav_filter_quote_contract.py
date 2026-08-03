@@ -31,7 +31,9 @@ def test_index_filter_has_a_lazy_index_quote_fallback():
     )
 
     assert "loadIndexBoardChanges();" in source
-    assert "/api/spot/indices?tickers=" in source
+    assert "params.set('tickers', codes.join(','));" in source
+    assert "if (force) params.set('force', '1');" in source
+    assert "/api/spot/indices?' + params.toString()" in source
     assert "_boardChgData['index:' + code] = value;" in source
 
 

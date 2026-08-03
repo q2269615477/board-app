@@ -332,7 +332,8 @@ def test_index_bar_quote_refresh_is_singleflight_and_observable():
     )
     assert "var _idxRefreshPromise = null;" in source
     assert "if (_idxRefreshPromise) return _idxRefreshPromise;" in source
-    assert "dedupeKey: 'top-index-quotes'" in source
+    assert "dedupeKey: force ? 'top-index-quotes-force' : 'top-index-quotes'" in source
+    assert "if (force) params.set('force', '1');" in source
     assert "setTimeout(refreshIdxPrices, 50);" in source
     assert "timeout: 7000" in source
     assert "bar.dataset.quoteState = 'ready';" in source
@@ -383,7 +384,7 @@ def test_chart_history_is_windowed_and_startup_requests_are_not_duplicated():
     assert "renderIndexBar();" not in init
     assert "_startIdxFallback();" not in init
     assert "Promise.all([loadPinyinData(), loadClassification()])" in init
-    assert "if (document.hidden) return Promise.resolve(null);" in index_bar
+    assert "if (document.hidden && !force) return Promise.resolve(null);" in index_bar
     assert "if (document.hidden) return;" in chart
     assert "refreshAnnCounts(false).then(_patchAnnCountsInNav);" in nav
     assert "window.boardPollingLeader" in api_client

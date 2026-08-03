@@ -331,6 +331,41 @@ class TestCaptureAll:
 
 class TestEnsureSnapshot:
     @patch('services.board_snapshot.datetime')
+    def test_failed_live_refresh_reports_stale_existing_snapshot(self, mock_dt):
+        """旧快照可读不等于本次强制刷新成功。"""
+        mock_dt.now.return_value = datetime(2026, 7, 27, 14, 0, 0)
+        cache = get_snapshot_cache()
+        cache._ensure_today('20260727')
+        cache._data['20260727']['industry'] = {'BK0001': {'pct': 1.0}}
+        cache._data['20260727']['concept'] = {'BK0800': {'pct': 2.0}}
+        cache._data['20260727']['captured_at'] = 123.0
+
+        with patch.object(cache, 'capture_all', side_effect=[0, 0]):
+            result = cache.refresh_snapshot(force=True)
+
+        assert result['available'] is True
+        assert result['refreshed'] is False
+        assert result['stale'] is True
+        assert result['reason'] == 'refresh_failed'
+        assert result['captured_at'] == 123.0
+
+    @patch('services.board_snapshot.datetime')
+    def test_afternoon_refresh_clears_lunch_freeze_and_marks_fresh(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 7, 27, 13, 5, 0)
+        cache = get_snapshot_cache()
+        cache._ensure_today('20260727')
+        cache._data['20260727']['frozen'] = True
+
+        with patch.object(cache, 'capture_all', side_effect=[496, 503]):
+            result = cache.refresh_snapshot(force=True)
+
+        assert result['refreshed'] is True
+        assert result['stale'] is False
+        assert result['industry_refreshed'] == 496
+        assert result['concept_refreshed'] == 503
+        assert cache.is_frozen() is False
+
+    @patch('services.board_snapshot.datetime')
     @patch('requests.Session', create=True)
     def test_lunch_uses_morning_snapshot_without_refetch(self, mock_session_cls, mock_dt):
         """午休使用上午最后快照，不再访问东财。"""

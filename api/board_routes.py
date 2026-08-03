@@ -1,5 +1,6 @@
 ﻿"""Board related routes."""
 import time
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 
 from services.board_service import get_board_service
@@ -106,7 +107,8 @@ def refresh_board_snapshot_route():
     from services.board_spot_cache import get_board_spot_cache
 
     snapshot = get_snapshot_cache()
-    snapshot_ready = bool(snapshot.ensure_snapshot(force=True))
+    refresh = snapshot.refresh_snapshot(force=True)
+    snapshot_ready = bool(refresh.get('available'))
     stats = snapshot.stats()
 
     spot_cache = get_board_spot_cache()
@@ -114,13 +116,31 @@ def refresh_board_snapshot_route():
     # 盘中成功捕获后直接复用完整快照，避免行业/概念各触发一次网络抓取；
     # 盘后或快照为空时才让 spot cache 执行其结算数据降级链。
     changes = get_app_context().refresh_board_changes(force=not snapshot_ready)
-    ok = bool(changes)
+    stale = bool(refresh.get('stale'))
+    ok = bool(changes) and not stale
+    reason = refresh.get('reason') or ''
+    captured_at = refresh.get('captured_at')
+    if ok and reason == 'lunch_frozen':
+        message = 'A股午休，继续显示上午收盘快照'
+    elif ok and reason == 'market_closed':
+        message = 'A股已收盘，继续显示最近收盘快照'
+    elif ok:
+        message = '板块实时快照已刷新'
+    elif stale and captured_at:
+        stamp = datetime.fromtimestamp(captured_at).strftime('%H:%M:%S')
+        message = f'本次板块刷新失败，仍显示 {stamp} 的旧快照'
+    elif stale:
+        message = '本次板块刷新失败，当前仅有旧快照'
+    else:
+        message = '板块快照暂不可用'
     return jsonify({
         'ok': ok,
+        'stale': stale,
+        'refresh': refresh,
         'snapshot_ready': snapshot_ready,
         'snapshot': stats,
         'board_changes_count': len(changes),
-        'message': '板块快照已刷新' if ok else '板块快照暂不可用',
+        'message': message,
     }), 200 if ok else 503
 
 
@@ -202,7 +222,7 @@ def spot_indices_route():
     )
     from data.global_index_kline import is_inactive_a_share_index
     from services.nav_spot_service import (
-        fetch_nav_spots_fast, get_nav_targets,
+        fetch_nav_spots, fetch_nav_spots_fast, get_nav_targets,
     )
     from services.market_session import market_state
 
@@ -313,8 +333,22 @@ def spot_indices_route():
         except Exception:
             return code, None
 
+    force_refresh = request.args.get('force') == '1'
+    nav_meta = {}
     try:
-        nav = fetch_nav_spots_fast(force=request.args.get('force') == '1')
+        # Polling remains cache-first; the toolbar refresh waits for the
+        # single-flight request so this response is not knowingly stale.
+        nav = (
+            fetch_nav_spots(force=True)
+            if force_refresh
+            else fetch_nav_spots_fast(force=False)
+        )
+        nav_meta = {
+            **dict(nav.get('meta') or {}),
+            'stale': bool(nav.get('stale')),
+            'from_cache': bool(nav.get('from_cache')),
+            'forced': force_refresh,
+        }
         for code, row in (nav.get('data') or {}).items():
             if code in all_codes and code not in inactive_codes:
                 packed = _pack(code, row)
@@ -383,5 +417,6 @@ def spot_indices_route():
             'requested': len(all_codes),
             'count': len(result),
             'active_markets': active_markets,
+            'nav': nav_meta,
         },
     })

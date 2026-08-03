@@ -69,6 +69,33 @@ def test_nav_targets_include_all_default_global_indices():
     assert {'SPX', 'IXIC', 'DJI', '800000'} <= codes
 
 
+def test_failed_force_refresh_does_not_rejuvenate_old_cache():
+    _reset()
+    nav._cache = {'SPX': {'price': 6000, 'channel': 'old'}}
+    nav._cache_ts = nav.time.time() - 600
+    old_ts = nav._cache_ts
+    nav._cache_meta = {'market_signature': ['us:live:1']}
+    market_meta = {
+        'active_markets': ['us'],
+        'market_signature': ['us:live:1'],
+        'all_markets_closed': False,
+    }
+    state = {'market': 'us', 'market_phase': 'live', 'market_open': True}
+    with patch.object(nav, 'get_nav_targets', return_value=[('SPX', '标普', 'global')]), patch.object(
+        nav, '_split_targets', return_value=([], [('SPX', '标普', 'global')])
+    ), patch.object(nav, '_market_meta', return_value=market_meta), patch.object(
+        nav, 'market_state', return_value=state
+    ), patch.object(nav, '_load_local_nav_spots', return_value={}), patch.object(
+        nav, '_fetch_http_spots', return_value={}
+    ):
+        result = nav.fetch_nav_spots(force=True)
+
+    assert result['stale'] is True
+    assert result['from_cache'] is True
+    assert result['meta']['stale_active_codes'] == ['SPX']
+    assert nav._cache_ts == old_ts
+
+
 def test_http_route_uses_nonblocking_nav_fast_path():
     source = (Path(nav.__file__).parents[1] / 'api' / 'board_routes.py').read_text(
         encoding='utf-8'
