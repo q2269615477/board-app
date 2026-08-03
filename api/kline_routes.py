@@ -3,6 +3,7 @@ api/kline_routes.py — K线相关路由
 路径: /api/kline/*, /api/stock/data/*
 """
 import datetime
+import math
 
 from flask import Blueprint, request, jsonify
 
@@ -10,6 +11,66 @@ from services.kline_service import get_kline_service, _format_kline_helper
 from data.sqlite_repo import get_sqlite_repo
 
 bp = Blueprint('kline', __name__, url_prefix='')
+
+
+def _normalise_kline_observability(result, status=None):
+    """Ensure every K-line route response exposes the metadata contract.
+
+    The service owns the authoritative values.  The route still fills safe
+    defaults because responses can come from older service implementations or
+    be supplied by a test/integration adapter; this keeps the JSON wire
+    contract stable for every status code.
+    """
+    if not isinstance(result, dict):
+        result = {'data': [], 'count': 0, 'error': str(result or 'K线响应无效')}
+    else:
+        result = dict(result)
+
+    if not result.get('source'):
+        if status is not None and status >= 400:
+            result['source'] = 'error'
+        elif status == 202 or result.get('loading'):
+            result['source'] = 'pending'
+        elif result.get('cached'):
+            result['source'] = 'cache'
+        else:
+            result['source'] = 'load'
+
+    result['stale'] = bool(
+        result.get('stale', False) or result.get('source') == 'cache_stale'
+    )
+    result['background_refresh_started'] = bool(
+        result.get('background_refresh_started', False)
+    )
+
+    try:
+        load_ms = float(result.get('load_ms', 0))
+        result['load_ms'] = max(0, int(load_ms)) if math.isfinite(load_ms) else 0
+    except (TypeError, ValueError, OverflowError):
+        result['load_ms'] = 0
+
+    fallback_chain = result.get('fallback_chain', [])
+    if fallback_chain is None:
+        fallback_chain = []
+    elif isinstance(fallback_chain, list):
+        fallback_chain = list(fallback_chain)
+    elif isinstance(fallback_chain, (tuple, set, frozenset)):
+        fallback_chain = list(fallback_chain)
+    else:
+        fallback_chain = [fallback_chain]
+    result['fallback_chain'] = fallback_chain
+    return result
+
+
+def _invalid_timeout_response(timeout_value):
+    """Return a JSON-safe 400 response for malformed timeout parameters."""
+    return _normalise_kline_observability({
+        'error': f'非法 timeout 参数: {timeout_value}',
+        'timeout': False,
+        'data': [],
+        'count': 0,
+        'source': 'invalid_request',
+    }, status=400)
 
 
 def _parse_timestamp_ms(value):
@@ -85,7 +146,6 @@ def get_kline_route(data_type, code):
     """统一K线接口"""
     from core.config import KLINE_SYNC_TIMEOUT
 
-    service = get_kline_service()
     board_name = request.args.get('name', '')
     period = request.args.get('period', 'daily')
     force = request.args.get('force', '').lower() == 'true'
@@ -101,12 +161,28 @@ def get_kline_route(data_type, code):
 
     # timeout: 优先 query 参数，缺省用 KLINE_SYNC_TIMEOUT
     timeout_str = request.args.get('timeout', str(KLINE_SYNC_TIMEOUT))
-    timeout = float(timeout_str)
+    try:
+        timeout = float(timeout_str)
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError('timeout must be a positive finite number')
+    except (TypeError, ValueError, OverflowError):
+        result = _invalid_timeout_response(timeout_str)
+        return jsonify(result), 400
 
-    result, status = service.get_kline(
-        data_type, code, period, board_name=board_name,
-        force=force, timeout=timeout, cache_first=cache_first
-    )
+    try:
+        service = get_kline_service()
+        result, status = service.get_kline(
+            data_type, code, period, board_name=board_name,
+            force=force, timeout=timeout, cache_first=cache_first
+        )
+    except Exception as exc:
+        result, status = {
+            'error': str(exc),
+            'timeout': False,
+            'data': [],
+            'count': 0,
+            'source': 'error',
+        }, 500
 
     if status == 200:
         result = _window_kline_result(
@@ -116,8 +192,8 @@ def get_kline_route(data_type, code):
             limit_value=request.args.get('limit'),
         )
 
-    # 透传所有字段
-    return jsonify(result), status
+    # 透传业务字段，同时保证状态码无关的观测元数据契约。
+    return jsonify(_normalise_kline_observability(result, status=status)), status
 
 
 @bp.route('/api/stock/data/<code>')

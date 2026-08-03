@@ -535,6 +535,39 @@ _pending = {}  # cache_key -> Event
 _pending_lock = threading.Lock()
 
 
+def _nonnegative_load_ms(value) -> int:
+    """Normalize a load duration for the public response contract.
+
+    Loading paths are allowed to pass a measured duration, but callers and
+    tests may also invoke :meth:`_ok_response` directly.  Keep the wire value
+    stable even when a clock moves backwards or a source returns an invalid
+    value: it is always a non-negative ``int``.
+    """
+    try:
+        number = float(value)
+        if not math.isfinite(number):
+            return 0
+        return max(0, int(number))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _fallback_chain_list(value) -> List:
+    """Return a defensive list for the public fallback-chain field."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, (tuple, set, frozenset)):
+        return list(value)
+    return [value]
+
+
+def _load_elapsed_ms(start_time: float) -> int:
+    """Measure elapsed wall-clock time without exposing negative values."""
+    return _nonnegative_load_ms((time.time() - start_time) * 1000)
+
+
 def _claim_pending(cache_key: str) -> Tuple[threading.Event, bool]:
     """Atomically return the current event or reserve this cache key."""
     with _pending_lock:
@@ -602,6 +635,22 @@ class KLineService:
         返回: (result_dict, status_code)
         """
         start_time = time.time()
+        try:
+            timeout = float(timeout)
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            return {
+                'error': f'非法 timeout 参数: {timeout}',
+                'timeout': False,
+                'data': [],
+                'count': 0,
+                'source': 'invalid_request',
+                'stale': False,
+                'background_refresh_started': False,
+                'load_ms': _load_elapsed_ms(start_time),
+                'fallback_chain': [],
+            }, 400
         period = normalize_period(period)
         cache_key = f'{data_type}:{code}:{period}'
         fallback_chain = []
@@ -611,14 +660,16 @@ class KLineService:
 
         if standard_a_index and is_inactive_a_share_index(code):
             self._cache.delete(cache_key)
-            return {
-                'data': [],
-                'count': 0,
+            response = self._ok_response(
+                [], cache_key, source='unavailable',
+                load_ms=_load_elapsed_ms(start_time),
+                fallback_chain=['unavailable'],
+            )
+            response.update({
                 'unavailable': True,
                 'reason': 'deprecated_no_remote',
-                'source': 'unavailable',
-                'fallback_chain': ['unavailable'],
-            }, 200
+            })
+            return response, 200
 
         # 强制刷新
         if force:
@@ -627,10 +678,10 @@ class KLineService:
         # 缓存命中
         cached = self._cache.get(cache_key)
         if cached is not None:
-            load_ms = int((time.time() - start_time) * 1000)
             return self._ok_response(
                 cached, cache_key, source='cache',
-                load_ms=load_ms, fallback_chain=fallback_chain,
+                load_ms=_load_elapsed_ms(start_time),
+                fallback_chain=fallback_chain,
                 intraday={},
             ), 200
 
@@ -649,13 +700,12 @@ class KLineService:
                     cache_key, data,
                     ttl=_response_cache_ttl(data_type, period, code),
                 )
-                load_ms = int((time.time() - start_time) * 1000)
                 resp = self._ok_response(
                     data, cache_key, last_date=last_date, source='sqlite',
-                    load_ms=load_ms, fallback_chain=['sqlite'],
+                    load_ms=_load_elapsed_ms(start_time),
+                    fallback_chain=['sqlite'], stale=True,
                     intraday={},
                 )
-                resp['stale'] = True
                 resp['background_refresh_started'] = self._submit_background_refresh(
                     data_type, code, period, board_name, cache_key
                 )
@@ -667,16 +717,22 @@ class KLineService:
             if evt.wait(min(timeout, 10)):
                 cached = self._cache.get(cache_key)
                 if cached is not None:
-                    load_ms = int((time.time() - start_time) * 1000)
                     return self._ok_response(
                         cached, cache_key, source='pending',
-                        load_ms=load_ms, fallback_chain=fallback_chain,
+                        load_ms=_load_elapsed_ms(start_time),
+                        fallback_chain=fallback_chain,
                         intraday={},
                     ), 200
             # 超时
-            load_ms = int((time.time() - start_time) * 1000)
-            return {'loading': True, 'message': '数据加载中',
-                    'load_ms': load_ms, 'fallback_chain': fallback_chain}, 202
+            return {
+                'loading': True,
+                'message': '数据加载中',
+                'source': 'pending',
+                'stale': False,
+                'background_refresh_started': False,
+                'load_ms': _load_elapsed_ms(start_time),
+                'fallback_chain': _fallback_chain_list(fallback_chain),
+            }, 202
 
         try:
             future = _executor.submit(
@@ -694,10 +750,10 @@ class KLineService:
                 ttl=_response_cache_ttl(data_type, period, code),
             )
             _release_pending(cache_key, evt)
-            load_ms = int((time.time() - start_time) * 1000)
             return self._ok_response(
                 data, cache_key, last_date=last_date, source=df_source,
-                load_ms=load_ms, fallback_chain=df_fallback,
+                load_ms=_load_elapsed_ms(start_time),
+                fallback_chain=df_fallback,
                 intraday=self._response_intraday(data_type, code, period, df),
             ), 200
         except Exception as e:
@@ -706,10 +762,10 @@ class KLineService:
             # 如果出错但缓存有数据（后台刷新过）
             cached = self._cache.get(cache_key)
             if cached is not None:
-                load_ms = int((time.time() - start_time) * 1000)
                 return self._ok_response(
-                    cached, cache_key, source='cache_stale',
-                    load_ms=load_ms, fallback_chain=fallback_chain,
+                    cached, cache_key, source='cache_stale', stale=True,
+                    load_ms=_load_elapsed_ms(start_time),
+                    fallback_chain=fallback_chain,
                     intraday={},
                 ), 200
             if cache_first:
@@ -718,21 +774,22 @@ class KLineService:
                     stale = self._attach_board_snapshot(data_type, code, stale)
                 if stale is not None and not stale.empty:
                     data, last_date = self._format_response(stale)
-                    load_ms = int((time.time() - start_time) * 1000)
                     resp = self._ok_response(
                         data, cache_key, last_date=last_date, source='sqlite',
-                        load_ms=load_ms, fallback_chain=['sqlite'],
+                        load_ms=_load_elapsed_ms(start_time),
+                        fallback_chain=['sqlite'], stale=True,
                         intraday={},
                     )
-                    resp['stale'] = True
-                    resp['background_refresh_started'] = False
                     return resp, 200
             is_timeout = 'timeout' in str(e).lower() or isinstance(e, TimeoutError)
-            load_ms = int((time.time() - start_time) * 1000)
             return {
                 'error': str(e), 'timeout': is_timeout,
                 'data': [], 'count': 0,
-                'load_ms': load_ms, 'fallback_chain': fallback_chain,
+                'source': 'error',
+                'stale': False,
+                'background_refresh_started': False,
+                'load_ms': _load_elapsed_ms(start_time),
+                'fallback_chain': _fallback_chain_list(fallback_chain),
             }, 408 if is_timeout else 500
 
     # ---- 内部实现 ----
@@ -1209,7 +1266,14 @@ class KLineService:
         return _qmt_http_ohlc(code)
 
     def _ok_response(self, data, cache_key, last_date='', source='load',
-                      load_ms=0, fallback_chain=None, intraday=None):
+                      load_ms=0, fallback_chain=None, intraday=None,
+                      stale=False, background_refresh_started=False):
+        """Build a successful K-line response with stable observability fields.
+
+        ``_ok_response`` is the common path for cache, synchronous, pending,
+        and stale responses.  Keeping the defaults here prevents a newly
+        added success path from silently dropping the metadata contract.
+        """
         now = pd.Timestamp.now()
         if not last_date and data:
             try:
@@ -1218,6 +1282,9 @@ class KLineService:
                 ).strftime('%Y-%m-%d')
             except Exception:
                 last_date = ''
+        # ``cache_stale`` is semantically stale even if an older caller did
+        # not pass the explicit flag; never let that branch regress to false.
+        stale = bool(stale) or source == 'cache_stale'
         response = {
             'data': data,
             'count': len(data),
@@ -1225,9 +1292,11 @@ class KLineService:
             'today': now.strftime('%Y-%m-%d'),
             'range': f'{data[0]["timestamp"]}~{data[-1]["timestamp"]}' if data else '',
             'cached': source == 'cache',
-            'source': source,
-            'load_ms': load_ms,
-            'fallback_chain': fallback_chain or [],
+            'source': source or 'load',
+            'stale': bool(stale),
+            'background_refresh_started': bool(background_refresh_started),
+            'load_ms': _nonnegative_load_ms(load_ms),
+            'fallback_chain': _fallback_chain_list(fallback_chain),
         }
         if intraday:
             response['intraday'] = intraday

@@ -34,6 +34,24 @@ from services.kline_service import (
 )
 
 
+OBSERVABILITY_FIELDS = (
+    'source', 'stale', 'background_refresh_started', 'load_ms',
+    'fallback_chain',
+)
+
+
+def _assert_observability_contract(result):
+    """Every service response status must expose the fixed metadata shape."""
+    for field in OBSERVABILITY_FIELDS:
+        assert field in result, f'missing observability field: {field}'
+    assert isinstance(result['source'], str) and result['source']
+    assert isinstance(result['stale'], bool)
+    assert isinstance(result['background_refresh_started'], bool)
+    assert isinstance(result['load_ms'], int)
+    assert result['load_ms'] >= 0
+    assert isinstance(result['fallback_chain'], list)
+
+
 @pytest.fixture(autouse=True)
 def _reset_kline_bg_executor():
     reset_bg_executor()
@@ -311,3 +329,63 @@ class TestExistingFieldsPreserved:
         assert 'last_date' in result
         assert 'today' in result
         assert result['last_date']  # 非空
+
+
+class TestObservabilityResponseMatrix:
+    """The metadata contract is present on every service status branch."""
+
+    def setup_method(self):
+        _clear_pending()
+
+    def teardown_method(self):
+        _clear_pending()
+
+    def test_deprecated_empty_200_contract(self):
+        svc = _make_service()
+        result, status = svc.get_kline('index', 'sh000938', 'daily', timeout=5)
+        assert status == 200
+        assert result['reason'] == 'deprecated_no_remote'
+        _assert_observability_contract(result)
+        assert result['stale'] is False
+        assert result['background_refresh_started'] is False
+
+    def test_loading_202_contract(self):
+        svc = _make_service(db_has_data=False)
+        from services.kline_service import _claim_pending
+        _claim_pending('stock:600519:daily')
+        result, status = svc.get_kline('stock', '600519', 'daily', timeout=0.001)
+        assert status == 202
+        _assert_observability_contract(result)
+        assert result['source'] == 'pending'
+
+    def test_cache_stale_200_is_marked_stale(self):
+        svc = _make_service()
+        cached = [{'timestamp': 1, 'open': 1, 'high': 1,
+                   'low': 1, 'close': 1, 'volume': 1}]
+        svc._cache.get.return_value = cached
+        svc._do_load = MagicMock(side_effect=TimeoutError('timeout'))
+        # Seed the cache only for the error fallback, then force the loader.
+        svc._cache.get.side_effect = [None, cached]
+        result, status = svc.get_kline('stock', '600519', 'daily', timeout=0.1)
+        assert status == 200
+        _assert_observability_contract(result)
+        assert result['source'] == 'cache_stale'
+        assert result['stale'] is True
+
+    def test_invalid_timeout_contract(self):
+        svc = _make_service()
+        result, status = svc.get_kline('stock', '600519', 'daily', timeout='bad')
+        assert status == 400
+        _assert_observability_contract(result)
+        assert result['source'] == 'invalid_request'
+
+    def test_ok_response_defaults_and_cache_stale_inference(self):
+        svc = _make_service()
+        result = svc._ok_response([], 'stock:600519:daily')
+        _assert_observability_contract(result)
+        assert result['stale'] is False
+        assert result['background_refresh_started'] is False
+        assert result['source'] == 'load'
+
+        stale = svc._ok_response([], 'stock:600519:daily', source='cache_stale')
+        assert stale['stale'] is True

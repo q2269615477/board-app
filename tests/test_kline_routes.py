@@ -5,6 +5,23 @@ import pytest
 from core.config import KLINE_SYNC_TIMEOUT
 
 
+OBSERVABILITY_FIELDS = (
+    'source', 'stale', 'background_refresh_started', 'load_ms',
+    'fallback_chain',
+)
+
+
+def _assert_route_contract(payload):
+    for field in OBSERVABILITY_FIELDS:
+        assert field in payload, f'missing observability field: {field}'
+    assert isinstance(payload['source'], str) and payload['source']
+    assert isinstance(payload['stale'], bool)
+    assert isinstance(payload['background_refresh_started'], bool)
+    assert isinstance(payload['load_ms'], int)
+    assert payload['load_ms'] >= 0
+    assert isinstance(payload['fallback_chain'], list)
+
+
 class TestKlineRouteParams:
     """验证 /api/kline route 能正确读取 query 参数并传给服务"""
 
@@ -165,3 +182,40 @@ class TestKlineRouteParams:
         j = r.get_json()
         assert j['error'] == '加载超时'
         assert j['timeout'] is True
+
+    @pytest.mark.parametrize('timeout_value', ['abc', '', 'nan', 'inf', '0', '-1'])
+    @patch('api.kline_routes.get_kline_service')
+    def test_invalid_timeout_returns_json_400_with_contract(
+        self, mock_get_svc, timeout_value
+    ):
+        """Malformed/non-positive timeout must not escape as Flask HTML 500."""
+        client = self._make_client()
+        query = f'?timeout={timeout_value}' if timeout_value else '?timeout='
+        r = client.get(f'/api/kline/stock/600519{query}')
+        assert r.status_code == 400
+        assert r.content_type.startswith('application/json')
+        _assert_route_contract(r.get_json())
+        assert r.get_json()['source'] == 'invalid_request'
+        mock_get_svc.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ('payload', 'status'),
+        [
+            ({'data': [], 'count': 0}, 200),
+            ({'loading': True, 'message': '数据加载中'}, 202),
+            ({'error': '加载超时', 'timeout': True}, 408),
+            ({'error': '加载失败', 'timeout': False}, 500),
+        ],
+    )
+    @patch('api.kline_routes.get_kline_service')
+    def test_route_normalises_metadata_for_all_statuses(
+        self, mock_get_svc, payload, status
+    ):
+        mock_svc = MagicMock()
+        mock_svc.get_kline.return_value = payload, status
+        mock_get_svc.return_value = mock_svc
+
+        client = self._make_client()
+        r = client.get('/api/kline/stock/600519?period=daily')
+        assert r.status_code == status
+        _assert_route_contract(r.get_json())
