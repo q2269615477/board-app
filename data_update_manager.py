@@ -23,6 +23,13 @@ from services.stock_update_service import (
     StockUpdateDependencies,
     StockUpdateService,
 )
+from services.index_update_service import (
+    IndexUpdateDependencies as _IndexUpdateDependencies,
+    IndexUpdateService as _IndexUpdateService,
+    load_exchange_calendar_api as _index_load_exchange_calendar_api,
+    local_weekday_session_date as _index_local_weekday_session_date,
+    normalize_session_date as _index_normalize_session_date,
+)
 
 # 日志配置
 log_path = Path('data') / 'update_logs'
@@ -739,133 +746,63 @@ def qmt_update_all_stocks(
 
 # ===== 指数数据（QMT 优先 + Tushare 兜底） =====
 
+def _make_index_update_service() -> _IndexUpdateService:
+    """Build the index helper service from the manager's live patch seams."""
+
+    # Resolve globals at call time.  Existing tests and integrations patch
+    # these manager names and expect the patch to affect the old helpers.
+    return _IndexUpdateService(
+        _IndexUpdateDependencies(
+            tushare_index_api_map=globals().get('TUSHARE_INDEX_API_MAP', {}),
+            fetch_tushare_index_df=globals().get('_fetch_tushare_index_df'),
+            exchange_calendar_api=globals().get('_exchange_calendar_api'),
+            normalize_session_date=globals().get('_normalize_session_date'),
+            local_weekday_session_date=globals().get('_local_weekday_session_date'),
+            index_exchange_market=globals().get('INDEX_EXCHANGE_MARKET', {}),
+            now=datetime.now,
+            logger=logger,
+        )
+    )
+
+
 def _tushare_fallback_single_index(
     code: str, name: str, local_max: str, last_td_norm: str,
     cur, insert_sql: str, now_str: str
 ) -> int:
-    """QMT 数据陈旧时，用 Tushare 补齐尾部。
-
-    返回写入行数；失败返回 0。
-    """
-    start = (datetime.strptime(local_max, '%Y%m%d') + timedelta(days=1)).strftime('%Y%m%d')
-    if start > last_td_norm:
-        return 0
-    try:
-        mapping = TUSHARE_INDEX_API_MAP.get(code)
-        if not mapping:
-            logger.warning(f"[Tushare兜底] {name}({code}) 无 Tushare 映射，跳过")
-            return 0
-        api, ts_code = mapping
-        df = _fetch_tushare_index_df(api, ts_code, start, last_td_norm)
-        rows = df.to_dict('records') if not df.empty else []
-        if not rows:
-            # 盘中/非交易时段 Tushare 日线尚未更新 → 降为 INFO
-            if start > datetime.now().strftime('%Y%m%d') or start == last_td_norm:
-                logger.info(
-                    f"[Tushare兜底] {name}({code}) 今日日线暂未发布 "
-                    f"({api}/{ts_code} {start}) — 数据已是最新"
-                )
-            else:
-                logger.warning(
-                    f"[Tushare兜底] {name}({code}) Tushare 也无新数据 "
-                    f"({api}/{ts_code} {start}..{last_td_norm})"
-                )
-            return 0
-        batch = [
-            (code, 'daily', r['date'], r['open'], r['high'], r['low'],
-             r['close'], r['volume'], now_str)
-            for r in rows
-        ]
-        cur.executemany(insert_sql, batch)
-        cur.connection.commit()
-        last_d = max(r['date'] for r in rows)
-        logger.info(
-            f"[Tushare兜底] ✓ {name}({code}) 补齐 {len(batch)} 条 "
-            f"{start}→{last_d} (api={api}/{ts_code})"
-        )
-        return len(batch)
-    except Exception as e:
-        logger.error(f"[Tushare兜底] {name}({code}) 失败: {e}")
-        return 0
+    """Compatibility facade for the low-level Tushare tail fallback."""
+    return _make_index_update_service().tushare_fallback_single_index(
+        code, name, local_max, last_td_norm, cur, insert_sql, now_str
+    )
 
 
 # ===== 指数目标交易日：按交易所日历 =====
 
 def _exchange_calendar_api():
-    """延迟加载 services.exchange_calendar_service（另一写集新增）。
-
-    返回 (latest_expected_session_date, market_state)；服务尚未落地或导入
-    失败时返回 None，由调用方回退旧逻辑，避免阻塞现有调度。
-    """
-    try:
-        from services.exchange_calendar_service import (
-            latest_expected_session_date as _latest_session,
-            market_state as _market_state,
-        )
-    except Exception as exc:
-        logger.debug(f"[交易日] exchange_calendar_service 未就绪，回退本地工作日: {exc}")
-        return None
-    return _latest_session, _market_state
+    """Compatibility facade for the optional exchange-calendar provider."""
+    return _index_load_exchange_calendar_api(logger)
 
 
 def _normalize_session_date(value) -> str:
-    """把日历服务返回的会话日归一化为 YYYYMMDD；无法解析返回 ''。"""
-    if value is None:
-        return ''
-    if hasattr(value, 'strftime'):
-        return value.strftime('%Y%m%d')
-    s = str(value).strip().replace('-', '').replace('/', '')
-    return s if (len(s) == 8 and s.isdigit()) else ''
+    """Compatibility facade for session-date normalization."""
+    return _index_normalize_session_date(value)
 
 
 def _local_weekday_session_date(code: str, now=None) -> str:
-    """无日历服务时的回退：按指数所属交易所时区取最近工作日（YYYYMMDD）。"""
-    market = INDEX_EXCHANGE_MARKET.get(str(code), 'a_share')
-    tz_name = INDEX_EXCHANGE_TZ.get(market, 'Asia/Shanghai')
-    try:
-        from zoneinfo import ZoneInfo
-        if now is None:
-            now = datetime.now()
-        if now.tzinfo is None:
-            local = now.replace(tzinfo=ZoneInfo(tz_name))
-        else:
-            local = now.astimezone(ZoneInfo(tz_name))
-        day = local.date()
-    except Exception:
-        day = (now or datetime.now()).date()
-    while day.weekday() >= 5:
-        day -= timedelta(days=1)
-    return day.strftime('%Y%m%d')
+    """Compatibility facade for the local-weekday exchange fallback."""
+    return _index_local_weekday_session_date(
+        code,
+        now,
+        index_exchange_market=INDEX_EXCHANGE_MARKET,
+        index_exchange_tz=INDEX_EXCHANGE_TZ,
+        now_factory=datetime.now,
+    )
 
 
 def _index_session_target(code, now=None, fallback_td_norm=None):
-    """指数所属交易所的 (期望会话日YYYYMMDD, 是否盘中)。
-
-    - A股指数 → A股日历；HSI/HSTECH → 香港；
-      ^N225/^KS11/^TWII/SPX/IXIC/DJI → 各自市场。
-    - 优先 exchange_calendar_service：
-      latest_expected_session_date(code, now) 给出期望最新会话日，
-      market_state(code, now)['market_open'] 给出本地市场盘中状态。
-    - 服务缺失/失败时回退：A股沿用旧 last_td_norm；其他市场按本地时区最近工作日。
-    """
-    api = _exchange_calendar_api()
-    if api is not None:
-        latest_session, market_state_fn = api
-        try:
-            target = _normalize_session_date(
-                latest_session(str(code), now=now)
-            )
-            state = market_state_fn(str(code), now=now)
-            is_open = bool(state.get('market_open')) if isinstance(state, dict) else False
-            if target:
-                return target, is_open
-            logger.warning(f"[交易日] {code} 日历服务返回空会话日，回退本地工作日")
-        except Exception as exc:
-            logger.warning(f"[交易日] {code} 日历服务异常，回退本地工作日: {exc}")
-    market = INDEX_EXCHANGE_MARKET.get(str(code), 'a_share')
-    if market == 'a_share':
-        return (fallback_td_norm or _local_weekday_session_date(code, now)), False
-    return _local_weekday_session_date(code, now), False
+    """Compatibility facade for the exchange-session target policy."""
+    return _make_index_update_service().index_session_target(
+        code, now=now, fallback_td_norm=fallback_td_norm
+    )
 
 
 def update_all_indices_qmt(max_retries: int = 3) -> dict:
