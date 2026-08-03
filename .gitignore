@@ -80,6 +80,7 @@ graft/
 audit/
 oneshot_work/
 tmp/
+/work/
 
 # Generated screenshots and probes
 *.png
