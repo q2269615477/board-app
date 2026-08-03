@@ -6,7 +6,32 @@
  */
 (function (global) {
   'use strict';
-  const API = global.API || '';
+
+  // session-ui.js 只消费 session-api.js 暴露的具名方法，禁止在 UI 层拼接
+  // URL、HTTP method 或 JSON body。入口脚本会在本文件前加载 session-api.js；
+  // 这里保留运行时校验，避免脚本顺序被改动后静默失效。
+  const SESSION_API_METHODS = [
+    'getActiveSession',
+    'createSession',
+    'updateSession',
+    'commitSession',
+    'cloneSession',
+    'activateSession',
+    'replaySession',
+    'postSessionAction',
+    'listSessions',
+    'getAnnotations',
+    'getProposedLevels',
+    'scanResonance',
+  ];
+
+  function requireSessionAPI() {
+    const api = global.SessionAPI;
+    if (!api) throw new Error('session-api.js 未加载');
+    const missing = SESSION_API_METHODS.filter((name) => typeof api[name] !== 'function');
+    if (missing.length) throw new Error('SessionAPI 缺少具名方法: ' + missing.join(', '));
+    return api;
+  }
 
   let S = null;
   let pickKActive = false;
@@ -58,11 +83,6 @@
       return;
     }
     console.log('[SessionUI]', msg);
-  }
-
-  // API 通信委托给 session-api.js（已抽取为独立模块）
-  async function api(path, opts) {
-    return global.SessionAPI.api(path, opts);
   }
 
   function panelCtx() {
@@ -1856,9 +1876,12 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 
   async function openLevelManager() {
     const ctx = currentSymbolQuery();
-    const url = '/api/annotations?symbol=' + encodeURIComponent(ctx.symbol) +
-      '&period=' + encodeURIComponent(ctx.period) + '&type=level_origin&limit=100';
-    const j = await api(url);
+    const j = await requireSessionAPI().getAnnotations(
+      ctx.symbol,
+      ctx.period,
+      'level_origin',
+      100
+    );
     const items = j.data || [];
     const rows = items.map((c) => {
       const lv = c.level || {};
@@ -1883,10 +1906,10 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     const members = (draft && Array.isArray(draft.members) && draft.members.length)
       ? draft.members
       : [{ symbol: ctx.symbol, symbol_name: ctx.symbol_name, asset_type: ctx.asset_type, period: ctx.period }];
-    const j = await api('/api/resonance/matrix', {
-      method: 'POST',
-      body: JSON.stringify({ members, periods: [ctx.period || 'daily'] }),
-    });
+    const j = await requireSessionAPI().scanResonance(
+      members,
+      [ctx.period || 'daily']
+    );
     const data = j.data || {};
     const aligned = data.aligned || data.cells || [];
     const summary =
@@ -1907,9 +1930,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 
   async function openProposalPanel() {
     const ctx = currentSymbolQuery();
-    const url = '/api/levels/propose?symbol=' + encodeURIComponent(ctx.symbol) +
-      '&period=' + encodeURIComponent(ctx.period) + '&top_n=5';
-    const j = await api(url);
+    const j = await requireSessionAPI().getProposedLevels(ctx.symbol, ctx.period, 5);
     const data = j.data || {};
     const items = data.candidates || data.items || [];
     const rows = items.map((c, i) => {
@@ -1986,10 +2007,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       await flushOverlaysLocal();
     }
     const body = Object.assign({ action, session: S }, extra || {});
-    const j = await api('/api/sessions/' + S.id + '/actions', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    const j = await requireSessionAPI().postSessionAction(S.id, body);
     S = j.data;
     render();
     scheduleSave(false);
@@ -2029,7 +2047,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       if (!needWritable || S.status !== 'committed') return S;
       // fall through → 新建
     } else {
-      const j = await api('/api/sessions/active');
+      const j = await requireSessionAPI().getActiveSession();
       // 已提交 / 无活跃 → 新开干净会话（大纲为空，点按钮才长）
       if (j.data && (j.data.status === 'drafting' || j.data.status === 'paused')) {
         S = j.data;
@@ -2038,12 +2056,9 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
         return S;
       }
     }
-    const c = await api('/api/sessions', {
-      method: 'POST',
-      body: JSON.stringify({
-        title: '会话',
-        save_payload: S || undefined,
-      }),
+    const c = await requireSessionAPI().createSession({
+      title: '会话',
+      save_payload: S || undefined,
     });
     S = c.data;
     render();
@@ -2054,16 +2069,13 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
   async function ensureCurrentChart() {
     if (!S) return;
     const ctx = panelCtx();
-    const j = await api('/api/sessions/' + S.id + '/actions', {
-      method: 'POST',
-      body: JSON.stringify({
-        action: 'ensure_chart',
-        session: S,
-        symbol: ctx.symbol,
-        period: ctx.period,
-        symbol_name: ctx.symbol_name,
-        asset_type: ctx.asset_type,
-      }),
+    const j = await requireSessionAPI().postSessionAction(S.id, {
+      action: 'ensure_chart',
+      session: S,
+      symbol: ctx.symbol,
+      period: ctx.period,
+      symbol_name: ctx.symbol_name,
+      asset_type: ctx.asset_type,
     });
     S = j.data;
     render();
@@ -2078,9 +2090,9 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
         console.warn('[SessionUI] flush before new', e);
       }
     }
-    const j = await api('/api/sessions', {
-      method: 'POST',
-      body: JSON.stringify({ save_payload: S || undefined, title: '会话' }),
+    const j = await requireSessionAPI().createSession({
+      save_payload: S || undefined,
+      title: '会话',
     });
     S = j.data;
     toast(S ? '已开新会话' : '新会话');
@@ -2113,10 +2125,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       }
       throw e;
     }
-    const j = await api('/api/sessions/' + S.id + '/commit', {
-      method: 'POST',
-      body: JSON.stringify({ session: S }),
-    });
+    const j = await requireSessionAPI().commitSession(S.id, { session: S });
     S = j.data;
     render();
     toast('已写入 Obsidian');
@@ -2132,7 +2141,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       return;
     }
     try {
-      const r = await api('/api/sessions/' + S.id + '/clone', { method: 'POST' });
+      const r = await requireSessionAPI().cloneSession(S.id);
       S = r.data;
       render();
       toast('已克隆为新会话：' + (S.title || ''));
@@ -2144,10 +2153,10 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
   // 会话回放：切到会话当前 chart 的 symbol/period（K 线自动重载）
   async function applySessionReplay(sessionId, opts) {
     opts = opts || {};
-    const r = await api(
-      '/api/sessions/' + sessionId + '/replay' +
-        (opts.chart_id ? '?chart_id=' + encodeURIComponent(opts.chart_id) : '') +
-        (opts.event_id ? (opts.chart_id ? '&' : '?') + 'event_id=' + encodeURIComponent(opts.event_id) : '')
+    const r = await requireSessionAPI().replaySession(
+      sessionId,
+      opts.chart_id,
+      opts.event_id
     );
     const data = (r && r.data) || {};
     const chart = data.chart;
@@ -2186,12 +2195,10 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
 
   // 把当前 S 同步到服务端，带 base_rev；遇 409 抛 RevisionConflictError 给上层处理
   async function saveSessionWithRevCheck() {
-    return await api('/api/sessions/' + S.id, {
-      method: 'PUT',
-      body: JSON.stringify(
-        Object.assign({}, S, { base_rev: S.rev || 0, write_vault: true })
-      ),
-    });
+    return await requireSessionAPI().updateSession(
+      S.id,
+      Object.assign({}, S, { base_rev: S.rev || 0, write_vault: true })
+    );
   }
 
   // 处理 REVISION_CONFLICT：弹窗让用户选择「应用服务端版本」/「取消」
@@ -2295,7 +2302,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     const drawer = document.getElementById('sess-list-drawer');
     if (!drawer) return;
     drawer.style.display = 'block';
-    const j = await api('/api/sessions?limit=40');
+    const j = await requireSessionAPI().listSessions(40);
     const items = j.data || [];
     drawer.innerHTML =
       '<div style="display:flex;justify-content:space-between;margin-bottom:8px"><b>会话列表</b><button class="btn" id="sess-list-close">关闭</button></div>' +
@@ -2318,9 +2325,9 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     drawer.querySelectorAll('[data-sid]').forEach((el) => {
       el.onclick = async () => {
         await flushOverlaysLocal();
-        const j2 = await api(
-          '/api/sessions/' + el.getAttribute('data-sid') + '/activate',
-          { method: 'POST', body: JSON.stringify({ save_payload: S }) }
+        const j2 = await requireSessionAPI().activateSession(
+          el.getAttribute('data-sid'),
+          { save_payload: S }
         );
         S = j2.data;
         drawer.style.display = 'none';
@@ -2340,7 +2347,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
         ev.stopPropagation();
         const sid = btn.getAttribute('data-sid');
         try {
-          const r = await api('/api/sessions/' + sid + '/clone', { method: 'POST' });
+          const r = await requireSessionAPI().cloneSession(sid);
           drawer.style.display = 'none';
           S = r.data;
           render();
@@ -2359,15 +2366,13 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       if (S.status === 'committed') return; // 只读，跳过自动保存
       try {
         await flushOverlaysLocal();
-        const j = await api('/api/sessions/' + S.id, {
-          method: 'PUT',
-          body: JSON.stringify(
-            Object.assign({}, S, {
-              base_rev: S.rev || 0,
-              write_vault: !!writeVault,
-            })
-          ),
-        });
+        const j = await requireSessionAPI().updateSession(
+          S.id,
+          Object.assign({}, S, {
+            base_rev: S.rev || 0,
+            write_vault: !!writeVault,
+          })
+        );
         S = j.data;
         render();
       } catch (e) {
@@ -2411,14 +2416,11 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       // 有链 / 果 / 事件焦点时同步画线（事件焦点时归入事件）
       if (ui.active_cause_id || ui.active_effect_id || ui.active_event_id) {
         try {
-          const j = await api('/api/sessions/' + S.id + '/actions', {
-            method: 'POST',
-            body: JSON.stringify({
-              action: 'overlays',
-              session: S,
-              overlays: ovs,
-              chart_id: cid,
-            }),
+          const j = await requireSessionAPI().postSessionAction(S.id, {
+            action: 'overlays',
+            session: S,
+            overlays: ovs,
+            chart_id: cid,
           });
           S = j.data;
         } catch (e) {
@@ -2776,6 +2778,13 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
   }
 
   async function boot() {
+    // 明确要求 session-api.js 先行加载；不要让首次点击才暴露脚本顺序错误。
+    try {
+      requireSessionAPI();
+    } catch (e) {
+      toast('会话模块: ' + e.message);
+      return;
+    }
     ensureUI();
     bindHotkeys();
     // 若 chart 已在模块加载前 init，直接用；否则等事件 / 轮询

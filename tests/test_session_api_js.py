@@ -4,7 +4,7 @@
   - api() 函数正确封装 fetch + JSON 解析 + 错误处理
   - 各业务函数（getActiveSession, createSession 等）构造正确的请求
   - 错误时抛出带 code/status 的 Error
-  - session-ui.js 中的 api() 委托给 SessionAPI.api
+  - session-ui.js 只调用 SessionAPI 的具名方法，不再拼接请求
 """
 import json
 import subprocess
@@ -433,21 +433,37 @@ window.SessionAPI.replaySession('s1', 'ch1', 'ev1').then(function(j) {
 # Integration: session-ui.js delegates to SessionAPI
 # ---------------------------------------------------------------------------
 
-def test_session_ui_delegates_api_to_session_api():
-    """session-ui.js 的内部 api() 函数必须委托给 SessionAPI.api。"""
+def test_session_ui_uses_named_session_api_methods_only():
+    """session-ui.js 必须调用具名 API，不能再拼接 URL/HTTP 请求。"""
     out = _run_js_with_mock(
         ["session-api.js"],
         """
-// Read session-ui.js source and check delegation
+// Read session-ui.js source and check the API boundary.
 var src = require('fs').readFileSync('static/js/session-ui.js', 'utf-8');
-var hasDelegation = src.indexOf('global.SessionAPI.api') >= 0;
-var noDirectFetch = src.indexOf('await fetch(API') < 0;
-process.stdout.write(JSON.stringify({ hasDelegation: hasDelegation, noDirectFetch: noDirectFetch }));
+var methods = [
+  'getActiveSession', 'createSession', 'updateSession', 'commitSession',
+  'cloneSession', 'activateSession', 'replaySession', 'postSessionAction',
+  'listSessions', 'getAnnotations', 'getProposedLevels', 'scanResonance'
+];
+var missing = methods.filter(function(name) {
+  return src.indexOf('requireSessionAPI().' + name + '(') < 0;
+});
+var forbidden = [
+  'global.SessionAPI.api',
+  'function api(',
+  '/api/sessions',
+  '/api/annotations',
+  '/api/levels/propose',
+  '/api/resonance/matrix',
+  'method:',
+  'body: JSON.stringify'
+].filter(function(token) { return src.indexOf(token) >= 0; });
+process.stdout.write(JSON.stringify({ missing: missing, forbidden: forbidden }));
 """
     )
     data = json.loads(out)
-    assert data["hasDelegation"] is True, "session-ui.js 未委托给 SessionAPI.api"
-    assert data["noDirectFetch"] is True, "session-ui.js 仍含直接 fetch 调用"
+    assert not data["missing"], f"session-ui.js 未调用具名方法: {data['missing']}"
+    assert not data["forbidden"], f"session-ui.js 仍含底层请求拼装: {data['forbidden']}"
 
 
 def test_session_ui_still_has_all_action_functions():

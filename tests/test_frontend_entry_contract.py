@@ -86,6 +86,22 @@ def test_index_shell_loads_modular_frontend_scripts():
         assert required in scripts, f"missing core entry script: {required}"
 
 
+def test_session_api_precedes_session_ui_and_ui_guards_named_boundary():
+    """session-api.js must load first and session-ui.js must require its API."""
+    scripts = _parse_entry_scripts()
+    api = "static/js/session-api.js"
+    ui = "static/js/session-ui.js"
+    assert api in scripts, f"missing session API entry script: {api}"
+    assert ui in scripts, f"missing session UI entry script: {ui}"
+    assert scripts.index(api) < scripts.index(ui), (
+        "session-api.js must be loaded before session-ui.js"
+    )
+    source = (ROOT / ui).read_text(encoding="utf-8")
+    assert "function requireSessionAPI()" in source
+    assert "SESSION_API_METHODS" in source
+    assert "global.SessionAPI.api" not in source
+
+
 def test_bar_replay_entry_exists_and_is_between_chart_core_and_app_init():
     """Bar replay must be a real module loaded after chart-core and before init."""
     html = _index_html()
