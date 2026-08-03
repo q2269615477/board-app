@@ -486,30 +486,75 @@ def test_03_click_board_constituent_switches_to_stock(page, mock_state):
 
 
 def test_04_search_ymkd_arrow_enter_shows_yimingkangde(page, mock_state):
-    """Scenario 4: Search 'ymkd', arrow down, Enter → shows 药明康德."""
+    """Old history is inert while ymkd debounces; results still select 603259."""
     previous_bars = page.evaluate(
         "window.__kline_chart && window.__kline_chart.getDataList()"
     )
 
-    # Focus the search input and type
+    # Reproduce the production race: focus first renders a selected history
+    # item that used to remain actionable throughout the debounce window.
+    page.evaluate("""() => window.BoardSearchHistory.replace([{
+        code: 'sz399989',
+        value: '旧历史',
+        name: '旧历史指数',
+        type: 'index',
+        category: '指数'
+    }])""")
     page.click('#search-input')
-    page.fill('#search-input', 'ymkd')
+    history = page.locator(
+        '#search-results .search-item.selected[data-history="0"] .search-code'
+    )
+    assert history.inner_text().strip() == 'sz399989'
+
+    # Dispatch the input and rapid keys in the same browser task so this test
+    # deterministically exercises the pre-debounce window.  No history item or
+    # stale match may remain available for the key handlers to activate.
+    debounce_state = page.evaluate("""() => {
+        const input = document.querySelector('#search-input');
+        input.value = 'ymkd';
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+        for (const key of ['ArrowDown', 'Enter']) {
+            input.dispatchEvent(new KeyboardEvent('keydown', {
+                key,
+                bubbles: true,
+                cancelable: true
+            }));
+        }
+        return {
+            value: input.value,
+            itemCount: document.querySelectorAll(
+                '#search-results .search-item'
+            ).length,
+            loading: document.querySelector('#search-results').textContent,
+            matches: window._sm,
+            events: window.__selectSymbolEvents
+        };
+    }""")
+    assert debounce_state['value'] == 'ymkd'
+    assert debounce_state['itemCount'] == 0
+    assert '搜索中' in debounce_state['loading']
+    assert debounce_state['matches'] == []
+    assert debounce_state['events'] == []
 
     # Wait for both results. Product rendering preselects the first item.
     page.wait_for_function(
-        "document.querySelectorAll('.search-item').length === 2",
+        "document.querySelectorAll('#search-results .search-item[data-idx]').length === 2",
         timeout=8000,
     )
-    page.wait_for_selector('.search-item.selected[data-idx="0"]')
+    page.wait_for_selector(
+        '#search-results .search-item.selected[data-idx="0"]'
+    )
     assert page.locator(
-        '.search-item.selected[data-idx="0"] .search-code'
+        '#search-results .search-item.selected[data-idx="0"] .search-code'
     ).inner_text() == '02359'
 
     # ArrowDown must move selection from the first result to 603259.
     page.press('#search-input', 'ArrowDown')
-    page.wait_for_selector('.search-item.selected[data-idx="1"]')
+    page.wait_for_selector(
+        '#search-results .search-item.selected[data-idx="1"]'
+    )
     assert page.locator(
-        '.search-item.selected[data-idx="1"] .search-code'
+        '#search-results .search-item.selected[data-idx="1"] .search-code'
     ).inner_text() == '603259'
 
     # Press Enter to select

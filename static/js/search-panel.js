@@ -243,9 +243,18 @@ si.onfocus = function(){
 
 si.oninput = function(){
   const q = si.value.trim();
+
+  // Every input change immediately retires the previous debounce/request and
+  // its rendered matches.  In particular, history items must not remain
+  // keyboard-selectable during the 150ms debounce window for a non-empty query.
+  if(_searchTimer){ clearTimeout(_searchTimer); _searchTimer = null; }
+  if(_searchAbort){ try{ _searchAbort.abort(); }catch(_){} _searchAbort = null; }
+  const requestSeq = ++_searchRequestSeq;
+  _currentSeq = requestSeq;
+  window._sm = [];
+  sIdx = -1;
+
   if(!q){
-    if(_searchAbort){ try{ _searchAbort.abort(); }catch(_){} _searchAbort = null; }
-    _searchRequestSeq++;
     _currentSeq = 0;
     sr.innerHTML = renderSearchHistory();
     if(_searchHistory.length) {
@@ -258,23 +267,19 @@ si.oninput = function(){
     return;
   }
 
-  // 清除旧定时器
-  if(_searchTimer) clearTimeout(_searchTimer);
+  // Replace any history/previous result items synchronously.  This placeholder
+  // intentionally has no .search-item class, so Arrow/Enter are inert until
+  // the query response has rendered indexed results.
+  sr.innerHTML = '<div style="padding:10px;color:#666;font-size:14px;text-align:center">搜索中...</div>';
+  sr.classList.add('show');
 
   // 防抖 150ms + Abort 旧请求
   _searchTimer = setTimeout(async () => {
-    // Abort previous request and increment sequence for stale-response protection
-    if(_searchAbort){ try{ _searchAbort.abort(); }catch(_){} }
+    _searchTimer = null;
+    if(requestSeq !== _searchRequestSeq || si.value.trim() !== q) return;
+
     _searchAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     const signal = _searchAbort ? _searchAbort.signal : undefined;
-
-    // Increment sequence to identify stale responses
-    _searchRequestSeq++;
-    _currentSeq = _searchRequestSeq;
-
-    // Show loading indicator
-    sr.innerHTML = '<div style="padding:10px;color:#666;font-size:14px;text-align:center">搜索中...</div>';
-    sr.classList.add('show');
 
     try {
       const historyCodes = _searchHistory.map(h => h.code).join(',');
@@ -293,7 +298,7 @@ si.oninput = function(){
       if(signal && signal.aborted) return;
 
       // Stale-response protection: ignore if not the latest request
-      if(_currentSeq !== _searchRequestSeq) return;
+      if(requestSeq !== _searchRequestSeq) return;
 
       const matches = (resp && resp.data) || (Array.isArray(resp) ? resp : []) || [];
 
@@ -312,7 +317,7 @@ si.oninput = function(){
     } catch(e) {
       // Ignore if stale or aborted
       if(e && e.name === 'AbortError') return;
-      if(_currentSeq !== _searchRequestSeq) return;
+      if(requestSeq !== _searchRequestSeq) return;
       console.warn('[搜索] 请求失败:', e);
       // Show failure message
       sr.innerHTML = '<div style="padding:10px;color:#dc3545;font-size:14px;text-align:center">搜索失败，请稍后重试</div>';

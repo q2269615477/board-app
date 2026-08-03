@@ -510,11 +510,16 @@ def test_real_keyboard_search_ymkd_selects_603259(page: Page):
     search = page.locator("#search-input")
     search.fill("ymkd")
     page.wait_for_function(
-        """() => Array.from(document.querySelectorAll('#search-results .search-item'))
-          .some((item) => item.textContent.includes('603259'))""",
+        """() => Array.from(document.querySelectorAll(
+          '#search-results .search-item[data-idx] .search-code'
+        )).some((code) => code.textContent.trim() === '603259')""",
         timeout=CHART_TIMEOUT_MS,
     )
     search.press("ArrowDown")
+    selected_code = page.locator(
+        "#search-results .search-item.selected[data-idx] .search-code"
+    )
+    assert selected_code.inner_text().strip() == "603259"
     search.press("Enter")
     page.wait_for_function(
         "() => window.__board_ctx?.code === '603259' && window.__board_ctx?.name === '药明康德'",
