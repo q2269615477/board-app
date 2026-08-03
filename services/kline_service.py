@@ -1132,8 +1132,10 @@ class KLineService:
             df = self._ensure_latest_kline_bar(data_type, code, 'daily', df)
             result = dedupe_kline_df(df)
             result = self._attach_intraday(data_type, code, result)
+            attrs = getattr(df, 'attrs', {}) or {}
             return _annotate_kline(
-                result, source='sqlite', fallback_chain=fallback_chain,
+                result, source=attrs.get('source') or 'sqlite',
+                fallback_chain=attrs.get('fallback_chain') or fallback_chain,
             )
 
         # 2. Global index (hk/us)
@@ -1456,6 +1458,23 @@ class KLineService:
         ):
             return df
 
+        base_attrs = dict(getattr(df, 'attrs', {}) or {})
+        base_source = base_attrs.get('source') or 'sqlite'
+        base_chain = _fallback_chain_list(base_attrs.get('fallback_chain'))
+        if not base_chain:
+            base_chain = ['sqlite']
+
+        def _with_refresh_metadata(
+            frame: pd.DataFrame,
+            source: str = base_source,
+            extra_chain=None,
+        ) -> pd.DataFrame:
+            chain = list(base_chain)
+            for item in _fallback_chain_list(extra_chain):
+                if item not in chain:
+                    chain.append(item)
+            return _annotate_kline(frame, source=source, fallback_chain=chain)
+
         market = _kline_market_key(data_type, code)
         target_date = _latest_expected_session_date(code, data_type, now=now)
 
@@ -1473,8 +1492,15 @@ class KLineService:
                         # Persist corrected settled bars. During a live session
                         # _save_daily_source removes today's changing bar.
                         self._save_daily_source(code, merged)
-                        return merged
-                return df
+                        return _with_refresh_metadata(
+                            merged, 'qmt_http', ['qmt_http']
+                        )
+                    # The authoritative supplement was queried even when it
+                    # matches (or has no usable rows); retain that attempt in
+                    # the provenance chain while keeping SQLite as the source
+                    # when no correction was needed.
+                    return _with_refresh_metadata(df, extra_chain=['qmt_http'])
+                return _with_refresh_metadata(df)
 
         logger.info(f"[AutoCheck] 检测到 {code} 数据欠更 (最新={last_date or '空'}, 目标={target_date})，启动自动补全...")
 
@@ -1482,6 +1508,8 @@ class KLineService:
         # load_global_index_kline 自身会增量刷新并持久化，绝不经由 QMT。
         if market != 'a_share':
             global_df = load_global_index_kline(code, 'daily')
+            global_attrs = getattr(global_df, 'attrs', {}) or {}
+            global_chain = global_attrs.get('fallback_chain') or ['global']
             if global_df is not None and not global_df.empty:
                 global_last = str(global_df['date'].max())[:10]
                 if global_last >= target_date:
@@ -1490,8 +1518,12 @@ class KLineService:
                         "[AutoCheck] global history 补全 %s 最新 %s",
                         code, global_last,
                     )
-                    return merged
-            return df
+                    return _with_refresh_metadata(
+                        merged,
+                        global_attrs.get('source') or 'global',
+                        global_chain,
+                    )
+            return _with_refresh_metadata(df, extra_chain=global_chain)
 
         # ---- A 股路径（保持原有行为）----
         # A-share indices are not all in PREWARM_TARGETS. Use the official
@@ -1499,6 +1531,7 @@ class KLineService:
         # row cannot remain the only source for a selected index.
         if data_type == 'index' and _is_a_share_index_code(code):
             eastmoney_df = fetch_eastmoney_global_kline(code, limit=10)
+            eastmoney_chain = ['eastmoney_history']
             if eastmoney_df is not None and not eastmoney_df.empty:
                 eastmoney_last = str(eastmoney_df['date'].max())[:10]
                 if eastmoney_last >= target_date:
@@ -1510,10 +1543,18 @@ class KLineService:
                         "[AutoCheck] Eastmoney 补全指数 %s 最新 %s",
                         code, eastmoney_last,
                     )
-                    return merged
+                    return _with_refresh_metadata(
+                        merged, 'eastmoney_history', eastmoney_chain
+                    )
+            # Keep the attempted authoritative index source visible even when
+            # it was empty/stale and SQLite remains the returned source.
+            for item in eastmoney_chain:
+                if item not in base_chain:
+                    base_chain.append(item)
 
         # 1. 优先调用 QMT-HTTP-Server (/candles)
         supp_df = _qmt_http_daily(code, count=5)
+        qmt_chain = ['qmt_http']
         if supp_df is not None and not supp_df.empty:
             supp_last_date = str(supp_df['date'].max())[:10]
             if supp_last_date >= target_date:
@@ -1523,10 +1564,10 @@ class KLineService:
                     df = supp_df
                 self._save_daily_source(code, df)
                 logger.info(f"[AutoCheck] QMT-HTTP 补全 {code} 最新 {supp_last_date} 数据")
-                return df
+                return _with_refresh_metadata(df, 'qmt_http', qmt_chain)
 
         # Spot 只作为 _response_intraday 的临时覆盖，不在这里伪造日线并落库。
-        return df
+        return _with_refresh_metadata(df, extra_chain=qmt_chain)
 
 
 def _format_kline_helper(df: pd.DataFrame):

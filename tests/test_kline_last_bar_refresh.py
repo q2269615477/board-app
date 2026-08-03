@@ -94,6 +94,52 @@ class TestDoLoadRefreshesStaleLastBar:
 
         svc._db.save_kline.assert_called_once()
         assert abs(float(out.iloc[-1]['close']) - 3858.25) < 0.01
+        assert out.attrs['source'] == 'qmt_http'
+        assert 'qmt_http' in out.attrs['fallback_chain']
+
+
+def test_sqlite_source_is_preserved_when_latest_check_makes_no_change():
+    local = pd.DataFrame([{
+        'date': '2026-07-27', 'open': 1, 'high': 2,
+        'low': 0.5, 'close': 1.5, 'volume': 10,
+    }])
+    svc = KLineService.__new__(KLineService)
+    svc._db = MagicMock()
+    svc._db.read_kline.return_value = local
+
+    with patch('services.kline_service._should_refresh_history', return_value=False), \
+         patch('services.kline_service._should_refresh_last_bar', return_value=False), \
+         patch('services.kline_service._exchange_calendar_fn',
+               return_value=lambda code, now=None, data_type=None: '2026-07-27'):
+        out = svc._load_daily('stock', '600000', '')
+
+    assert out.attrs['source'] == 'sqlite'
+    assert out.attrs['fallback_chain'] == ['sqlite']
+
+
+def test_global_latest_fill_updates_source_metadata():
+    local = pd.DataFrame([{
+        'date': '2026-07-25', 'open': 1, 'high': 2,
+        'low': 0.5, 'close': 1.5, 'volume': 10,
+    }])
+    remote = pd.DataFrame([{
+        'date': '2026-07-27', 'open': 2, 'high': 3,
+        'low': 1.5, 'close': 2.5, 'volume': 11,
+    }])
+    remote.attrs.update({
+        'source': 'eastmoney_history',
+        'fallback_chain': ['sqlite', 'eastmoney_history', 'eastmoney_spot'],
+    })
+    svc = KLineService.__new__(KLineService)
+    with patch('services.kline_service.load_global_index_kline', return_value=remote), \
+         patch('services.kline_service._exchange_calendar_fn',
+               return_value=lambda code, now=None, data_type=None: '2026-07-27'):
+        out = svc._ensure_latest_kline_bar('hk_index', 'HSI', 'daily', local)
+
+    assert out.attrs['source'] == 'eastmoney_history'
+    assert out.attrs['fallback_chain'] == [
+        'sqlite', 'eastmoney_history', 'eastmoney_spot'
+    ]
 
 
 def test_eastmoney_all_a_bypasses_generic_sqlite_qmt_chain():
