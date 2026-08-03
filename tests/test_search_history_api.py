@@ -1,3 +1,5 @@
+import json
+
 import api.search_routes as search_routes
 from app import create_app
 
@@ -37,3 +39,50 @@ def test_search_history_refreshes_duplicate_recency(tmp_path, monkeypatch):
     history = client.get('/api/search/history').get_json()['data']
     assert [item['code'] for item in history] == ['603259', '600519']
     assert history[0]['value'] == '药明'
+
+
+def test_search_history_explicit_file_overrides_data_dir_for_reads_and_writes(tmp_path, monkeypatch):
+    explicit_file = tmp_path / 'explicit' / 'history.json'
+    data_dir_file = tmp_path / 'data-dir' / 'search_history.json'
+    explicit_file.parent.mkdir()
+    data_dir_file.parent.mkdir()
+    explicit_file.write_text(json.dumps([{'code': 'explicit-seed'}]), encoding='utf-8')
+    data_dir_file.write_text(json.dumps([{'code': 'data-dir-seed'}]), encoding='utf-8')
+    monkeypatch.setenv('BOARD_APP_SEARCH_HISTORY_FILE', str(explicit_file))
+    monkeypatch.setenv('BOARD_APP_DATA_DIR', str(data_dir_file.parent))
+    client = create_app().test_client()
+
+    history = client.get('/api/search/history').get_json()['data']
+    assert [item['code'] for item in history] == ['explicit-seed']
+
+    response = client.post('/api/search/history', json={'code': 'explicit-write', 'name': '显式路径'})
+    assert response.status_code == 200
+    assert [item['code'] for item in json.loads(explicit_file.read_text(encoding='utf-8'))] == [
+        'explicit-write',
+        'explicit-seed',
+    ]
+    assert json.loads(data_dir_file.read_text(encoding='utf-8')) == [{'code': 'data-dir-seed'}]
+
+
+def test_search_history_data_dir_isolates_reads_and_writes(tmp_path, monkeypatch):
+    fallback_file = tmp_path / 'fallback' / 'search_history.json'
+    data_dir_file = tmp_path / 'isolated-data' / 'search_history.json'
+    fallback_file.parent.mkdir()
+    data_dir_file.parent.mkdir()
+    fallback_file.write_text(json.dumps([{'code': 'fallback-seed'}]), encoding='utf-8')
+    data_dir_file.write_text(json.dumps([{'code': 'data-dir-seed'}]), encoding='utf-8')
+    monkeypatch.setattr(search_routes, '_SEARCH_HISTORY_FILE', fallback_file)
+    monkeypatch.delenv('BOARD_APP_SEARCH_HISTORY_FILE', raising=False)
+    monkeypatch.setenv('BOARD_APP_DATA_DIR', str(data_dir_file.parent))
+    client = create_app().test_client()
+
+    history = client.get('/api/search/history').get_json()['data']
+    assert [item['code'] for item in history] == ['data-dir-seed']
+
+    response = client.post('/api/search/history', json={'code': 'data-dir-write', 'name': '数据目录'})
+    assert response.status_code == 200
+    assert [item['code'] for item in json.loads(data_dir_file.read_text(encoding='utf-8'))] == [
+        'data-dir-write',
+        'data-dir-seed',
+    ]
+    assert json.loads(fallback_file.read_text(encoding='utf-8')) == [{'code': 'fallback-seed'}]

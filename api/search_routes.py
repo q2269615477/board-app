@@ -4,6 +4,7 @@ api/search_routes.py — 搜索和历史相关路由
 from flask import Blueprint, request, jsonify
 from pathlib import Path
 import json
+import os
 import threading
 
 from services.search_service import get_search_service
@@ -16,20 +17,34 @@ _SEARCH_HISTORY_LIMIT = 5
 _SEARCH_HISTORY_LOCK = threading.Lock()
 
 
+def _resolve_search_history_file():
+    explicit_file = os.environ.get('BOARD_APP_SEARCH_HISTORY_FILE', '').strip()
+    if explicit_file:
+        return Path(explicit_file)
+
+    data_dir = os.environ.get('BOARD_APP_DATA_DIR', '').strip()
+    if data_dir:
+        return Path(data_dir) / 'search_history.json'
+
+    return Path(_SEARCH_HISTORY_FILE)
+
+
 def _load_search_history():
-    if not _SEARCH_HISTORY_FILE.exists():
+    history_file = _resolve_search_history_file()
+    if not history_file.exists():
         return []
-    with open(_SEARCH_HISTORY_FILE, 'r', encoding='utf-8') as f:
+    with open(history_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return data if isinstance(data, list) else []
 
 
 def _save_search_history(history):
-    _SEARCH_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    temp_file = _SEARCH_HISTORY_FILE.with_suffix('.json.tmp')
+    history_file = _resolve_search_history_file()
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = history_file.with_suffix('.json.tmp')
     with open(temp_file, 'w', encoding='utf-8') as f:
         json.dump(history[:_SEARCH_HISTORY_LIMIT], f, ensure_ascii=False, indent=1)
-    temp_file.replace(_SEARCH_HISTORY_FILE)
+    temp_file.replace(history_file)
 
 
 def _iter_classification_boards(nodes):
