@@ -120,6 +120,7 @@ def test_replay_trading_modules_are_loaded_in_contract_order():
         "static/js/replay-trade-engine.js",
         "static/js/replay-trade-state-model.js",
         "static/js/replay-trade-geometry.js",
+        "static/js/replay-trade-overlay-renderer.js",
         "static/js/chart-comparison-model.js",
         "static/js/chart-comparison.js",
         "static/js/replay-trade-ui.js",
@@ -140,6 +141,7 @@ def test_replay_trading_modules_are_loaded_in_contract_order():
     assert "value === null || value === undefined || value === ''" in state_model
     assert "ReplayTradeStateModel must load before ReplayTradeUI" in ui
     assert "ReplayTradeGeometry must load before ReplayTradeUI" in ui
+    assert "ReplayTradeOverlayRenderer must load before ReplayTradeUI" in ui
     assert "events.emit(name, detail); emittedByBus = true" in ui
 
 

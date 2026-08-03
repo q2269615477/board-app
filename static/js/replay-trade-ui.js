@@ -13,6 +13,8 @@
   if (!tradeStateModel) throw new Error('ReplayTradeStateModel must load before ReplayTradeUI');
   var replayGeometry = global.ReplayTradeGeometry;
   if (!replayGeometry) throw new Error('ReplayTradeGeometry must load before ReplayTradeUI');
+  var overlayRenderer = global.ReplayTradeOverlayRenderer;
+  if (!overlayRenderer) throw new Error('ReplayTradeOverlayRenderer must load before ReplayTradeUI');
   var EVENT_NAMES = [
     'bar-replay-state',
     'bar-replay-start',
@@ -201,6 +203,13 @@
   function text(node, value) {
     if (node && typeof node.textContent !== 'undefined') node.textContent = String(value == null ? '' : value);
   }
+
+  var rendererAdapter = {
+    create: create,
+    append: append,
+    attr: attr,
+    text: text,
+  };
 
   function clear(node) {
     if (!node) return;
@@ -1819,46 +1828,87 @@
       var price = finite(item.price);
       if (price == null) return;
       var point = convertPrice(null, price, rows, width, height);
-      var group = create('g', true);
-      attr(group, 'class', 'replay-trade-bracket-draft replay-trade-bracket-' + item.colorClass);
-      attr(group, 'data-bracket-role', item.role);
-      var hit = create('line', true);
-      attr(hit, 'x1', 0); attr(hit, 'x2', width); attr(hit, 'y1', point.y); attr(hit, 'y2', point.y);
-      attr(hit, 'stroke', 'transparent'); attr(hit, 'stroke-width', 16);
-      append(group, hit);
-      var line = create('line', true);
-      attr(line, 'x1', 0); attr(line, 'x2', width); attr(line, 'y1', point.y); attr(line, 'y2', point.y);
-      attr(line, 'class', 'replay-trade-preset replay-trade-bracket-' + item.colorClass);
-      append(group, line);
       var expected = item.role === 'entry' ? null : bracketExpected(draft, item.role, normalized);
       var orderText = (draft.orderNumbers || []).join(',');
       var labelText = item.role === 'entry'
         ? 'B' + orderText + ' 买入 ' + numberText(price)
         : (item.role === 'takeProfit' ? '止盈 ' : '止损 ') + orderText + ' · ' +
           pctText(expected && expected.percent) + ' · ' + currencyText(expected && expected.amount, true);
-      var label = create('text', true);
-      attr(label, 'class', 'replay-trade-bracket-label replay-trade-bracket-label-' + item.colorClass);
-      attr(label, 'x', Math.max(8, width - 300)); attr(label, 'y', point.y - 8);
-      attr(label, 'data-bracket-orders', orderText);
-      text(label, labelText);
-      if (typeof label.addEventListener === 'function') label.addEventListener('click', function (event) {
+      var rendered = overlayRenderer.renderBracketLevel(rendererAdapter, svg, {
+        colorClass: item.colorClass,
+        role: item.role,
+        width: width,
+        y: point.y,
+        labelX: Math.max(8, width - 300),
+        orderText: orderText,
+        labelText: labelText,
+      });
+      if (!rendered) return;
+      var group = rendered.group;
+      var label = rendered.label;
+      if (label && typeof label.addEventListener === 'function') label.addEventListener('click', function (event) {
         if (event && event.stopPropagation) event.stopPropagation();
         openBracketOrdersPanel(draft);
       });
-      append(group, label);
       if (typeof group.addEventListener === 'function') group.addEventListener('mousedown', function (event) {
         beginBracketDraftDrag(event, draft, item.role);
       });
-      append(svg, group);
     });
   }
 
   function marker(svg, point, side, label, title, record, width, meta) {
-    var group = create('g', true);
-    if (!group) return;
-    attr(group, 'class', 'replay-trade-marker replay-trade-' + side + '-marker');
-    attr(group, 'data-trade-side', side);
-    if (title) attr(group, 'aria-label', title);
+    var pairColor = record && orderPairColor(record.orderNumber || (record.orderNumbers || [])[0]);
+    var markerX = finite(point.x);
+    var availableWidth = Math.max(0, finite(width) || 0);
+    if (markerX == null) markerX = availableWidth / 2;
+    if (availableWidth > 20) markerX = Math.max(10, Math.min(availableWidth - 10, markerX));
+    var entryLabel = null;
+    if (side === 'buy' && record) {
+      var entryPrice = finite(record.price);
+      var riskRatio = meta && meta.rewardRisk;
+      var levelText = (label || 'B') + '买入 ' + numberText(entryPrice) +
+        (riskRatio ? ' · 盈亏比 ' + riskRatio : '');
+      var levelLabelWidth = Math.max(150, Math.min(292, 24 + levelText.length * 7));
+      var levelLabelX = Math.max(4, availableWidth - levelLabelWidth - 8);
+      var levelLabelY = Math.max(2, point.y - 11);
+      entryLabel = {
+        x: levelLabelX + 8,
+        y: levelLabelY,
+        width: levelLabelWidth - 12,
+        color: pairColor || '#ef4444',
+        text: levelText,
+      };
+    }
+    var arrowPoints = side === 'buy' ? [
+      markerX + ',' + point.y,
+      (markerX - 5) + ',' + (point.y + 7),
+      (markerX - 9) + ',' + (point.y + 7),
+      (markerX - 9) + ',' + (point.y + 24),
+      (markerX + 9) + ',' + (point.y + 24),
+      (markerX + 9) + ',' + (point.y + 7),
+      (markerX + 5) + ',' + (point.y + 7)
+    ] : [
+      markerX + ',' + point.y,
+      (markerX - 5) + ',' + (point.y - 7),
+      (markerX - 9) + ',' + (point.y - 7),
+      (markerX - 9) + ',' + (point.y - 24),
+      (markerX + 9) + ',' + (point.y - 24),
+      (markerX + 9) + ',' + (point.y - 7),
+      (markerX + 5) + ',' + (point.y - 7)
+    ];
+    var rendered = overlayRenderer.renderExecutionMarker(rendererAdapter, svg, {
+      side: side,
+      label: label,
+      title: title,
+      width: availableWidth,
+      y: point.y,
+      markerX: markerX,
+      pairColor: pairColor,
+      arrowPoints: arrowPoints,
+      entryLabel: entryLabel,
+    });
+    if (!rendered) return;
+    var group = rendered.group;
     if (record && record.id && side === 'buy') {
       attr(group, 'role', 'button');
       attr(group, 'tabindex', '0');
@@ -1882,67 +1932,6 @@
         });
       }
     }
-    var pairColor = record && orderPairColor(record.orderNumber || (record.orderNumbers || [])[0]);
-    var markerX = finite(point.x);
-    var availableWidth = Math.max(0, finite(width) || 0);
-    if (markerX == null) markerX = availableWidth / 2;
-    if (availableWidth > 20) markerX = Math.max(10, Math.min(availableWidth - 10, markerX));
-    var level = create('line', true);
-    attr(level, 'class', 'replay-trade-execution-level replay-trade-execution-level-' + side);
-    attr(level, 'data-trade-label', label);
-    attr(level, 'x1', 0); attr(level, 'x2', Math.max(0, finite(width) || 0));
-    attr(level, 'y1', point.y); attr(level, 'y2', point.y);
-    if (pairColor) attr(level, 'stroke', pairColor);
-    append(group, level);
-    if (side === 'buy' && record) {
-      var entryPrice = finite(record.price);
-      var riskRatio = meta && meta.rewardRisk;
-      var levelText = (label || 'B') + '买入 ' + numberText(entryPrice) +
-        (riskRatio ? ' · 盈亏比 ' + riskRatio : '');
-      var levelLabelWidth = Math.max(150, Math.min(292, 24 + levelText.length * 7));
-      var levelLabelX = Math.max(4, availableWidth - levelLabelWidth - 8);
-      var levelLabelY = Math.max(2, point.y - 11);
-      var levelLabelHost = create('foreignObject', true);
-      attr(levelLabelHost, 'x', levelLabelX + 8); attr(levelLabelHost, 'y', levelLabelY);
-      attr(levelLabelHost, 'width', levelLabelWidth - 12); attr(levelLabelHost, 'height', 22);
-      attr(levelLabelHost, 'pointer-events', 'none');
-      var levelLabel = create('div');
-      attr(levelLabel, 'class', 'replay-trade-execution-label');
-      attr(levelLabel, 'data-order-entry-label', label || 'B');
-      attr(levelLabel, 'style', 'color:' + (pairColor || '#ef4444') + ';font-weight:400;');
-      text(levelLabel, levelText);
-      append(levelLabelHost, levelLabel);
-      append(group, levelLabelHost);
-    }
-    var arrow = create('polygon', true);
-    attr(arrow, 'class', 'replay-trade-marker-arrow');
-    var arrowPoints = side === 'buy' ? [
-      markerX + ',' + point.y,
-      (markerX - 5) + ',' + (point.y + 7),
-      (markerX - 9) + ',' + (point.y + 7),
-      (markerX - 9) + ',' + (point.y + 24),
-      (markerX + 9) + ',' + (point.y + 24),
-      (markerX + 9) + ',' + (point.y + 7),
-      (markerX + 5) + ',' + (point.y + 7)
-    ] : [
-      markerX + ',' + point.y,
-      (markerX - 5) + ',' + (point.y - 7),
-      (markerX - 9) + ',' + (point.y - 7),
-      (markerX - 9) + ',' + (point.y - 24),
-      (markerX + 9) + ',' + (point.y - 24),
-      (markerX + 9) + ',' + (point.y - 7),
-      (markerX + 5) + ',' + (point.y - 7)
-    ];
-    attr(arrow, 'points', arrowPoints.join(' '));
-    attr(arrow, 'data-price-tip-y', point.y);
-    if (pairColor) attr(arrow, 'fill', pairColor);
-    append(group, arrow);
-    var labelNode = create('text', true);
-    attr(labelNode, 'class', 'replay-trade-marker-label');
-    attr(labelNode, 'x', markerX); attr(labelNode, 'y', point.y + (side === 'buy' ? 16 : -16));
-    text(labelNode, label || (side === 'buy' ? 'B' : 'S'));
-    append(group, labelNode);
-    append(svg, group);
   }
 
   var ORDER_PAIR_COLORS = ['#ef4444', '#2563eb', '#f59e0b', '#7c3aed', '#0891b2', '#db2777'];
@@ -2262,13 +2251,14 @@
         var top = Math.max(0, Math.min(entryPoint.y, targetPoint.y));
         var bottom = Math.min(height, Math.max(entryPoint.y, targetPoint.y));
         if (bottom - top < 1 || width - startX < 1) return;
-        var zone = create('rect', true);
-        attr(zone, 'class', 'replay-trade-risk-zone replay-trade-risk-zone-' + side);
-        attr(zone, 'data-order-number', item.orderNumber);
-        attr(zone, 'data-zone-role', side);
-        attr(zone, 'x', startX); attr(zone, 'y', top);
-        attr(zone, 'width', width - startX); attr(zone, 'height', bottom - top);
-        append(svg, zone);
+        overlayRenderer.renderRiskZone(rendererAdapter, svg, {
+          side: side,
+          orderNumber: item.orderNumber,
+          x: startX,
+          y: top,
+          width: width - startX,
+          height: bottom - top,
+        });
       });
     });
   }
@@ -2283,10 +2273,6 @@
       : finite(order.price != null ? order.price : order.value);
     if (price == null) return;
     var point = convertPrice(null, price, rows && rows.length ? rows : [{ high: price, low: price }], width, height);
-    var group = create('g', true);
-    attr(group, 'class', 'replay-trade-preset-order replay-trade-preset-order-' + side + ' replay-trade-preset-' + side);
-    attr(group, 'data-preset-role', side);
-    if (orderId) attr(group, 'data-preset-order-id', orderId);
     var relativePct = finite(referencePrice) > 0 && (side === 'takeProfit' || side === 'stopLoss')
       ? (price / Number(referencePrice) - 1) * 100 : null;
     var orderNumbers = Array.isArray(order.orderNumbers) ? order.orderNumbers : [];
@@ -2299,46 +2285,32 @@
       : actionText + (bindingText ? ' ' + bindingText : '');
     var labelText = labelPrefix + ' ' + numberText(price) +
       (relativePct == null ? '' : ' ' + pctText(relativePct)) + expectedText;
-    attr(group, 'aria-label', labelText + '，上下拖动修改');
-    attr(group, 'tabindex', '0');
-    var hit = create('line', true);
-    attr(hit, 'class', 'replay-trade-preset-hit');
-    attr(hit, 'x1', 0); attr(hit, 'x2', width); attr(hit, 'y1', point.y); attr(hit, 'y2', point.y);
-    append(group, hit);
-    var line = create('line', true);
-    attr(line, 'class', 'replay-trade-preset replay-trade-preset-' + side);
-    attr(line, 'x1', 0); attr(line, 'x2', width); attr(line, 'y1', point.y); attr(line, 'y2', point.y);
-    attr(line, 'data-trade-side', side);
-    append(group, line);
-
     var labelWidth = Math.max(relativePct == null ? 132 : 174, Math.min(310, 28 + labelText.length * 7));
     var labelX = Math.max(4, width - labelWidth - 8);
     var labelY = Math.max(2, Math.min(height - 22, point.y - 11));
-    var background = create('rect', true);
-    attr(background, 'class', 'replay-trade-preset-label-bg replay-trade-preset-' + side);
-    attr(background, 'x', labelX); attr(background, 'y', labelY);
-    attr(background, 'width', labelWidth); attr(background, 'height', 22); attr(background, 'rx', 3);
-    append(group, background);
-
-    var label = create('text', true);
-    attr(label, 'class', 'replay-trade-preset-label replay-trade-preset-label-' + side);
-    attr(label, 'style', 'font-weight:400!important;');
-    attr(label, 'x', labelX + 8); attr(label, 'y', labelY + 12);
-    text(label, labelText);
-    append(group, label);
-    var remove = create('text', true);
-    attr(remove, 'class', 'replay-trade-preset-delete replay-trade-preset-label-' + side);
-    attr(remove, 'x', labelX + labelWidth - 15); attr(remove, 'y', labelY + 12);
-    attr(remove, 'aria-label', '删除' + presetRoleLabel(side) + '预设');
-    text(remove, '×');
-    remove.addEventListener('mousedown', function (removeEvent) {
+    var rendered = overlayRenderer.renderPresetOrder(rendererAdapter, svg, {
+      side: side,
+      orderId: orderId,
+      width: width,
+      y: point.y,
+      labelText: labelText,
+      labelWidth: labelWidth,
+      labelX: labelX,
+      labelY: labelY,
+      ariaLabel: labelText + '，上下拖动修改',
+      deleteAriaLabel: '删除' + presetRoleLabel(side) + '预设',
+    });
+    if (!rendered) return;
+    var group = rendered.group;
+    var remove = rendered.remove;
+    if (remove && typeof remove.addEventListener === 'function') remove.addEventListener('mousedown', function (removeEvent) {
       if (removeEvent && typeof removeEvent.preventDefault === 'function') removeEvent.preventDefault();
       if (removeEvent && typeof removeEvent.stopPropagation === 'function') removeEvent.stopPropagation();
       cancelPreset(orderId ? { side: side, id: orderId } : side);
     });
-    append(group, remove);
-    group.addEventListener('mousedown', function (dragEvent) { beginPresetDrag(dragEvent, side, order); });
-    append(svg, group);
+    if (typeof group.addEventListener === 'function') {
+      group.addEventListener('mousedown', function (dragEvent) { beginPresetDrag(dragEvent, side, order); });
+    }
   }
 
   function drawPresetPreview(svg, selection, width, height, rows) {
@@ -2348,19 +2320,14 @@
       rows && rows.length ? rows : [{ high: selection.previewPrice, low: selection.previewPrice }], width, height);
     var resolvedY = converted && finite(converted.y) != null ? Number(converted.y) : Number(selection.previewY);
     var y = Math.max(0, Math.min(height, resolvedY));
-    var line = create('line', true);
-    attr(line, 'class', 'replay-trade-preset-preview replay-trade-preset-preview-' + side);
-    attr(line, 'x1', 0); attr(line, 'x2', width); attr(line, 'y1', y); attr(line, 'y2', y);
-    attr(line, 'data-trade-side', side);
-    append(svg, line);
-
-    var label = create('text', true);
-    attr(label, 'class', 'replay-trade-preset-label replay-trade-preset-label-' + side);
-    attr(label, 'x', Math.max(8, width - 10)); attr(label, 'y', y - 7);
-    attr(label, 'text-anchor', 'end');
-    attr(label, 'aria-label', '预设' + presetRoleLabel(side) + '水平价格 ' + numberText(selection.previewPrice));
-    text(label, presetRoleLabel(side) + ' ' + numberText(selection.previewPrice));
-    append(svg, label);
+    overlayRenderer.renderPresetPreview(rendererAdapter, svg, {
+      side: side,
+      width: width,
+      y: y,
+      labelX: Math.max(8, width - 10),
+      ariaLabel: '预设' + presetRoleLabel(side) + '水平价格 ' + numberText(selection.previewPrice),
+      labelText: presetRoleLabel(side) + ' ' + numberText(selection.previewPrice),
+    });
   }
 
   function drawCompletedBracketGhosts(svg, normalized, width, height, rows) {
@@ -2377,18 +2344,13 @@
           if ((side !== 'takeProfit' && side !== 'stopLoss') || price == null || seen[identity]) return;
           seen[identity] = true;
           var point = convertPrice(null, price, rows, width, height);
-          var group = create('g', true);
-          attr(group, 'class', 'replay-trade-history-ghost replay-trade-history-ghost-' + side);
-          var line = create('line', true);
-          attr(line, 'x1', 0); attr(line, 'x2', width); attr(line, 'y1', point.y); attr(line, 'y2', point.y);
-          attr(line, 'class', 'replay-trade-preset replay-trade-preset-' + side);
-          append(group, line);
-          var label = create('text', true);
-          attr(label, 'x', Math.max(8, width - 250)); attr(label, 'y', point.y - 6);
-          attr(label, 'class', 'replay-trade-preset-label replay-trade-preset-label-' + side);
-          text(label, 'B' + orderNumber + ' 历史' + presetRoleLabel(side) + ' ' + numberText(price));
-          append(group, label);
-          append(svg, group);
+          overlayRenderer.renderHistoryGhost(rendererAdapter, svg, {
+            side: side,
+            width: width,
+            y: point.y,
+            labelX: Math.max(8, width - 250),
+            labelText: 'B' + orderNumber + ' 历史' + presetRoleLabel(side) + ' ' + numberText(price),
+          });
         });
       });
     });

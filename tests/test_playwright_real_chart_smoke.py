@@ -604,6 +604,98 @@ def test_real_canvas_bar_replay_select_step_exit(page: Page):
     assert page.evaluate("() => window.__kline_chart.getDataList().length") > before + 1
 
 
+def test_real_replay_trade_marker_survives_zoom_and_drag(page: Page):
+    """真实交易标记在缩放和拖拽后必须保持唯一并提交新坐标。"""
+
+    page.locator("#bar-replay-btn").click()
+    page.wait_for_function(
+        "() => window.BarReplayController?.getState?.().status === 'selecting'",
+        timeout=CHART_TIMEOUT_MS,
+    )
+    target = page.evaluate(
+        """() => {
+          const canvases = Array.from(document.querySelectorAll('#pro-container canvas'));
+          const canvas = canvases.sort((a, b) =>
+            (b.getBoundingClientRect().width * b.getBoundingClientRect().height) -
+            (a.getBoundingClientRect().width * a.getBoundingClientRect().height))[0];
+          const rect = canvas.getBoundingClientRect();
+          return {x: rect.left + rect.width * 0.42, y: rect.top + rect.height * 0.50};
+        }"""
+    )
+    page.mouse.click(target["x"], target["y"])
+    page.wait_for_function(
+        "() => window.BarReplayController?.getState?.().status === 'paused'",
+        timeout=CHART_TIMEOUT_MS,
+    )
+
+    page.locator("#replay-trade-buy").click()
+    page.mouse.click(target["x"], target["y"])
+    close_buy = page.locator(
+        '#replay-trade-price-picker button[aria-label="以收盘执行买入"]'
+    )
+    close_buy.wait_for(state="visible", timeout=CHART_TIMEOUT_MS)
+    close_buy.click()
+    page.wait_for_function(
+        """() => document.querySelectorAll(
+          '#replay-trade-overlay .replay-trade-buy-marker'
+        ).length === 1 && document.querySelectorAll(
+          '#replay-trade-overlay .replay-trade-execution-level'
+        ).length === 1 && document.querySelectorAll(
+          '#replay-trade-overlay .replay-trade-risk-zone'
+        ).length === 2""",
+        timeout=CHART_TIMEOUT_MS,
+    )
+    assert page.evaluate(
+        """() => document.querySelector('#replay-trade-overlay')?.parentNode ===
+          window.__kline_chart?.getDom?.('candle_pane', window.klinecharts.DomPosition.Main)"""
+    )
+
+    marker = page.locator("#replay-trade-overlay .replay-trade-buy-marker")
+    before = page.evaluate(
+        """() => {
+          const record = window.ReplayTradeUI?.getState?.().records?.[0];
+          return record ? {timestamp: record.timestamp, price: record.price} : null;
+        }"""
+    )
+    assert before is not None
+    page.mouse.move(target["x"], target["y"])
+    page.mouse.wheel(0, -420)
+    page.wait_for_timeout(150)
+    assert marker.count() == 1
+    assert page.locator(
+        "#replay-trade-overlay .replay-trade-execution-level"
+    ).count() == 1
+
+    arrow = page.locator(
+        "#replay-trade-overlay .replay-trade-buy-marker .replay-trade-marker-arrow"
+    )
+    assert arrow.count() == 1
+    bounds = arrow.bounding_box()
+    assert bounds is not None
+    start_x = bounds["x"] + bounds["width"] / 2
+    start_y = bounds["y"] + bounds["height"] / 2
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x - 70, start_y + 24, steps=5)
+    page.mouse.up()
+    page.wait_for_function(
+        """(previous) => {
+          const record = window.ReplayTradeUI?.getState?.().records?.[0];
+          return record && (record.timestamp !== previous.timestamp || record.price !== previous.price);
+        }""",
+        arg=before,
+        timeout=CHART_TIMEOUT_MS,
+    )
+    assert marker.count() == 1
+    assert page.locator("#replay-trade-price-picker:not([hidden])").count() == 0
+
+    page.locator("#bar-replay-exit").click()
+    page.wait_for_function(
+        "() => window.BarReplayController?.getState?.().status === 'idle'",
+        timeout=CHART_TIMEOUT_MS,
+    )
+
+
 def test_real_left_and_right_panel_collapse_resize_chart(page: Page):
     """左右面板的展开/收缩必须让真实图表容器和 Canvas 改变尺寸。"""
 
