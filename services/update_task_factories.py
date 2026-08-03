@@ -58,6 +58,11 @@ def _full_update_already_running() -> bool:
     """
     try:
         import data_update_manager as dum
+        # data_update_manager owns the guard.  Keep the attribute fallback for
+        # old deployments/tests that provide only the legacy seam.
+        reader = getattr(dum, 'is_full_update_in_progress', None)
+        if callable(reader):
+            return bool(reader())
         return bool(getattr(dum, '_full_update_in_progress', False))
     except Exception:
         return False

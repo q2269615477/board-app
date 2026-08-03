@@ -36,6 +36,36 @@ logger = logging.getLogger('data_update')
 STATUS_FILE = Path('data') / 'update_status.json'
 _update_lock = threading.Lock()
 _update_in_progress = False
+# The unified daily-update entry point owns this guard.  Other entry points
+# (for example the force-update task) may observe it, but must never maintain a
+# second copy of the state.  Keeping the flag beside ``update_all_today``
+# prevents two scheduler/agent callers from passing the initial "not done"
+# check at the same time and starting duplicate full updates.
+_full_update_lock = threading.Lock()
+_full_update_in_progress = False
+
+
+def _claim_full_update() -> bool:
+    """Atomically claim the unified daily-update slot."""
+    global _full_update_in_progress
+    with _full_update_lock:
+        if _full_update_in_progress:
+            return False
+        _full_update_in_progress = True
+        return True
+
+
+def _release_full_update() -> None:
+    """Release the unified daily-update slot, including exceptional exits."""
+    global _full_update_in_progress
+    with _full_update_lock:
+        _full_update_in_progress = False
+
+
+def is_full_update_in_progress() -> bool:
+    """Read the manager-owned full-update guard without starting any work."""
+    with _full_update_lock:
+        return bool(_full_update_in_progress)
 
 # 状态存储委托给 services/update_status_store.py（已抽取为独立模块）
 from services.update_status_store import (
@@ -1763,7 +1793,54 @@ def materialize_higher_periods(codes=None, periods=None) -> dict:
     return result
 
 
-def update_all_boards(max_retries: int = 3, cancel_check=None, from_full=False) -> dict:
+def _lagging_board_codes(boards, target: str):
+    """Return board codes whose daily metadata is not at ``target``.
+
+    ``None`` is never returned: if metadata cannot be read, treating every
+    requested board as lagging is the safe interpretation for a catch-up run.
+    The query is batched so ``only_lagging`` does not turn into one SQLite
+    round-trip per board.
+    """
+    ordered = list(dict.fromkeys(str(code) for _typ, _name, code in boards if code))
+    if not ordered:
+        return set()
+    try:
+        conn = _sqlite3.connect(_LEDGER_DB)
+        try:
+            meta = {}
+            for start in range(0, len(ordered), 500):
+                chunk = ordered[start:start + 500]
+                placeholders = ','.join('?' for _ in chunk)
+                rows = conn.execute(
+                    "SELECT code, last_date, rows FROM kline_meta "
+                    f"WHERE period='daily' AND code IN ({placeholders})",
+                    chunk,
+                ).fetchall()
+                meta.update({str(code): (last_date, int(count or 0))
+                             for code, last_date, count in rows})
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.warning("[板块] only_lagging 元数据读取失败，按全量补齐: %s", exc)
+        return set(ordered)
+
+    target_norm = str(target or '').replace('-', '')[:8]
+    return {
+        code for code in ordered
+        if (
+            str(meta.get(code, (None, 0))[0] or '').replace('-', '')[:8]
+            != target_norm
+            or int(meta.get(code, (None, 0))[1] or 0) <= 0
+        )
+    }
+
+
+def update_all_boards(
+    max_retries: int = 3,
+    cancel_check=None,
+    from_full=False,
+    only_lagging: bool = False,
+) -> dict:
     global _update_in_progress
     if _update_in_progress:
         logger.warning("[板块] 上次更新尚未完成，跳过")
@@ -1774,16 +1851,38 @@ def update_all_boards(max_retries: int = 3, cancel_check=None, from_full=False) 
 
     try:
         boards = _load_classified_boards(('industry', 'concept'))
-        result['total'] = len(boards)
-        logger.info(f"[板块] 共 {len(boards)} 个")
+        requested_total = len(boards)
+        requested_codes = {code for _board_type, _name, code in boards}
+        result['requested_total'] = requested_total
 
         target = datetime.now().strftime('%Y%m%d')
-        if from_full:
+        if from_full or only_lagging:
             try:
                 from data.board_api import get_last_trading_date
-                target = str(get_last_trading_date()).replace('-', '')[:8]
+                candidate = str(get_last_trading_date() or '').replace('-', '')[:8]
+                if candidate:
+                    target = candidate
             except Exception:
                 pass
+        result['only_lagging'] = bool(only_lagging)
+        if only_lagging:
+            lagging_codes = _lagging_board_codes(boards, target)
+            boards = [board for board in boards if board[2] in lagging_codes]
+            result['lagging_total'] = len(boards)
+        result['total'] = len(boards)
+        logger.info(
+            "[板块] 共 %s 个%s",
+            len(boards),
+            f"（分类总数 {requested_total}，仅欠更）" if only_lagging else '',
+        )
+        if only_lagging and not boards:
+            result.update({
+                'skipped': True,
+                'target_trade_date': target,
+                'completion_ready': True,
+                'message': '板块日线均已是目标交易日',
+            })
+            return result
         pro = _get_tushare_pro()
         raw_all = pro.dc_daily(
             trade_date=target,
@@ -1856,7 +1955,11 @@ def update_all_boards(max_retries: int = 3, cancel_check=None, from_full=False) 
 
             def mark_board_batch(status):
                 board_status = status.setdefault('boards', {})
-                valid_codes = set(required_codes)
+                # A lagging-only run must not delete status entries for boards
+                # that were intentionally filtered out because they are fresh.
+                valid_codes = (
+                    set(requested_codes) if only_lagging else set(required_codes)
+                )
                 for stale_code in list(board_status):
                     if str(stale_code).startswith('BK') and stale_code not in valid_codes:
                         board_status.pop(stale_code, None)
@@ -2075,7 +2178,43 @@ def _verify_board_daily_target(expected_codes=None, target_date=None) -> dict:
         return {'target_date': target, 'verified': False, 'error': str(exc)[:160]}
 
 
+def _emit_update_progress(progress_callback, stage: str, current: int, total: int, message: str) -> None:
+    """Notify a progress consumer without allowing it to break the update."""
+    if not callable(progress_callback):
+        return
+    try:
+        progress_callback(stage, current, total, message)
+    except Exception as exc:
+        logger.warning("[日更] progress_callback(%s) ignored: %s", stage, exc)
+
+
 def update_all_today(
+    max_retries: int = 3,
+    cancel_check=None,
+    progress_callback=None,
+    force: bool = False,
+) -> dict:
+    """Run the unified daily update under the manager-owned single-flight guard."""
+    if not _claim_full_update():
+        logger.warning("[日更] 已有全量更新进行中，跳过重复调用")
+        return {
+            'skipped': True,
+            'running': True,
+            'completion_ready': False,
+            'message': '全量日更进行中',
+        }
+    try:
+        return _update_all_today_impl(
+            max_retries=max_retries,
+            cancel_check=cancel_check,
+            progress_callback=progress_callback,
+            force=force,
+        )
+    finally:
+        _release_full_update()
+
+
+def _update_all_today_impl(
     max_retries: int = 3,
     cancel_check=None,
     progress_callback=None,
@@ -2090,7 +2229,7 @@ def update_all_today(
 
     Args:
         cancel_check: 可选 callable，返回 True 时中断
-        progress_callback: 可选 callable(code, index, total)，报告进度
+        progress_callback: 可选 callable(stage, current, total, message)，报告阶段边界
     """
     if is_today_updated() and not force:
         logger.info("[日更] 今天已更新，跳过")
@@ -2116,6 +2255,7 @@ def update_all_today(
 
     # 1. 指数：仅 QMT
     logger.info("[日更] Step 1/4: 指数更新 (仅 QMT)")
+    _emit_update_progress(progress_callback, 'indices', 0, 4, '指数更新开始')
     _mark_daily_stage_running('indices')
     if qmt_formula_ok:
         result['indices'] = update_all_indices_qmt(max_retries)
@@ -2124,13 +2264,16 @@ def update_all_today(
         result['indices'] = {
             'success': 0, 'failed': 0, 'skipped': True, 'error': 'QMT不可用',
         }
+    _emit_update_progress(progress_callback, 'indices', 1, 4, '指数更新完成')
 
     # 2. 个股：仅 QMT
     logger.info("[日更] Step 2/4: 个股日更 (QMT HTTP 18080)")
+    _emit_update_progress(progress_callback, 'stocks', 1, 4, '个股更新开始')
     _mark_daily_stage_running('stocks')
     result['stocks'] = qmt_update_all_stocks(
         max_retries,
         cancel_check=cancel_check,
+        force=force,
     )
     if not (result['stocks'] or {}).get('error'):
         # 取消检查：如果个股更新被取消，跳过后续步骤
@@ -2194,8 +2337,10 @@ def update_all_today(
                 logger.warning(f"[日更] 周期物化异常: {e}")
     else:
         logger.error("[日更] QMT HTTP 18080 不可用，个股日结待重试")
+    _emit_update_progress(progress_callback, 'stocks', 2, 4, '个股更新完成')
 
     # 3–4. 东财板块：17:00 前不把 Tushare 正式日线视为完成。
+    _emit_update_progress(progress_callback, 'boards', 3, 4, '板块更新开始')
     if not _is_trading_day():
         logger.info("[日更] 非交易日，跳过全量板块与周月线刷新")
         result['boards'] = {'success': 0, 'skipped': True, 'message': '非交易日'}
@@ -2236,6 +2381,7 @@ def update_all_today(
             logger.warning(f"[日更] 周月线刷新异常: {e}")
             result['weekly_monthly'] = {'success': 0, 'skipped': True, 'error': str(e)[:120]}
 
+    _emit_update_progress(progress_callback, 'boards', 4, 4, '板块更新完成')
     pending_stages = []
     if not _stage_ready(result.get('indices')):
         pending_stages.append('indices')
