@@ -24,7 +24,7 @@
 
 ### 阶段 1：回放交易状态模型
 
-状态：本轮实施。
+状态：已完成并提交（`a5de3b4`）。
 
 - 新增 `replay-trade-state-model.js`。
 - 抽取交易记录兼容、去重排序、持仓汇总和状态扁平化。
@@ -34,9 +34,13 @@
 
 ### 阶段 2：叠加比较计算模型
 
+状态：已完成，待提交。
+
 - 新增 `chart-comparison-model.js`。
 - 抽取周期映射、时间桶、序列对齐、归一化、区间统计和百分比坐标计算。
 - 保留搜索、拖拽、SVG 和图表适配在控制器中。
+
+实施边界：控制器通过 `window.ChartComparisonModel` 薄委托；`computeRangeComparison`、`computeMainRange`、`computeRangeDetails` 和 `createSearchUrl` 继续留在控制器，避免改变已有入口契约和网络行为。
 
 验收：11 个周期矩阵、不同交易日对齐、框选缩放后端点黏合、多个叠加标的。
 

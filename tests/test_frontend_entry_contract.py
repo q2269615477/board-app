@@ -119,6 +119,7 @@ def test_replay_trading_modules_are_loaded_in_contract_order():
         "static/js/bar-replay.js",
         "static/js/replay-trade-engine.js",
         "static/js/replay-trade-state-model.js",
+        "static/js/chart-comparison-model.js",
         "static/js/chart-comparison.js",
         "static/js/replay-trade-ui.js",
         "static/js/app-init.js",
@@ -172,12 +173,15 @@ def test_vertical_pan_entry_uses_native_price_axis_and_resets_on_context_change(
 
 def test_chart_comparison_entry_rebases_to_visible_left_edge_and_uses_percent_returns():
     scripts = _parse_entry_scripts()
+    model_entry = "static/js/chart-comparison-model.js"
     entry = "static/js/chart-comparison.js"
+    assert model_entry in scripts
     assert entry in scripts
-    assert scripts.index("static/js/chart-core.js") < scripts.index(entry) < scripts.index(
+    assert scripts.index("static/js/chart-core.js") < scripts.index(model_entry) < scripts.index(entry) < scripts.index(
         "static/js/app-init.js"
     )
     source = (ROOT / entry).read_text(encoding="utf-8")
+    assert "ChartComparisonModel must load before ChartComparisonController" in source
     assert "ChartComparisonController" in source
     assert "getVisibleRange" in source
     assert "OnVisibleRangeChange" in source or "onVisibleRangeChange" in source

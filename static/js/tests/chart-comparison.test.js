@@ -196,8 +196,10 @@ function loadController() {
     setTimeout,
     clearTimeout,
   });
-  const source = fs.readFileSync(require.resolve('../chart-comparison.js'), 'utf8');
-  vm.runInContext(source, context, { filename: 'chart-comparison.js' });
+  ['../chart-comparison-model.js', '../chart-comparison.js'].forEach((modulePath) => {
+    const source = fs.readFileSync(require.resolve(modulePath), 'utf8');
+    vm.runInContext(source, context, { filename: modulePath });
+  });
   return { controller: window.ChartComparisonController, window, document, periodBar, drawingBar, byId, indicatorRegistrations };
 }
 
