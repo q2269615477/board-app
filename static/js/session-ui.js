@@ -25,12 +25,27 @@
     'scanResonance',
   ];
 
+  const SESSION_STATE_METHODS = [
+    'projectPanelContext',
+    'normalizeOverlayInstance',
+    'snapPriceElement',
+    'projectBarToKbar',
+  ];
+
   function requireSessionAPI() {
     const api = global.SessionAPI;
     if (!api) throw new Error('session-api.js 未加载');
     const missing = SESSION_API_METHODS.filter((name) => typeof api[name] !== 'function');
     if (missing.length) throw new Error('SessionAPI 缺少具名方法: ' + missing.join(', '));
     return api;
+  }
+
+  function requireSessionState() {
+    const state = global.SessionState;
+    if (!state) throw new Error('session-state.js 未加载');
+    const missing = SESSION_STATE_METHODS.filter((name) => typeof state[name] !== 'function');
+    if (missing.length) throw new Error('SessionState 缺少具名方法: ' + missing.join(', '));
+    return state;
   }
 
   let S = null;
@@ -86,31 +101,12 @@
   }
 
   function panelCtx() {
-    const s = (global.store && global.store.selected) || {};
-    const ctx = global.__board_ctx || {};
-    // Pro 的 __board_ctx 与 store.selected 可能出现分歧（如用 Pro 内置搜索切换标的）
-    // 以 __board_ctx 为准（它反映 KLineChart Pro 当前实际状态）
-    let code = ctx.symbol || ctx.code || s.code || 'sh000001';
-    let name = ctx.name || s.name || '';
-    let atype = ctx.type || s.type || 'index';
-    let period = ctx.period || 'daily';
-    if (period && typeof period === 'object') {
-      const t = period.timespan, m = period.multiplier;
-      if (t === 'minute') period = m + 'm';
-      else if (t === 'hour') period = m * 60 + 'm';
-      else if (t === 'day') period = 'daily';
-      else if (t === 'week') period = 'weekly';
-      else if (t === 'month')
-        period = m === 3 ? 'quarterly' : m === 12 ? 'yearly' : 'monthly';
-      else if (t === 'year') period = 'yearly';
-      else period = 'daily';
-    }
-    return {
-      symbol: code,
-      symbol_name: name,
-      asset_type: atype,
-      period,
-    };
+    // SessionState owns the native period adapters, including:
+    // else if (t === 'year') period = 'yearly';
+    return requireSessionState().projectPanelContext(
+      global.__board_ctx || {},
+      (global.store && global.store.selected) || {}
+    );
   }
 
   function getChart() {
@@ -131,53 +127,9 @@
   }
 
   function normalizeOverlayInstance(o) {
-    if (!o) return null;
-    // 跳过高亮临时线，避免写回事件元素
-    try {
-      const rawId = o.id || (typeof o.getId === 'function' ? o.getId() : '');
-      if (rawId && String(rawId).indexOf('sess_hl') === 0) return null;
-    } catch (e) {}
-    let points = [];
-    try {
-      if (typeof o.getPoints === 'function') points = o.getPoints() || [];
-      else if (Array.isArray(o.points)) points = o.points;
-      else if (o._points) points = o._points;
-    } catch (e) {
-      points = [];
-    }
-    const pts = (points || []).map((p) => ({
-      timestamp: p.timestamp != null ? p.timestamp : p.time != null ? p.time : p.dataIndex,
-      value: p.value != null ? p.value : p.price != null ? p.price : p.y,
-    }));
-    const type =
-      o.name ||
-      (typeof o.getName === 'function' ? o.getName() : null) ||
-      o.totalOverlayName ||
-      o.type ||
-      'overlay';
-    let id = o.id || (typeof o.getId === 'function' ? o.getId() : null);
-    // 无稳定 id 时用 type+点位哈希，避免每次 flush 随机 id 导致元素爆炸
-    if (!id) {
-      const key =
-        String(type) +
-        '|' +
-        pts
-          .map((p) => String(p.timestamp != null ? p.timestamp : '') + ':' + String(p.value != null ? p.value : ''))
-          .join(';');
-      let h = 0;
-      for (let i = 0; i < key.length; i++) h = (Math.imul(31, h) + key.charCodeAt(i)) | 0;
-      id = 'ovh_' + (h >>> 0).toString(16);
-    }
-    const normalized = {
-      id: String(id),
-      type: String(type),
-      points: pts,
-      styles: o.styles || {},
-    };
-    // Custom overlays (for example position-risk tools) keep their calculator
-    // settings here. Preserve it without changing the shape of legacy lines.
-    if (o.extendData !== undefined) normalized.extendData = o.extendData;
-    return normalized;
+    // SessionState keeps position-risk calculator settings:
+    // normalized.extendData = o.extendData
+    return requireSessionState().normalizeOverlayInstance(o);
   }
 
   function getOverlayStore(chart) {
@@ -278,64 +230,17 @@
   }
 
   function snapPriceElement(bar, price) {
-    if (!bar || price == null || !isFinite(Number(price)))
-      return { price_element: null, price };
-    const cand = [
-      ['open', bar.open],
-      ['high', bar.high],
-      ['low', bar.low],
-      ['close', bar.close],
-    ];
-    let best = cand[0], bestD = Math.abs(cand[0][1] - price);
-    for (const c of cand) {
-      const d = Math.abs(c[1] - price);
-      if (d < bestD) {
-        bestD = d;
-        best = c;
-      }
-    }
-    const scale = Math.max(Math.abs(best[1]), 1e-6);
-    if (bestD / scale > 0.002 && bestD > 0.01)
-      return { price_element: 'custom', price };
-    return { price_element: best[0], price: best[1] };
+    return requireSessionState().snapPriceElement(bar, price);
   }
 
   function barToKbar(bar, price) {
     const ctx = panelCtx();
-    const s = snapPriceElement(bar, price != null ? price : bar.close);
-    const ts = bar.timestamp;
-    const date =
-      bar.date ||
-      (ts ? new Date(ts < 1e12 ? ts * 1000 : ts).toISOString().slice(0, 10) : '');
-    const volume =
-      bar.volume != null
-        ? bar.volume
-        : bar.vol != null
-          ? bar.vol
-          : bar.turnover != null
-            ? bar.turnover
-            : null;
-    const amount =
-      bar.amount != null
-        ? bar.amount
-        : bar.turnover != null && bar.volume == null
-          ? null
-          : bar.amount;
-    return {
-      timestamp: ts,
-      date,
-      open: bar.open,
-      high: bar.high,
-      low: bar.low,
-      close: bar.close,
-      volume,
-      amount: amount != null ? amount : bar.amount,
-      price_element: s.price_element,
-      price: s.price,
-      symbol: ctx.symbol,
-      period: ctx.period,
-      chart_id: S && S.current_chart_id,
-    };
+    return requireSessionState().projectBarToKbar(
+      bar,
+      price,
+      ctx,
+      S && S.current_chart_id
+    );
   }
 
   function fmtVol(v) {
@@ -2781,6 +2686,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     // 明确要求 session-api.js 先行加载；不要让首次点击才暴露脚本顺序错误。
     try {
       requireSessionAPI();
+      requireSessionState();
     } catch (e) {
       toast('会话模块: ' + e.message);
       return;

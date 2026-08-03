@@ -87,19 +87,47 @@ def test_index_shell_loads_modular_frontend_scripts():
 
 
 def test_session_api_precedes_session_ui_and_ui_guards_named_boundary():
-    """session-api.js must load first and session-ui.js must require its API."""
+    """session API/state modules must precede session UI and guard named boundaries."""
     scripts = _parse_entry_scripts()
     api = "static/js/session-api.js"
+    state = "static/js/session-state.js"
     ui = "static/js/session-ui.js"
     assert api in scripts, f"missing session API entry script: {api}"
+    assert state in scripts, f"missing session state entry script: {state}"
     assert ui in scripts, f"missing session UI entry script: {ui}"
-    assert scripts.index(api) < scripts.index(ui), (
-        "session-api.js must be loaded before session-ui.js"
+    assert scripts.index(api) < scripts.index(state) < scripts.index(ui), (
+        "session-api.js and session-state.js must be loaded before session-ui.js"
     )
     source = (ROOT / ui).read_text(encoding="utf-8")
     assert "function requireSessionAPI()" in source
     assert "SESSION_API_METHODS" in source
+    assert "function requireSessionState()" in source
+    assert "SESSION_STATE_METHODS" in source
     assert "global.SessionAPI.api" not in source
+
+
+def test_session_state_is_a_standalone_pure_projection_module():
+    """SessionState must stay independent from DOM/chart/network/session ownership."""
+    scripts = _parse_entry_scripts()
+    state = "static/js/session-state.js"
+    ui = "static/js/session-ui.js"
+    assert state in scripts
+    source = (ROOT / state).read_text(encoding="utf-8")
+    assert "module.exports" in source
+    for export_name in (
+        "projectPanelContext",
+        "normalizeOverlayInstance",
+        "snapPriceElement",
+        "projectBarToKbar",
+    ):
+        assert f"{export_name}:" in source
+    for forbidden in ("document", "fetch(", "setTimeout", "setInterval", "__kline_chart", "var S", "let S"):
+        assert forbidden not in source, f"session-state.js must not own runtime state: {forbidden}"
+    ui_source = (ROOT / ui).read_text(encoding="utf-8")
+    assert "requireSessionState().projectPanelContext" in ui_source
+    assert "requireSessionState().normalizeOverlayInstance" in ui_source
+    assert "requireSessionState().snapPriceElement" in ui_source
+    assert "requireSessionState().projectBarToKbar" in ui_source
 
 
 def test_bar_replay_entry_exists_and_is_between_chart_core_and_app_init():
