@@ -1,6 +1,77 @@
 // ===== 3. KLineChart Pro Datafeed（带请求取消+超时控制） =====
 const KLINE_FETCH_TIMEOUT_MS = 15000;
 const KLINE_API_TIMEOUT_SEC = 5;
+const KLINE_OBSERVABILITY_FIELDS = Object.freeze([
+  'source',
+  'stale',
+  'background_refresh_started',
+  'load_ms',
+  'fallback_chain'
+]);
+
+// Only the server-owned observability fields cross the chart boundary.  The
+// datafeed may receive a larger response (bars, intraday overlay, diagnostics,
+// etc.), but UI events/cache entries must not accidentally retain that payload.
+function _copyKlineObservability(value, overrides) {
+  const input = value && typeof value === 'object' ? value : {};
+  const next = {
+    source: input.source == null ? '' : String(input.source),
+    stale: input.stale === true,
+    background_refresh_started: input.background_refresh_started === true,
+    load_ms: Number.isFinite(Number(input.load_ms))
+      ? Math.max(0, Number(input.load_ms))
+      : 0,
+    fallback_chain: Array.isArray(input.fallback_chain)
+      ? input.fallback_chain.slice()
+      : (input.fallback_chain == null ? [] : [input.fallback_chain]),
+    client_cache_hit: input.client_cache_hit === true
+  };
+  const extra = overrides && typeof overrides === 'object' ? overrides : {};
+  KLINE_OBSERVABILITY_FIELDS.forEach(function(field) {
+    if (!Object.prototype.hasOwnProperty.call(extra, field)) return;
+    if (field === 'source') next.source = extra.source == null ? '' : String(extra.source);
+    else if (field === 'stale') next.stale = extra.stale === true;
+    else if (field === 'background_refresh_started') {
+      next.background_refresh_started = extra.background_refresh_started === true;
+    } else if (field === 'load_ms') {
+      const n = Number(extra.load_ms);
+      next.load_ms = Number.isFinite(n) ? Math.max(0, n) : 0;
+    } else if (field === 'fallback_chain') {
+      next.fallback_chain = Array.isArray(extra.fallback_chain)
+        ? extra.fallback_chain.slice()
+        : (extra.fallback_chain == null ? [] : [extra.fallback_chain]);
+    }
+  });
+  if (Object.prototype.hasOwnProperty.call(extra, 'client_cache_hit')) {
+    next.client_cache_hit = extra.client_cache_hit === true;
+  }
+  return next;
+}
+
+function _logKlineObservability(kind, detail) {
+  const fallback = Array.isArray(detail && detail.fallback_chain)
+    ? detail.fallback_chain
+    : [];
+  const isError = kind === 'error' || (detail && detail.ok === false);
+  const isMultiFallback = fallback.length > 1;
+  if (!isError && !(detail && detail.stale) && !isMultiFallback) return;
+  const payload = {
+    event: kind,
+    symbol: detail && detail.symbol || '',
+    period: detail && detail.period || '',
+    ok: detail && detail.ok === true,
+    source: detail && detail.source || '',
+    stale: detail && detail.stale === true,
+    background_refresh_started: detail && detail.background_refresh_started === true,
+    load_ms: detail && detail.load_ms,
+    fallback_chain: fallback.slice(),
+    client_cache_hit: detail && detail.client_cache_hit === true
+  };
+  try {
+    if (isError) console.warn('[KLine][observability]', payload);
+    else console.info('[KLine][observability]', payload);
+  } catch (e) {}
+}
 
 function _normalizeChartBar(data) {
   var d = data || {};
@@ -98,11 +169,27 @@ class BoardDatafeed {
     this._hotOrder.push(key);
     while (this._hotOrder.length > this._HOT_MAX) this._hotOrder.shift();
   }
-  // 通知 UI 当前请求结果（成功/失败/空），供外部监听 kline-loaded / kline-error
-  _notifyKlineResult(symbol, period, ok, count, error){
+  // 通知 UI 当前请求结果（成功/失败/空），供外部监听 kline-loaded / kline-error。
+  // 事件与现场快照只保留白名单元数据，避免把后端响应对象泄露到全局。
+  _notifyKlineResult(symbol, period, ok, count, error, observability){
     try{
-      const detail = { symbol: symbol.ticker, period, ok: !!ok, count: count || 0, ts: Date.now() };
+      const detail = Object.assign({
+        symbol: symbol && symbol.ticker ? String(symbol.ticker) : '',
+        period,
+        ok: !!ok,
+        count: Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0,
+        ts: Date.now()
+      }, _copyKlineObservability(observability, {
+        client_cache_hit: !!(observability && observability.client_cache_hit)
+      }));
+      if(!ok && !detail.source) detail.source = 'error';
       if(!ok && error) detail.error = String(error).slice(0,120);
+      // Deep-copy the fallback chain so later cache updates cannot mutate the
+      // diagnostic snapshot already exposed to the browser console.
+      window.__lastKlineObservability = Object.assign({}, detail, {
+        fallback_chain: detail.fallback_chain.slice()
+      });
+      _logKlineObservability(!ok ? 'error' : 'loaded', detail);
       window.dispatchEvent(new CustomEvent('kline-loaded', { detail }));
       if(!ok && error){
         window.dispatchEvent(new CustomEvent('kline-error', { detail }));
@@ -257,6 +344,7 @@ class BoardDatafeed {
     const windowHigh = expandedWindow.high;
     const servedRange = this._servedRanges.get(cacheKey);
     const olderPage = !!(hasWindow && servedRange && windowHigh < servedRange.min);
+    var observability = _copyKlineObservability(null, { client_cache_hit: false });
     const windowQuery = hasWindow
       ? '&from=' + Math.trunc(windowLow) + '&to=' + Math.trunc(windowHigh) + '&limit=600'
       : '&limit=800';
@@ -272,6 +360,7 @@ class BoardDatafeed {
       });
       if (cached && (Date.now() - cached.ts) < hitTtl && windowCovered) {
         rows = cached.data.slice();
+        observability = _copyKlineObservability(cached.observability, { client_cache_hit: true });
         // 更新 LRU 热缓存
         this._updateHotOrder(cacheKey);
       } else {
@@ -285,10 +374,10 @@ class BoardDatafeed {
         this._activeReqs.delete(symKey);
         if(this._activeSymbolKey!==symbolKey) return [];  // 已切到其他标的，丢弃旧结果
         const j = await r.json();
-        if(j.loading){ this._notifyKlineResult(symbol, period, false, 0, 'loading'); return []; }
+        observability = _copyKlineObservability(j, { client_cache_hit: false });
+        if(j.loading){ this._notifyKlineResult(symbol, period, false, 0, 'loading', observability); return []; }
         if(j.error){
-          console.warn('kline data error:',j.error);
-          this._notifyKlineResult(symbol, period, false, 0, j.error);
+          this._notifyKlineResult(symbol, period, false, 0, j.error, observability);
           // D. 错误提示：让用户知道失败
           try{
             if(typeof showToastBar==='function'){
@@ -328,9 +417,12 @@ class BoardDatafeed {
         }
         var fetchedRanges = cachedRange.slice();
         if(hasWindow) fetchedRanges.push({ low: windowLow, high: windowHigh });
+        var backendObservability = _copyKlineObservability(observability);
+        delete backendObservability.client_cache_hit;
         this._cache.set(cacheKey, {
           data: rows.slice(), ts: Date.now(), ttl: ttl,
-          ranges: fetchedRanges, complete: !hasWindow
+          ranges: fetchedRanges, complete: !hasWindow,
+          observability: backendObservability
         });
         // stale 后台刷新：海外指数也必须在历史尾部修复完成后重新绘图。
         var _canBackgroundRefresh = ['stock','index','industry','concept','hk_index','global_index','us'].indexOf(symbol.type) >= 0;
@@ -360,11 +452,16 @@ class BoardDatafeed {
               }
               var existing = self._cache.get(reKey);
               rows2 = self._dedupeSort(((existing && existing.data) || []).concat(rows2), reP);
+              var refreshObservability = _copyKlineObservability(j2, { client_cache_hit: false });
+              var refreshBackendObservability = _copyKlineObservability(refreshObservability);
+              delete refreshBackendObservability.client_cache_hit;
               self._cache.set(reKey, {
                 data: rows2.slice(), ts: Date.now(), ttl: ttl,
                 ranges: (existing && existing.ranges) || fetchedRanges,
-                complete: (existing && existing.complete) || !hasWindow
+                complete: (existing && existing.complete) || !hasWindow,
+                observability: refreshBackendObservability
               });
+              self._notifyKlineResult(reSym, period, true, rows2.length, null, refreshObservability);
               window.dispatchEvent(new CustomEvent('refresh-current-symbol', {
                 detail: {
                   code: reSym.ticker,
@@ -383,7 +480,7 @@ class BoardDatafeed {
       rows = this._dedupeSort(rows, p);
       rows = this._onlyUnseenOlderRows(rows, servedRange, olderPage);
       this._recordServedRange(cacheKey, rows, olderPage);
-      this._notifyKlineResult(symbol, period, true, rows.length);
+      this._notifyKlineResult(symbol, period, true, rows.length, null, observability);
       return rows;
     } catch(e) {
       clearTimeout(tid);
@@ -391,8 +488,8 @@ class BoardDatafeed {
       // 被更新请求/切标的 abort：静默，禁止误报「超时/失败」
       if(e && e.name==='AbortError'){
         if(this._activeSymbolKey !== symbolKey) return [];
-        console.warn('kline fetch timeout for', symbol.ticker);
-        this._notifyKlineResult(symbol, period, false, 0, 'timeout');
+        observability = _copyKlineObservability(observability, { source: 'error', client_cache_hit: false });
+        this._notifyKlineResult(symbol, period, false, 0, 'timeout', observability);
         try{
           if(typeof showToastBar==='function'){
             showToastBar('K线数据加载超时: '+symbol.ticker);
@@ -403,7 +500,8 @@ class BoardDatafeed {
         return [];
       }
       if(this._activeSymbolKey !== symbolKey) return [];
-      this._notifyKlineResult(symbol, period, false, 0, (e && e.message) || 'network error');
+      observability = _copyKlineObservability(observability, { source: 'error', client_cache_hit: false });
+      this._notifyKlineResult(symbol, period, false, 0, (e && e.message) || 'network error', observability);
       try{
         if(typeof showToastBar==='function'){
           showToastBar('K线数据请求失败: '+symbol.ticker);

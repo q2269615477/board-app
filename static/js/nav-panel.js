@@ -1057,16 +1057,40 @@ function updateSymbolStrip(name, code, type, meta) {
   var nextCode = code || cur.code || '';
   var nextType = type || cur.type || 'index';
   meta = meta || {};
+  var fallbackChain = Array.isArray(meta.fallback_chain)
+    ? meta.fallback_chain.slice()
+    : (meta.fallback_chain == null ? [] : [meta.fallback_chain]);
+  var source = meta.source == null ? '' : String(meta.source);
+  var stale = meta.stale === true;
+  var backgroundRefreshStarted = meta.background_refresh_started === true;
+  var loadMs = Number(meta.load_ms);
+  if (!isFinite(loadMs) || loadMs < 0) loadMs = 0;
+  var clientCacheHit = meta.client_cache_hit === true;
 
   strip.dataset.type = nextType;
   strip.dataset.state = meta.state || strip.dataset.state || 'ready';
+  strip.dataset.source = source;
+  strip.dataset.stale = String(stale);
+  strip.dataset.backgroundRefreshStarted = String(backgroundRefreshStarted);
+  strip.dataset.loadMs = String(loadMs);
+  strip.dataset.fallbackChain = fallbackChain.join(',');
+  strip.dataset.clientCacheHit = String(clientCacheHit);
   if (badge) badge.textContent = _symbolStripTypeLabel(nextType, nextCode);
   if (nameEl) nameEl.textContent = nextName;
   if (codeEl) codeEl.textContent = nextCode;
   if (periodEl) periodEl.textContent = _symbolStripPeriodLabel(meta.period);
-  if (sourceEl) sourceEl.textContent = meta.source || 'cache_first';
+  if (sourceEl) sourceEl.textContent = source || '--';
   if (barsEl && meta.count != null) barsEl.textContent = meta.count + ' bars';
   if (lastEl) lastEl.textContent = meta.lastDate || _symbolStripLastDateFromChart() || lastEl.textContent || '--';
+  var titleParts = [
+    source ? 'source=' + source : 'source=unknown',
+    'stale=' + String(stale),
+    'background_refresh_started=' + String(backgroundRefreshStarted),
+    'load_ms=' + String(loadMs),
+    'fallback_chain=' + (fallbackChain.length ? fallbackChain.join(' > ') : 'none'),
+    'client_cache_hit=' + String(clientCacheHit)
+  ];
+  strip.title = titleParts.join(' | ');
 }
 
 function _updatePriceBar(name, code, type){
@@ -1187,7 +1211,12 @@ window.addEventListener('kline-loaded', function(ev) {
   updateSymbolStrip(cur.name, cur.code, cur.type, {
     state: d.ok === false ? 'error' : 'ready',
     period: d.period,
-    source: 'cache_first',
+    source: d.source,
+    stale: d.stale,
+    background_refresh_started: d.background_refresh_started,
+    load_ms: d.load_ms,
+    fallback_chain: d.fallback_chain,
+    client_cache_hit: d.client_cache_hit,
     count: d.count,
     lastDate: _symbolStripLastDateFromChart()
   });
@@ -1195,10 +1224,18 @@ window.addEventListener('kline-loaded', function(ev) {
 });
 
 window.addEventListener('kline-error', function(ev) {
+  var d = (ev && ev.detail) || {};
   var cur = _lastHeaderTarget || {};
+  if (d.symbol && cur.code && String(d.symbol) !== String(cur.code)) return;
   updateSymbolStrip(cur.name, cur.code, cur.type, {
     state: 'error',
-    source: 'error',
+    period: d.period,
+    source: d.source,
+    stale: d.stale,
+    background_refresh_started: d.background_refresh_started,
+    load_ms: d.load_ms,
+    fallback_chain: d.fallback_chain,
+    client_cache_hit: d.client_cache_hit,
     lastDate: _symbolStripLastDateFromChart()
   });
 });

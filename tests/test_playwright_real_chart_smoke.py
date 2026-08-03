@@ -400,6 +400,14 @@ def _install_kline_loaded_probe(page: Page) -> None:
               canonicalPeriod,
               ok: detail.ok === true,
               count: Number(detail.count || 0),
+              source: typeof detail.source === 'string' ? detail.source : '',
+              stale: detail.stale === true,
+              backgroundRefreshStarted: detail.background_refresh_started === true,
+              loadMs: Number(detail.load_ms || 0),
+              fallbackChain: Array.isArray(detail.fallback_chain)
+                ? detail.fallback_chain.slice()
+                : [],
+              clientCacheHit: detail.client_cache_hit === true,
             });
           });
         }"""
@@ -562,6 +570,13 @@ def test_real_daily_to_weekly_period_switch(page: Page):
     assert context["name"] == "上证指数"
     loaded = page.evaluate("() => window.__browserSmokeKlineLoaded")
     assert any(event["canonicalPeriod"] == "weekly" and event["ok"] for event in loaded)
+    for event in loaded:
+        assert isinstance(event["source"], str)
+        assert isinstance(event["stale"], bool)
+        assert isinstance(event["backgroundRefreshStarted"], bool)
+        assert isinstance(event["loadMs"], (int, float))
+        assert isinstance(event["fallbackChain"], list)
+        assert isinstance(event["clientCacheHit"], bool)
 
 
 def test_real_canvas_bar_replay_select_step_exit(page: Page):

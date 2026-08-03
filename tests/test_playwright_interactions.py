@@ -150,14 +150,27 @@ window.klinechartspro.KLineChartPro = function(config) {
     )).then(function(rows) {
       if (seq !== _loadSeq) return;
       chart.applyNewData(rows || []);
+      var observability = window.__lastKlineObservability || {};
       try {
         window.dispatchEvent(new CustomEvent('kline-loaded', {
-          detail: {
+          detail: Object.assign({
             symbol: sym.ticker,
             period: 'daily',
             ok: true,
             count: (rows || []).length
-          }
+          }, {
+            source: observability.symbol === sym.ticker ? observability.source : '',
+            stale: observability.symbol === sym.ticker && observability.stale === true,
+            background_refresh_started: observability.symbol === sym.ticker &&
+              observability.background_refresh_started === true,
+            load_ms: observability.symbol === sym.ticker ? Number(observability.load_ms || 0) : 0,
+            fallback_chain: observability.symbol === sym.ticker &&
+              Array.isArray(observability.fallback_chain)
+              ? observability.fallback_chain.slice()
+              : [],
+            client_cache_hit: observability.symbol === sym.ticker &&
+              observability.client_cache_hit === true
+          })
         }));
       } catch(e) {}
     });
@@ -332,7 +345,16 @@ def _handle_api(route, path, parsed, state: _MockState):
             "close": base_price + i + 1,
             "volume": 1000 + i * 100,
         } for i in range(12)]
-        _json({"data": rows, "symbol": ticker, "period": "daily"})
+        _json({
+            "data": rows,
+            "symbol": ticker,
+            "period": "daily",
+            "source": "qmt_http",
+            "stale": False,
+            "background_refresh_started": False,
+            "load_ms": 9,
+            "fallback_chain": ["qmt_http"],
+        })
         return
 
     # ── Signals ──
@@ -362,13 +384,19 @@ def page(mock_state):
         # Install before product scripts so tests can prove that user actions
         # crossed the public select-symbol event boundary.
         pg.add_init_script("""
-            window.__selectSymbolEvents = [];
-            window.addEventListener('select-symbol', function(event) {
-                window.__selectSymbolEvents.push(
-                    JSON.parse(JSON.stringify((event && event.detail) || {}))
-                );
-            });
-        """)
+             window.__selectSymbolEvents = [];
+             window.__klineLoadedEvents = [];
+             window.addEventListener('select-symbol', function(event) {
+                 window.__selectSymbolEvents.push(
+                     JSON.parse(JSON.stringify((event && event.detail) || {}))
+                 );
+             });
+             window.addEventListener('kline-loaded', function(event) {
+                 window.__klineLoadedEvents.push(
+                     JSON.parse(JSON.stringify((event && event.detail) || {}))
+                 );
+             });
+         """)
 
         # Intercept every request
         pg.route('**/*', lambda route: _handle_route(route, mock_state))
@@ -396,11 +424,29 @@ def page(mock_state):
             timeout=15000,
         )
 
+        # Keep this interaction fixture's symbol strip explicit.  Some legacy
+        # entrypoints omit the optional strip, but the event contract should
+        # still render a real backend source whenever the strip is present.
+        pg.evaluate("""() => {
+            const strip = document.createElement('div');
+            strip.id = 'symbol-strip';
+            for (const id of [
+                'sym-type-badge', 'sym-name', 'sym-code', 'sym-period',
+                'sym-source', 'sym-bars', 'sym-last-date'
+            ]) {
+                const node = document.createElement('span');
+                node.id = id;
+                strip.appendChild(node);
+            }
+            document.body.appendChild(strip);
+        }""")
+
         # Reset call tracking before each test
         pg.evaluate("""
-            window.__proSetSymbolCalls = [];
-            window.__selectSymbolEvents = [];
-        """)
+             window.__proSetSymbolCalls = [];
+             window.__selectSymbolEvents = [];
+             window.__klineLoadedEvents = [];
+         """)
         mock_state.reset()
 
         yield pg
@@ -600,6 +646,30 @@ def test_04_search_ymkd_arrow_enter_shows_yimingkangde(page, mock_state):
     assert current_bars[0]['open'] == 600.0
     assert current_bars != previous_bars, \
         "603259 chart data must replace the previously displayed symbol data"
+
+    # The production datafeed metadata must survive the mock Pro handoff and
+    # drive the visible source badge; no cache_first placeholder is allowed.
+    page.wait_for_function(
+        "window.__klineLoadedEvents.some(e => e.symbol === '603259' && "
+        "e.ok === true && typeof e.source === 'string' && e.source === 'qmt_http')",
+        timeout=5000,
+    )
+    loaded_events = page.evaluate("window.__klineLoadedEvents")
+    ym_loaded = next(
+        (event for event in loaded_events
+         if event.get('symbol') == '603259' and event.get('ok') is True),
+        None,
+    )
+    assert ym_loaded is not None, loaded_events
+    assert ym_loaded['source'] == 'qmt_http', ym_loaded
+    assert isinstance(ym_loaded['stale'], bool), ym_loaded
+    assert isinstance(ym_loaded['background_refresh_started'], bool), ym_loaded
+    assert isinstance(ym_loaded['load_ms'], (int, float)), ym_loaded
+    assert isinstance(ym_loaded['fallback_chain'], list), ym_loaded
+    assert isinstance(ym_loaded['client_cache_hit'], bool), ym_loaded
+    assert ym_loaded['client_cache_hit'] is False, ym_loaded
+    assert page.locator('#sym-source').inner_text().strip() == 'qmt_http'
+    assert page.locator('#sym-source').inner_text().strip() != 'cache_first'
 
     page.wait_for_function(
         "window.__board_ctx && window.__board_ctx.code === '603259'",
