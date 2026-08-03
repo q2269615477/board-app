@@ -29,21 +29,30 @@ def test_frontend_force_refreshes_top_and_left_index_quotes():
 
 
 def test_force_index_route_uses_synchronous_fetch():
-    fresh = {
+    cached = {
         'data': {
             'sh000001': {
-                'price': 3810.5,
-                'changePct': 0.8,
-                'channel': 'qmt18080',
+                'price': 3760.0,
+                'changePct': -0.5,
+                'channel': 'sqlite',
             }
         },
         'meta': {'ok': True},
         'stale': False,
         'from_cache': False,
     }
-    with patch('services.nav_spot_service.fetch_nav_spots', return_value=fresh) as sync, patch(
+    final_close = {
+        'sh000001': {
+            'price': 3810.5,
+            'change_pct': 0.8,
+            'channel': 'eastmoney_batch',
+        }
+    }
+    with patch('services.nav_spot_service.fetch_nav_spots', return_value=cached) as sync, patch(
         'services.nav_spot_service.fetch_nav_spots_fast'
-    ) as fast:
+    ) as fast, patch(
+        'data_loader.fetch_a_share_index_spots', return_value=final_close
+    ) as batch:
         response = _client().get('/api/spot/indices?tickers=sh000001&force=1')
 
     assert response.status_code == 200
@@ -51,3 +60,4 @@ def test_force_index_route_uses_synchronous_fetch():
     assert response.get_json()['meta']['nav']['forced'] is True
     sync.assert_called_once_with(force=True)
     fast.assert_not_called()
+    batch.assert_called_once_with(['sh000001'])

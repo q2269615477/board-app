@@ -122,6 +122,8 @@ def refresh_board_snapshot_route():
     captured_at = refresh.get('captured_at')
     if ok and reason == 'lunch_frozen':
         message = 'A股午休，继续显示上午收盘快照'
+    elif ok and reason == 'refreshed_after_close':
+        message = '板块最终收盘快照已刷新'
     elif ok and reason == 'market_closed':
         message = 'A股已收盘，继续显示最近收盘快照'
     elif ok:
@@ -227,6 +229,7 @@ def spot_indices_route():
     from services.market_session import market_state
 
     raw_tickers = request.args.get('tickers', '')
+    force_refresh = request.args.get('force') == '1'
     dynamic_codes = [c.strip() for c in raw_tickers.split(',') if c.strip()]
     nav_targets = get_nav_targets()
     default_codes = [c for c, _name, _typ in nav_targets]
@@ -246,10 +249,12 @@ def spot_indices_route():
         if (code not in inactive_codes and code != '800000'
                 and str(code).lower().startswith(('sh', 'sz', 'bj')))
     ]
-    active_a_share_index_codes = [
-        code for code in a_share_index_codes
-        if market_states[code]['market_open']
-    ]
+    refresh_a_share_index_codes = (
+        a_share_index_codes if force_refresh else [
+            code for code in a_share_index_codes
+            if market_states[code]['market_open']
+        ]
+    )
 
     result = {
         code: {
@@ -333,7 +338,6 @@ def spot_indices_route():
         except Exception:
             return code, None
 
-    force_refresh = request.args.get('force') == '1'
     nav_meta = {}
     try:
         # Polling remains cache-first; the toolbar refresh waits for the
@@ -360,9 +364,9 @@ def spot_indices_route():
     # One batch request (or a small number of chunks) replaces the old
     # per-index worker fan-out. It also prevents a slow/stale local fallback
     # from turning a six-request quote refresh into a 30-second wait.
-    if active_a_share_index_codes:
+    if refresh_a_share_index_codes:
         try:
-            batch = fetch_a_share_index_spots(active_a_share_index_codes)
+            batch = fetch_a_share_index_spots(refresh_a_share_index_codes)
             for code, data in batch.items():
                 packed = _pack(code, data)
                 if packed:

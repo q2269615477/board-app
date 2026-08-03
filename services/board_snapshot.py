@@ -310,7 +310,10 @@ class BoardSnapshotCache:
             today_data['frozen'] = True
             return finish(reason='lunch_frozen', frozen=True)
 
-        if not _is_a_share_session():
+        force_after_close = bool(
+            force and datetime.now().weekday() < 5 and _now_hhmm() > _SESSION_END
+        )
+        if not _is_a_share_session() and not force_after_close:
             return finish(reason='market_closed', frozen=False)
 
         today_data['frozen'] = False
@@ -330,7 +333,8 @@ class BoardSnapshotCache:
                 partial=partial,
                 stale=not refreshed,
                 reason=(
-                    'refreshed' if refreshed else
+                    ('refreshed_after_close' if force_after_close else 'refreshed')
+                    if refreshed else
                     'partial_refresh' if partial else 'refresh_failed'
                 ),
                 frozen=False,

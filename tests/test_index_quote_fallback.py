@@ -220,8 +220,9 @@ def test_index_audit_separates_deprecated_from_active_failures():
 def test_batch_route_has_authoritative_a_share_index_refresh():
     source = Path('api/board_routes.py').read_text(encoding='utf-8')
     assert 'a_share_index_codes' in source
-    assert 'active_a_share_index_codes' in source
-    assert 'fetch_a_share_index_spots(active_a_share_index_codes)' in source
+    assert 'refresh_a_share_index_codes' in source
+    assert 'a_share_index_codes if force_refresh else' in source
+    assert 'fetch_a_share_index_spots(refresh_a_share_index_codes)' in source
     assert "get_spot_index(code)" in source
     assert "result[code] = packed" in source
     assert "not market_states[code]['market_open']" in source

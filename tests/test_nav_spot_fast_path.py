@@ -96,6 +96,31 @@ def test_failed_force_refresh_does_not_rejuvenate_old_cache():
     assert nav._cache_ts == old_ts
 
 
+def test_closed_market_sqlite_settlement_overrides_old_process_cache():
+    _reset()
+    nav._cache = {'sh000688': {'price': 1576.322, 'channel': 'old_cache'}}
+    nav._cache_ts = nav.time.time() - 600
+    closed = {'market': 'a_share', 'market_phase': 'closed', 'market_open': False}
+    market_meta = {
+        'active_markets': [],
+        'market_signature': ['a_share:closed:0'],
+        'all_markets_closed': True,
+    }
+    local = {'sh000688': {'price': 1552.8903, 'changePct': -5.08, 'channel': 'sqlite'}}
+    with patch.object(
+        nav, 'get_nav_targets', return_value=[('sh000688', '科创50', 'index')]
+    ), patch.object(nav, '_split_targets', return_value=(['sh000688'], [])), patch.object(
+        nav, '_market_meta', return_value=market_meta
+    ), patch.object(nav, 'market_state', return_value=closed), patch.object(
+        nav, '_load_local_nav_spots', return_value=local
+    ):
+        result = nav.fetch_nav_spots(force=True)
+
+    assert result['data']['sh000688']['price'] == 1552.8903
+    assert result['data']['sh000688']['changePct'] == -5.08
+    assert result['data']['sh000688']['channel'] == 'sqlite'
+
+
 def test_http_route_uses_nonblocking_nav_fast_path():
     source = (Path(nav.__file__).parents[1] / 'api' / 'board_routes.py').read_text(
         encoding='utf-8'

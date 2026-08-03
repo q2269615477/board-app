@@ -366,6 +366,19 @@ class TestEnsureSnapshot:
         assert cache.is_frozen() is False
 
     @patch('services.board_snapshot.datetime')
+    def test_manual_refresh_after_close_fetches_final_snapshot(self, mock_dt):
+        """A weekday manual refresh must replace a stale intraday snapshot."""
+        mock_dt.now.return_value = datetime(2026, 7, 29, 15, 30, 0)
+        cache = get_snapshot_cache()
+        with patch.object(cache, 'capture_all', side_effect=[3, 4]) as capture:
+            result = cache.refresh_snapshot(force=True)
+
+        assert capture.call_count == 2
+        assert result['refreshed'] is True
+        assert result['stale'] is False
+        assert result['reason'] == 'refreshed_after_close'
+
+    @patch('services.board_snapshot.datetime')
     @patch('requests.Session', create=True)
     def test_lunch_uses_morning_snapshot_without_refetch(self, mock_session_cls, mock_dt):
         """午休使用上午最后快照，不再访问东财。"""
