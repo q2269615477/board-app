@@ -56,6 +56,8 @@ MOCK_CLASSIFICATION = {
 
 MOCK_SEARCH_YMKD = {
     "data": [
+        {"code": "02359", "name": "药明康德（港股候选）", "type": "stock",
+         "display_code": "02359", "initials": "ymkd", "category": "个股"},
         {"code": "603259", "name": "药明康德", "type": "stock",
          "display_code": "603259", "initials": "ymkd", "category": "个股"},
     ],
@@ -121,6 +123,8 @@ MOCK_KLINECHARTS_PRO_JS = """
 window.klinechartspro = window.klinechartspro || {};
 window.klinechartspro.KLineChartPro = function(config) {
   var _sym = null;
+  var _period = config.period;
+  var _loadSeq = 0;
   var periodBar = document.createElement('div');
   periodBar.className = 'klinecharts-pro-period-bar';
   config.container.appendChild(periodBar);
@@ -137,19 +141,30 @@ window.klinechartspro.KLineChartPro = function(config) {
   this.chart = chart;
   this.setSymbol = function(sym) {
     _sym = sym;
-    chart.applyNewData(window.__replayBars);
     window.__proSetSymbolCalls = window.__proSetSymbolCalls || [];
     window.__proSetSymbolCalls.push(JSON.parse(JSON.stringify(sym)));
-    setTimeout(function() {
+    var seq = ++_loadSeq;
+    var now = Date.now();
+    Promise.resolve(config.datafeed.getHistoryKLineData(
+      sym, _period, now - 10 * 365 * 24 * 60 * 60 * 1000, now
+    )).then(function(rows) {
+      if (seq !== _loadSeq) return;
+      chart.applyNewData(rows || []);
       try {
         window.dispatchEvent(new CustomEvent('kline-loaded', {
-          detail: { symbol: sym.ticker, period: 'daily', ok: true, count: 100 }
+          detail: {
+            symbol: sym.ticker,
+            period: 'daily',
+            ok: true,
+            count: (rows || []).length
+          }
         }));
       } catch(e) {}
-    }, 5);
+    });
   };
-  this.setPeriod = function(p) {};
+  this.setPeriod = function(p) { _period = p; };
   this.getSymbol = function() { return _sym; };
+  this.getPeriod = function() { return _period; };
   window.pro = this;
   return this;
 };
@@ -303,7 +318,21 @@ def _handle_api(route, path, parsed, state: _MockState):
     # ── Kline data ──
     if '/api/kline/' in path:
         state.kline_requests.append(path)
-        _json({"data": [], "symbol": "", "period": "daily"})
+        ticker = path.rstrip('/').split('/')[-1]
+        base_price = {
+            'sh000001': 100.0,
+            'BK0446': 300.0,
+            '603259': 600.0,
+        }.get(ticker, 900.0)
+        rows = [{
+            "timestamp": 1722470400000 + i * 86400000,
+            "open": base_price + i,
+            "high": base_price + i + 2,
+            "low": base_price + i - 1,
+            "close": base_price + i + 1,
+            "volume": 1000 + i * 100,
+        } for i in range(12)]
+        _json({"data": rows, "symbol": ticker, "period": "daily"})
         return
 
     # ── Signals ──
@@ -329,6 +358,17 @@ def page(mock_state):
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
         pg = context.new_page()
+
+        # Install before product scripts so tests can prove that user actions
+        # crossed the public select-symbol event boundary.
+        pg.add_init_script("""
+            window.__selectSymbolEvents = [];
+            window.addEventListener('select-symbol', function(event) {
+                window.__selectSymbolEvents.push(
+                    JSON.parse(JSON.stringify((event && event.detail) || {}))
+                );
+            });
+        """)
 
         # Intercept every request
         pg.route('**/*', lambda route: _handle_route(route, mock_state))
@@ -357,7 +397,10 @@ def page(mock_state):
         )
 
         # Reset call tracking before each test
-        pg.evaluate("window.__proSetSymbolCalls = [];")
+        pg.evaluate("""
+            window.__proSetSymbolCalls = [];
+            window.__selectSymbolEvents = [];
+        """)
         mock_state.reset()
 
         yield pg
@@ -444,18 +487,49 @@ def test_03_click_board_constituent_switches_to_stock(page, mock_state):
 
 def test_04_search_ymkd_arrow_enter_shows_yimingkangde(page, mock_state):
     """Scenario 4: Search 'ymkd', arrow down, Enter → shows 药明康德."""
+    previous_bars = page.evaluate(
+        "window.__kline_chart && window.__kline_chart.getDataList()"
+    )
+
     # Focus the search input and type
     page.click('#search-input')
     page.fill('#search-input', 'ymkd')
 
-    # Wait for search results to render
-    page.wait_for_selector('.search-item', timeout=8000)
+    # Wait for both results. Product rendering preselects the first item.
+    page.wait_for_function(
+        "document.querySelectorAll('.search-item').length === 2",
+        timeout=8000,
+    )
+    page.wait_for_selector('.search-item.selected[data-idx="0"]')
+    assert page.locator(
+        '.search-item.selected[data-idx="0"] .search-code'
+    ).inner_text() == '02359'
 
-    # Press ArrowDown to highlight the first result
+    # ArrowDown must move selection from the first result to 603259.
     page.press('#search-input', 'ArrowDown')
+    page.wait_for_selector('.search-item.selected[data-idx="1"]')
+    assert page.locator(
+        '.search-item.selected[data-idx="1"] .search-code'
+    ).inner_text() == '603259'
 
     # Press Enter to select
     page.press('#search-input', 'Enter')
+
+    # The search must dispatch the product's public selection event.
+    page.wait_for_function(
+        "window.__selectSymbolEvents.some(e => e.code === '603259')",
+        timeout=5000,
+    )
+    select_events = page.evaluate("window.__selectSymbolEvents")
+    ym_event = next(
+        (e for e in select_events if e.get('code') == '603259'),
+        None,
+    )
+    assert ym_event is not None, \
+        f"Expected select-symbol(603259), got: {select_events}"
+    assert ym_event['type'] == 'stock', ym_event
+    assert ym_event['source'] == 'bottom-search', ym_event
+    assert ym_event['trigger'] == 'enter', ym_event
 
     # Verify pro.setSymbol was called with 药明康德's code
     page.wait_for_function(
@@ -467,6 +541,28 @@ def test_04_search_ymkd_arrow_enter_shows_yimingkangde(page, mock_state):
     ym_calls = [c for c in calls if c['ticker'] == '603259']
     assert len(ym_calls) >= 1, \
         f"Expected setSymbol(603259) for 药明康德, got: {calls}"
+
+    # setSymbol must load through the real BoardDatafeed and apply that result
+    # to the mock chart, rather than swapping metadata over stale chart data.
+    page.wait_for_function(
+        "window.__kline_chart.getDataList().length > 0 && "
+        "window.__kline_chart.getDataList()[0].open === 600",
+        timeout=5000,
+    )
+    assert '/api/kline/stock/603259' in mock_state.kline_requests, \
+        f"Expected stock kline request, got: {mock_state.kline_requests}"
+    current_bars = page.evaluate("window.__kline_chart.getDataList()")
+    assert current_bars[0]['open'] == 600.0
+    assert current_bars != previous_bars, \
+        "603259 chart data must replace the previously displayed symbol data"
+
+    page.wait_for_function(
+        "window.__board_ctx && window.__board_ctx.code === '603259'",
+        timeout=5000,
+    )
+    board_ctx = page.evaluate("window.__board_ctx")
+    assert board_ctx['code'] == '603259', \
+        f"Expected window.__board_ctx.code=603259, got: {board_ctx}"
 
     # Verify /api/ctx synced
     page.wait_for_timeout(500)
