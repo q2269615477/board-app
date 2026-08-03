@@ -534,6 +534,27 @@ _bg_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='kline_bg_re
 _pending = {}  # cache_key -> Event
 _pending_lock = threading.Lock()
 
+
+def _claim_pending(cache_key: str) -> Tuple[threading.Event, bool]:
+    """Atomically return the current event or reserve this cache key."""
+    with _pending_lock:
+        current = _pending.get(cache_key)
+        if current is not None:
+            return current, False
+        evt = threading.Event()
+        _pending[cache_key] = evt
+        return evt, True
+
+
+def _release_pending(cache_key: str, evt: threading.Event) -> bool:
+    """Release only the reservation owned by ``evt`` and wake its waiters."""
+    with _pending_lock:
+        owned = _pending.get(cache_key) is evt
+        if owned:
+            _pending.pop(cache_key, None)
+    evt.set()
+    return owned
+
 # 进程退出时优雅关闭线程池
 atexit.register(lambda: _executor.shutdown(wait=False, cancel_futures=True))
 atexit.register(lambda: _bg_executor.shutdown(wait=False, cancel_futures=True))
@@ -640,12 +661,9 @@ class KLineService:
                 )
                 return resp, 200
 
-        # 正在加载中 → 等待
-        evt = None
-        with _pending_lock:
-            if cache_key in _pending:
-                evt = _pending[cache_key]
-        if evt is not None:
+        # 原子地预留 key：已有加载则等待，否则当前请求负责提交。
+        evt, should_submit = _claim_pending(cache_key)
+        if not should_submit:
             if evt.wait(min(timeout, 10)):
                 cached = self._cache.get(cache_key)
                 if cached is not None:
@@ -660,14 +678,10 @@ class KLineService:
             return {'loading': True, 'message': '数据加载中',
                     'load_ms': load_ms, 'fallback_chain': fallback_chain}, 202
 
-        # 提交到线程池
-        evt = threading.Event()
-        with _pending_lock:
-            _pending[cache_key] = evt
-
-        future = _executor.submit(self._do_load, data_type, code, period, board_name, cache_key)
-
         try:
+            future = _executor.submit(
+                self._do_load, data_type, code, period, board_name, cache_key
+            )
             df = future.result(timeout=timeout)
             if df is None:
                 raise Exception("加载超时")
@@ -679,8 +693,7 @@ class KLineService:
                 cache_key, data,
                 ttl=_response_cache_ttl(data_type, period, code),
             )
-            with _pending_lock:
-                _pending.pop(cache_key, None)
+            _release_pending(cache_key, evt)
             load_ms = int((time.time() - start_time) * 1000)
             return self._ok_response(
                 data, cache_key, last_date=last_date, source=df_source,
@@ -688,6 +701,8 @@ class KLineService:
                 intraday=self._response_intraday(data_type, code, period, df),
             ), 200
         except Exception as e:
+            # 所有提交、加载和超时分支都必须释放当前请求的预留。
+            _release_pending(cache_key, evt)
             # 如果出错但缓存有数据（后台刷新过）
             cached = self._cache.get(cache_key)
             if cached is not None:
@@ -713,8 +728,6 @@ class KLineService:
                     resp['background_refresh_started'] = False
                     return resp, 200
             is_timeout = 'timeout' in str(e).lower() or isinstance(e, TimeoutError)
-            with _pending_lock:
-                _pending.pop(cache_key, None)
             load_ms = int((time.time() - start_time) * 1000)
             return {
                 'error': str(e), 'timeout': is_timeout,
@@ -734,11 +747,9 @@ class KLineService:
 
     def _submit_background_refresh(self, data_type: str, code: str, period: str,
                                    board_name: str, cache_key: str) -> bool:
-        with _pending_lock:
-            if cache_key in _pending:
-                return False
-            evt = threading.Event()
-            _pending[cache_key] = evt
+        evt, should_submit = _claim_pending(cache_key)
+        if not should_submit:
+            return False
         loader = self._do_load
 
         def _runner():
@@ -757,12 +768,17 @@ class KLineService:
                     exc_info=True,
                 )
             finally:
-                with _pending_lock:
-                    pending_evt = _pending.pop(cache_key, None)
-                if pending_evt is not None:
-                    pending_evt.set()
+                _release_pending(cache_key, evt)
 
-        _get_bg_executor().submit(_runner)
+        try:
+            _get_bg_executor().submit(_runner)
+        except Exception as e:
+            _release_pending(cache_key, evt)
+            logger.warning(
+                "[KLine] 后台刷新提交失败 %s: %s: %r",
+                cache_key, type(e).__name__, e,
+            )
+            return False
         return True
 
     def _do_load(self, data_type: str, code: str, period: str,

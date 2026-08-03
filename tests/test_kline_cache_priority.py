@@ -7,7 +7,8 @@ import pandas as pd
 import pytest
 
 from services.kline_service import (
-    KLineService, _pending, _pending_lock, reset_bg_executor, _get_bg_executor,
+    KLineService, _pending, _pending_lock, _claim_pending, _release_pending,
+    reset_bg_executor, _get_bg_executor,
 )
 
 
@@ -253,6 +254,65 @@ class TestBackgroundRefreshNoPendingLeak:
         with patch.object(svc, '_do_load', side_effect=RuntimeError('boom')):
             svc.get_kline('stock', '600519', 'daily', cache_first=True, timeout=5)
             assert self._wait_bg(), "异常路径未清理 _pending"
+
+
+class TestPendingCoordination:
+    """Regression coverage for atomic ownership of in-flight cache keys."""
+
+    KEY = 'stock:000001:daily'
+
+    def setup_method(self):
+        _clear_pending()
+
+    def teardown_method(self):
+        _clear_pending()
+
+    def test_concurrent_claim_has_single_submitter(self):
+        workers = 8
+        barrier = threading.Barrier(workers)
+
+        def claim():
+            barrier.wait()
+            return _claim_pending(self.KEY)
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            claims = list(pool.map(lambda _: claim(), range(workers)))
+
+        events = [evt for evt, _ in claims]
+        assert sum(should_submit for _, should_submit in claims) == 1
+        assert all(evt is events[0] for evt in events)
+        assert _release_pending(self.KEY, events[0]) is True
+
+    def test_stale_event_cannot_release_new_reservation(self):
+        old_evt, old_owner = _claim_pending(self.KEY)
+        assert old_owner is True
+        with _pending_lock:
+            assert _pending.pop(self.KEY) is old_evt
+
+        new_evt, new_owner = _claim_pending(self.KEY)
+        assert new_owner is True
+        assert _release_pending(self.KEY, old_evt) is False
+        assert old_evt.is_set()
+        with _pending_lock:
+            assert _pending.get(self.KEY) is new_evt
+        assert _release_pending(self.KEY, new_evt) is True
+
+    def test_background_submit_failure_rolls_back_pending(self):
+        svc = KLineService.__new__(KLineService)
+        svc._cache = MagicMock()
+        svc._do_load = MagicMock(return_value=_make_daily_df())
+        executor = MagicMock()
+        executor.submit.side_effect = RuntimeError('executor stopped')
+
+        with patch('services.kline_service._get_bg_executor', return_value=executor):
+            started = svc._submit_background_refresh(
+                'stock', '000001', 'daily', '', self.KEY
+            )
+
+        assert started is False
+        executor.submit.assert_called_once()
+        with _pending_lock:
+            assert self.KEY not in _pending
 
 
 class TestMarketCodeSplit:
