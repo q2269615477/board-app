@@ -46,7 +46,11 @@
 
 ### 阶段 3：回放交易 UI 分层
 
+状态：切片 3.1（坐标几何）已完成。
+
 - `replay-trade-geometry.js`：像素、K 线索引和价格转换。
+- 图表 API 调用保留在 UI 适配层，几何模块保持纯计算、可独立测试。
+- 真实浏览器已验收回放起点选择、控制层加载及滚轮缩放后的状态保持。
 - `replay-trade-overlay-renderer.js`：B/S、止盈止损、汇总和风险区 SVG。
 - `replay-trade-interaction-controller.js`：选择、拖拽和面板生命周期。
 
