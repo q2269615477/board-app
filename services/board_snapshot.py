@@ -140,6 +140,7 @@ class BoardSnapshotCache:
         self._data: Dict[str, dict] = {}
         self._last_capture_ts: float = 0.0
         self._last_refresh: dict = {}
+        self._refresh_lock = threading.RLock()
         self._initialized = True
 
     def _ensure_today(self, date_str: str):
@@ -276,6 +277,11 @@ class BoardSnapshotCache:
         return len(result)
 
     def refresh_snapshot(self, force: bool = False) -> dict:
+        """Serialize scheduled and manual refreshes within this process."""
+        with self._refresh_lock:
+            return self._refresh_snapshot_locked(force=force)
+
+    def _refresh_snapshot_locked(self, force: bool = False) -> dict:
         """Refresh the current snapshot and describe what this attempt did.
 
         ``available`` answers whether callers may read a snapshot. ``refreshed``

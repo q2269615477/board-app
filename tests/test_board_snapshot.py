@@ -7,6 +7,7 @@ tests/test_board_snapshot.py — BoardSnapshotCache 单元测试
 """
 import sys
 import os
+import threading
 import time
 from datetime import datetime
 from unittest.mock import patch, MagicMock
@@ -442,6 +443,36 @@ class TestEnsureSnapshot:
         assert stats['captured_count_industry'] == 0
         assert stats['captured_count_concept'] == 0
         assert stats['mode'] == 'off'
+
+
+def test_refresh_snapshot_serializes_background_and_manual_calls(monkeypatch):
+    cache = get_snapshot_cache()
+    guard = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def fake_refresh(force=False):
+        nonlocal active, max_active
+        with guard:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.03)
+        with guard:
+            active -= 1
+        return {'available': True, 'refreshed': True, 'force': force}
+
+    monkeypatch.setattr(cache, '_refresh_snapshot_locked', fake_refresh)
+    threads = [
+        threading.Thread(target=cache.refresh_snapshot, kwargs={'force': bool(i % 2)})
+        for i in range(4)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert max_active == 1
 
 
 # ===== 测试 get_board_today / get_all / stats / get_date =====
