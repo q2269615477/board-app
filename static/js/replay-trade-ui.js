@@ -2648,15 +2648,6 @@
     return null;
   }
 
-  function summaryText(node, value, x, y, className) {
-    var item = create('text', true);
-    attr(item, 'class', className || 'replay-trade-summary-line');
-    attr(item, 'x', x); attr(item, 'y', y);
-    text(item, value);
-    append(node, item);
-    return item;
-  }
-
   function openOrderSellPicker(orderNumber, event) {
     var engine = getEngine();
     if (!engine || typeof engine.closeManual !== 'function') {
@@ -2718,53 +2709,34 @@
     var rowHeight = 34;
     timeline.forEach(function (item, index) {
       var y = top + index * (rowHeight + 4);
-      var row = create('g', true);
-      attr(row, 'class', 'replay-trade-order-rail-row');
-      attr(row, 'data-order-number', item.orderNumber);
       var pnlAmount = Number(item.totalAmount || 0);
       var pnlPercent = item.invested > 0 ? pnlAmount / item.invested * 100 : 0;
       var pnlClass = pnlAmount > 0 ? 'positive' : pnlAmount < 0 ? 'negative' : 'flat';
-      attr(row, 'data-pnl-amount', pnlAmount);
-      attr(row, 'data-pnl-percent', pnlPercent);
-      attr(row, 'data-buy-price', finite(item.buy && item.buy.price));
-      attr(row, 'data-order-closed', item.closed ? 'true' : 'false');
-      attr(row, 'aria-label', 'B' + item.orderNumber + ' 买入价格 ' + numberText(item.buy && item.buy.price) +
-        (item.closed ? ' 已结算盈亏 ' : ' 当前盈亏 ') +
-        pctText(pnlPercent) + ' ' + currencyText(pnlAmount, true));
-      var stripBackground = create('rect', true);
-      attr(stripBackground, 'class', 'replay-trade-order-strip-bg');
-      attr(stripBackground, 'x', x); attr(stripBackground, 'y', y);
-      attr(stripBackground, 'width', rowWidth); attr(stripBackground, 'height', rowHeight); attr(stripBackground, 'rx', 7);
-      append(row, stripBackground);
-      var buyBackground = create('rect', true);
-      attr(buyBackground, 'class', 'replay-trade-order-rail-bg replay-trade-order-rail-buy-bg');
-      attr(buyBackground, 'x', x); attr(buyBackground, 'y', y);
-      attr(buyBackground, 'width', buttonWidth - 5); attr(buyBackground, 'height', rowHeight);
-      attr(buyBackground, 'rx', 6);
-      append(row, buyBackground);
-      var buyPointer = create('path', true);
-      attr(buyPointer, 'class', 'replay-trade-order-rail-pointer replay-trade-order-rail-buy-bg');
-      attr(buyPointer, 'd', 'M ' + (x + buttonWidth - 6) + ' ' + (y + 7) +
-        ' L ' + (x + buttonWidth) + ' ' + (y + rowHeight / 2) +
-        ' L ' + (x + buttonWidth - 6) + ' ' + (y + rowHeight - 7) + ' Z');
-      append(row, buyPointer);
-      var sellX = x + buttonWidth + pnlWidth;
-      var sellBackground = create('rect', true);
-      attr(sellBackground, 'class', 'replay-trade-order-rail-bg replay-trade-order-rail-sell-bg');
-      attr(sellBackground, 'x', sellX + 5); attr(sellBackground, 'y', y);
-      attr(sellBackground, 'width', buttonWidth - 5); attr(sellBackground, 'height', rowHeight);
-      attr(sellBackground, 'rx', 6);
-      append(row, sellBackground);
-      var sellPointer = create('path', true);
-      attr(sellPointer, 'class', 'replay-trade-order-rail-pointer replay-trade-order-rail-sell-bg');
-      attr(sellPointer, 'd', 'M ' + (sellX + 6) + ' ' + (y + 7) +
-        ' L ' + sellX + ' ' + (y + rowHeight / 2) +
-        ' L ' + (sellX + 6) + ' ' + (y + rowHeight - 7) + ' Z');
-      append(row, sellPointer);
-      var buy = create('text', true);
-      attr(buy, 'class', 'replay-trade-order-rail-buy');
-      attr(buy, 'x', x + buttonWidth / 2 - 2); attr(buy, 'y', y + 11);
-      text(buy, 'B' + item.orderNumber);
+      var rendered = overlayRenderer.renderOrderRailRow(rendererAdapter, svg, {
+        orderNumber: item.orderNumber,
+        pnlAmount: pnlAmount,
+        pnlPercent: pnlPercent,
+        buyPrice: finite(item.buy && item.buy.price),
+        closed: item.closed,
+        ariaLabel: 'B' + item.orderNumber + ' 买入价格 ' + numberText(item.buy && item.buy.price) +
+          (item.closed ? ' 已结算盈亏 ' : ' 当前盈亏 ') +
+          pctText(pnlPercent) + ' ' + currencyText(pnlAmount, true),
+        x: x,
+        y: y,
+        rowWidth: rowWidth,
+        rowHeight: rowHeight,
+        buttonWidth: buttonWidth,
+        pnlWidth: pnlWidth,
+        pnlClass: pnlClass,
+        buyLabel: 'B' + item.orderNumber,
+        buyPriceText: numberText(item.buy && item.buy.price),
+        pnlPercentText: pctText(pnlPercent),
+        pnlMoneyText: currencyText(pnlAmount, true),
+        sellLabel: 'S' + item.orderNumber,
+      });
+      if (!rendered) return;
+      var buyBackground = rendered.buyBackground;
+      var buy = rendered.buy;
       if (!item.closed && item.buy) {
         var editBuy = function (event) {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2786,28 +2758,8 @@
           });
         });
       }
-      append(row, buy);
-      var buyPrice = create('text', true);
-      attr(buyPrice, 'class', 'replay-trade-order-rail-price');
-      attr(buyPrice, 'x', x + buttonWidth / 2 - 2); attr(buyPrice, 'y', y + 24);
-      text(buyPrice, numberText(item.buy && item.buy.price));
-      append(row, buyPrice);
-      var pnlPct = create('text', true);
-      attr(pnlPct, 'class', 'replay-trade-order-rail-pnl replay-trade-order-rail-pnl-' + pnlClass);
-      attr(pnlPct, 'x', x + buttonWidth + pnlWidth / 2); attr(pnlPct, 'y', y + 10);
-      text(pnlPct, pctText(pnlPercent));
-      append(row, pnlPct);
-      var pnlMoney = create('text', true);
-      attr(pnlMoney, 'class', 'replay-trade-order-rail-pnl replay-trade-order-rail-pnl-' + pnlClass);
-      attr(pnlMoney, 'x', x + buttonWidth + pnlWidth / 2); attr(pnlMoney, 'y', y + 24);
-      text(pnlMoney, currencyText(pnlAmount, true));
-      append(row, pnlMoney);
-      var sell = create('text', true);
-      attr(sell, 'class', 'replay-trade-order-rail-sell');
-      attr(sell, 'x', sellX + buttonWidth / 2 + 2); attr(sell, 'y', y + 11);
-      attr(sell, 'data-sell-order-number', item.orderNumber);
-      attr(sell, 'data-order-state', item.closed ? 'closed' : 'open');
-      text(sell, 'S' + item.orderNumber);
+      var sellBackground = rendered.sellBackground;
+      var sell = rendered.sell;
       if (!item.closed) {
         var activate = function (event) {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2829,8 +2781,6 @@
           });
         });
       }
-      append(row, sell);
-      append(svg, row);
     });
   }
 
@@ -3002,54 +2952,55 @@
       state.summaryPosition.y = boxY;
     }
     state.summaryGeometry = { x: boxX, y: boxY, width: boxWidth, height: boxHeight };
-    var group = create('g', true);
-    if (!group) return;
-    attr(group, 'class', 'replay-trade-summary-group');
-    attr(group, 'pointer-events', 'all');
-    append(svg, group);
-    var box = create('rect', true);
-    attr(box, 'class', 'replay-trade-summary-box');
-    attr(box, 'x', boxX); attr(box, 'y', boxY); attr(box, 'width', boxWidth); attr(box, 'height', boxHeight); attr(box, 'rx', 4);
-    append(group, box);
-    timeline.forEach(function (item, index) {
-      var columnX = boxX + index * orderWidth;
-      var columnBackground = create('rect', true);
-      attr(columnBackground, 'class', Number(item.totalAmount) >= 0
-        ? 'replay-trade-summary-column-positive' : 'replay-trade-summary-column-negative');
-      attr(columnBackground, 'x', columnX + 1); attr(columnBackground, 'y', boxY + 1);
-      attr(columnBackground, 'width', Math.max(0, orderWidth - 2)); attr(columnBackground, 'height', boxHeight - 2);
-      append(group, columnBackground);
-      if (index > 0) {
-        var separator = create('line', true);
-        attr(separator, 'class', 'replay-trade-summary-separator');
-        attr(separator, 'x1', columnX); attr(separator, 'x2', columnX);
-        attr(separator, 'y1', boxY + 8); attr(separator, 'y2', boxY + boxHeight - 8);
-        append(group, separator);
-      }
+    var summaryColumns = timeline.map(function (item) {
       var totalPct = item.invested > 0 ? item.totalAmount / item.invested * 100 : null;
       var valueClass = Number(item.totalAmount) >= 0 ? ' replay-trade-positive' : ' replay-trade-negative';
       var heading = item.closed
         ? 'B' + item.orderNumber + ' → S' + item.orderNumber
         : 'B' + item.orderNumber + ' 持仓';
-      var headingNode = summaryText(group, heading, columnX + 9, boxY + 18,
-        'replay-trade-summary-title replay-trade-summary-order' + valueClass);
-      attr(headingNode, 'data-order-number', item.orderNumber);
       var status = item.closed ? '实际' + item.exitReason : '当前盈亏';
-      summaryText(group, status + ' ' + pctText(totalPct), columnX + 9, boxY + 36,
-        'replay-trade-summary-line' + valueClass);
-      summaryText(group, currencyText(item.totalAmount, true) + ' · 投入 ' + currencyText(item.invested),
-        columnX + 9, boxY + 53, 'replay-trade-summary-detail' + valueClass);
       var finalLine = item.closed && item.sell
         ? '卖 ' + numberText(item.sell.price) + ' · ' + dateText(item.sell.timestamp)
         : '买 ' + numberText(item.buy.price) + ' · ' + dateText(item.buy.timestamp);
-      summaryText(group, finalLine, columnX + 9, boxY + 70, 'replay-trade-summary-detail' + valueClass);
-      if (!item.closed || !headingNode || typeof headingNode.addEventListener !== 'function') return;
+      return {
+        orderNumber: item.orderNumber,
+        closed: item.closed,
+        columnClass: Number(item.totalAmount) >= 0
+          ? 'replay-trade-summary-column-positive' : 'replay-trade-summary-column-negative',
+        valueClass: valueClass,
+        heading: heading,
+        statusLine: status + ' ' + pctText(totalPct),
+        amountLine: currencyText(item.totalAmount, true) + ' · 投入 ' + currencyText(item.invested),
+        finalLine: finalLine,
+      };
+    });
+    var totalClass = Number(perf.amount) >= 0 ? ' replay-trade-positive' : ' replay-trade-negative';
+    var value = perf.pct == null ? '--' : pctText(perf.pct) + ' · ' + currencyText(perf.amount, true);
+    var rendered = overlayRenderer.renderPositionSummary(rendererAdapter, svg, {
+      x: boxX,
+      y: boxY,
+      width: boxWidth,
+      height: boxHeight,
+      orderWidth: orderWidth,
+      columns: summaryColumns,
+      total: {
+        heading: '总计',
+        label: perf.label,
+        value: value,
+        countText: '共 ' + timeline.length + ' 笔',
+        valueClass: totalClass,
+      },
+    });
+    if (!rendered) return;
+    rendered.headings.forEach(function (headingRef) {
+      var headingNode = headingRef.node;
+      if (!headingRef.closed || !headingNode || typeof headingNode.addEventListener !== 'function') return;
       attr(headingNode, 'role', 'button');
       attr(headingNode, 'tabindex', '0');
       var activate = function (event) {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
         if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
-        toggleSummaryOrder(item.orderNumber, true);
+        toggleSummaryOrder(headingRef.orderNumber, true);
       };
       headingNode.addEventListener('mousedown', function (event) {
         if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
@@ -3059,21 +3010,7 @@
         if (event && (event.key === 'Enter' || event.key === ' ')) activate(event);
       });
     });
-    var totalX = boxX + timeline.length * orderWidth;
-    if (timeline.length) {
-      var totalSeparator = create('line', true);
-      attr(totalSeparator, 'class', 'replay-trade-summary-separator');
-      attr(totalSeparator, 'x1', totalX); attr(totalSeparator, 'x2', totalX);
-      attr(totalSeparator, 'y1', boxY + 8); attr(totalSeparator, 'y2', boxY + boxHeight - 8);
-      append(group, totalSeparator);
-    }
-    var totalClass = Number(perf.amount) >= 0 ? ' replay-trade-positive' : ' replay-trade-negative';
-    summaryText(group, '总计', totalX + 10, boxY + 18, 'replay-trade-summary-title');
-    summaryText(group, perf.label, totalX + 10, boxY + 36, 'replay-trade-summary-line' + totalClass);
-    var value = perf.pct == null ? '--' : pctText(perf.pct) + ' · ' + currencyText(perf.amount, true);
-    summaryText(group, value, totalX + 10, boxY + 54, 'replay-trade-summary-line' + totalClass);
-    summaryText(group, '共 ' + timeline.length + ' 笔', totalX + 10, boxY + 71, 'replay-trade-summary-detail');
-    bindSummaryDrag(group);
+    bindSummaryDrag(rendered.group);
   }
 
   function redraw() {

@@ -30,6 +30,7 @@ describe('ReplayTradeOverlayRenderer contract', () => {
     for (const name of [
       'renderBracketLevel', 'renderExecutionMarker', 'renderRiskZone',
       'renderPresetOrder', 'renderPresetPreview', 'renderHistoryGhost',
+      'renderOrderRailRow', 'renderPositionSummary',
     ]) assert.equal(typeof renderer[name], 'function', `${name} must be exported`);
 
     const code = fs.readFileSync(MODULE_FILE, 'utf8');
@@ -135,5 +136,113 @@ describe('interactive overlay structure without event ownership', () => {
     assert.equal(child(result.group, 'text', 'replay-trade-preset-label').attrs.style, 'font-weight:400!important;');
     assert.equal(result.remove.attrs['aria-label'], '删除止盈预设');
     assert.equal(result.remove.textContent, '×');
+  });
+
+  test('renders one order rail row and returns UI interaction targets', () => {
+    const adapter = makeAdapter();
+    const svg = makeNode('svg', true);
+    const result = renderer.renderOrderRailRow(adapter, svg, {
+      orderNumber: 2,
+      pnlAmount: -125,
+      pnlPercent: -2.5,
+      buyPrice: 10.25,
+      closed: false,
+      ariaLabel: 'B2 买入价格 10.25 当前盈亏 -2.50% -¥125.00',
+      x: 12,
+      y: 50,
+      rowWidth: 208,
+      rowHeight: 34,
+      buttonWidth: 58,
+      pnlWidth: 92,
+      pnlClass: 'negative',
+      buyLabel: 'B2',
+      buyPriceText: '10.25',
+      pnlPercentText: '-2.50%',
+      pnlMoneyText: '-¥125.00',
+      sellLabel: 'S2',
+    });
+
+    assert.equal(svg.children[0], result.row);
+    assert.equal(result.row.attrs['data-order-number'], '2');
+    assert.equal(result.row.attrs['data-order-closed'], 'false');
+    assert.equal(result.row.attrs['data-pnl-percent'], '-2.5');
+    assert.deepEqual(result.row.children.map((item) => item.tag), [
+      'rect', 'rect', 'path', 'rect', 'path', 'text', 'text', 'text', 'text', 'text',
+    ]);
+    assert.equal(result.stripBackground.attrs.width, '208');
+    assert.equal(result.buyBackground.attrs.class,
+      'replay-trade-order-rail-bg replay-trade-order-rail-buy-bg');
+    assert.equal(result.buy.textContent, 'B2');
+    assert.equal(result.sellBackground.attrs.x, '167');
+    assert.equal(result.sell.attrs['data-sell-order-number'], '2');
+    assert.equal(result.sell.attrs['data-order-state'], 'open');
+    assert.equal(result.sell.textContent, 'S2');
+    const pnl = result.row.children.filter((item) =>
+      String(item.attrs.class || '').includes('replay-trade-order-rail-pnl'));
+    assert.deepEqual(pnl.map((item) => item.textContent), ['-2.50%', '-¥125.00']);
+    pnl.forEach((item) => assert.match(item.attrs.class, /pnl-negative/));
+  });
+
+  test('renders the passive position summary and returns headings for UI binding', () => {
+    const adapter = makeAdapter();
+    const svg = makeNode('svg', true);
+    const result = renderer.renderPositionSummary(adapter, svg, {
+      x: 120,
+      y: 300,
+      width: 461,
+      height: 84,
+      orderWidth: 158,
+      columns: [
+        {
+          orderNumber: 1,
+          closed: true,
+          columnClass: 'replay-trade-summary-column-positive',
+          valueClass: ' replay-trade-positive',
+          heading: 'B1 → S1',
+          statusLine: '实际止盈 +5.00%',
+          amountLine: '+¥250.00 · 投入 ¥5,000.00',
+          finalLine: '卖 10.50 · 2026-08-04',
+        },
+        {
+          orderNumber: 2,
+          closed: false,
+          columnClass: 'replay-trade-summary-column-negative',
+          valueClass: ' replay-trade-negative',
+          heading: 'B2 持仓',
+          statusLine: '当前盈亏 -2.00%',
+          amountLine: '-¥100.00 · 投入 ¥5,000.00',
+          finalLine: '买 10.20 · 2026-08-04',
+        },
+      ],
+      total: {
+        heading: '总计',
+        label: '总交易获利',
+        value: '+1.50% · +¥150.00',
+        countText: '共 2 笔',
+        valueClass: ' replay-trade-positive',
+      },
+    });
+
+    assert.equal(svg.children[0], result.group);
+    assert.equal(result.group.attrs['pointer-events'], 'all');
+    assert.equal(result.box.attrs.class, 'replay-trade-summary-box');
+    assert.deepEqual(result.headings.map((item) => ({
+      orderNumber: item.orderNumber,
+      closed: item.closed,
+      text: item.node.textContent,
+    })), [
+      { orderNumber: 1, closed: true, text: 'B1 → S1' },
+      { orderNumber: 2, closed: false, text: 'B2 持仓' },
+    ]);
+    assert.equal(result.headings[0].node.attrs['data-order-number'], '1');
+    const separators = result.group.children.filter((item) =>
+      item.attrs.class === 'replay-trade-summary-separator');
+    assert.equal(separators.length, 2);
+    assert.equal(separators[0].attrs.x1, '278');
+    assert.equal(separators[1].attrs.x1, '436');
+    const texts = result.group.children.filter((item) => item.tag === 'text');
+    assert.ok(texts.some((item) => item.textContent === '总计'));
+    assert.ok(texts.some((item) => item.textContent === '+1.50% · +¥150.00'));
+    assert.ok(texts.some((item) => item.textContent === '共 2 笔'));
   });
 });

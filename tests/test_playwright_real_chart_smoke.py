@@ -605,7 +605,7 @@ def test_real_canvas_bar_replay_select_step_exit(page: Page):
 
 
 def test_real_replay_trade_marker_survives_zoom_and_drag(page: Page):
-    """真实交易标记在缩放和拖拽后必须保持唯一并提交新坐标。"""
+    """真实交易图层在缩放、标记/汇总拖拽和订单点击后保持交互。"""
 
     page.locator("#bar-replay-btn").click()
     page.wait_for_function(
@@ -688,6 +688,60 @@ def test_real_replay_trade_marker_survives_zoom_and_drag(page: Page):
     )
     assert marker.count() == 1
     assert page.locator("#replay-trade-price-picker:not([hidden])").count() == 0
+
+    rail_row = page.locator(
+        '#replay-trade-overlay .replay-trade-order-rail-row[data-order-number="1"]'
+    )
+    summary_group = page.locator(
+        "#replay-trade-summary .replay-trade-summary-group"
+    )
+    assert rail_row.count() == 1
+    assert summary_group.count() == 1
+    assert page.evaluate(
+        """() => document.querySelector('#replay-trade-summary')?.parentNode ===
+          window.__kline_chart?.getDom?.('candle_pane', window.klinecharts.DomPosition.Main)"""
+    )
+
+    summary_before = summary_group.bounding_box()
+    assert summary_before is not None
+    summary_box = page.locator(
+        "#replay-trade-summary .replay-trade-summary-box"
+    )
+    summary_position_before = {
+        "x": summary_box.get_attribute("x"),
+        "y": summary_box.get_attribute("y"),
+    }
+    summary_start_x = summary_before["x"] + summary_before["width"] - 18
+    summary_start_y = summary_before["y"] + summary_before["height"] - 12
+    page.mouse.move(summary_start_x, summary_start_y)
+    page.mouse.down()
+    page.mouse.move(summary_start_x - 52, summary_start_y - 24, steps=5)
+    page.mouse.up()
+    page.wait_for_function(
+        """(previous) => {
+          const box = document.querySelector(
+            '#replay-trade-summary .replay-trade-summary-box'
+          );
+          return box && (Number(box.getAttribute('x')) !== Number(previous.x) ||
+            Number(box.getAttribute('y')) !== Number(previous.y));
+        }""",
+        arg=summary_position_before,
+        timeout=CHART_TIMEOUT_MS,
+    )
+    assert rail_row.count() == 1
+    assert marker.count() == 1
+
+    page.locator(
+        '#replay-trade-overlay .replay-trade-order-rail-sell[data-sell-order-number="1"]'
+    ).click()
+    sell_picker = page.locator("#replay-trade-price-picker:not([hidden])")
+    sell_picker.wait_for(state="visible", timeout=CHART_TIMEOUT_MS)
+    assert "选择 S1 卖出价格" in sell_picker.inner_text()
+    sell_picker.locator('button[aria-label="关闭"]').click()
+    page.wait_for_function(
+        "() => !document.querySelector('#replay-trade-price-picker:not([hidden])')",
+        timeout=CHART_TIMEOUT_MS,
+    )
 
     page.locator("#bar-replay-exit").click()
     page.wait_for_function(

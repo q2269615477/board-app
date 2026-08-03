@@ -179,6 +179,157 @@
     return { group: group };
   }
 
+  function renderOrderRailRow(adapter, svg, spec) {
+    spec = spec || {};
+    var row = element(adapter, 'g', {
+      'class': 'replay-trade-order-rail-row',
+      'data-order-number': spec.orderNumber,
+      'data-pnl-amount': spec.pnlAmount,
+      'data-pnl-percent': spec.pnlPercent,
+      'data-buy-price': spec.buyPrice,
+      'data-order-closed': spec.closed ? 'true' : 'false',
+      'aria-label': spec.ariaLabel,
+    });
+    if (!row) return null;
+
+    var stripBackground = append(adapter, row, element(adapter, 'rect', {
+      'class': 'replay-trade-order-strip-bg',
+      x: spec.x, y: spec.y, width: spec.rowWidth, height: spec.rowHeight, rx: 7,
+    }));
+    var buyBackground = append(adapter, row, element(adapter, 'rect', {
+      'class': 'replay-trade-order-rail-bg replay-trade-order-rail-buy-bg',
+      x: spec.x, y: spec.y, width: spec.buttonWidth - 5, height: spec.rowHeight, rx: 6,
+    }));
+    append(adapter, row, element(adapter, 'path', {
+      'class': 'replay-trade-order-rail-pointer replay-trade-order-rail-buy-bg',
+      d: 'M ' + (spec.x + spec.buttonWidth - 6) + ' ' + (spec.y + 7) +
+        ' L ' + (spec.x + spec.buttonWidth) + ' ' + (spec.y + spec.rowHeight / 2) +
+        ' L ' + (spec.x + spec.buttonWidth - 6) + ' ' + (spec.y + spec.rowHeight - 7) + ' Z',
+    }));
+
+    var sellX = spec.x + spec.buttonWidth + spec.pnlWidth;
+    var sellBackground = append(adapter, row, element(adapter, 'rect', {
+      'class': 'replay-trade-order-rail-bg replay-trade-order-rail-sell-bg',
+      x: sellX + 5, y: spec.y, width: spec.buttonWidth - 5, height: spec.rowHeight, rx: 6,
+    }));
+    append(adapter, row, element(adapter, 'path', {
+      'class': 'replay-trade-order-rail-pointer replay-trade-order-rail-sell-bg',
+      d: 'M ' + (sellX + 6) + ' ' + (spec.y + 7) +
+        ' L ' + sellX + ' ' + (spec.y + spec.rowHeight / 2) +
+        ' L ' + (sellX + 6) + ' ' + (spec.y + spec.rowHeight - 7) + ' Z',
+    }));
+
+    var buy = append(adapter, row, element(adapter, 'text', {
+      'class': 'replay-trade-order-rail-buy',
+      x: spec.x + spec.buttonWidth / 2 - 2,
+      y: spec.y + 11,
+    }, spec.buyLabel));
+    append(adapter, row, element(adapter, 'text', {
+      'class': 'replay-trade-order-rail-price',
+      x: spec.x + spec.buttonWidth / 2 - 2,
+      y: spec.y + 24,
+    }, spec.buyPriceText));
+    append(adapter, row, element(adapter, 'text', {
+      'class': 'replay-trade-order-rail-pnl replay-trade-order-rail-pnl-' + spec.pnlClass,
+      x: spec.x + spec.buttonWidth + spec.pnlWidth / 2,
+      y: spec.y + 10,
+    }, spec.pnlPercentText));
+    append(adapter, row, element(adapter, 'text', {
+      'class': 'replay-trade-order-rail-pnl replay-trade-order-rail-pnl-' + spec.pnlClass,
+      x: spec.x + spec.buttonWidth + spec.pnlWidth / 2,
+      y: spec.y + 24,
+    }, spec.pnlMoneyText));
+    var sell = append(adapter, row, element(adapter, 'text', {
+      'class': 'replay-trade-order-rail-sell',
+      x: sellX + spec.buttonWidth / 2 + 2,
+      y: spec.y + 11,
+      'data-sell-order-number': spec.orderNumber,
+      'data-order-state': spec.closed ? 'closed' : 'open',
+    }, spec.sellLabel));
+
+    append(adapter, svg, row);
+    return {
+      row: row,
+      stripBackground: stripBackground,
+      buyBackground: buyBackground,
+      buy: buy,
+      sellBackground: sellBackground,
+      sell: sell,
+    };
+  }
+
+  function renderSummaryText(adapter, parent, value, x, y, className, attrs) {
+    return append(adapter, parent, element(adapter, 'text', Object.assign({
+      'class': className || 'replay-trade-summary-line',
+      x: x,
+      y: y,
+    }, attrs || {}), value));
+  }
+
+  function renderPositionSummary(adapter, svg, spec) {
+    spec = spec || {};
+    var group = element(adapter, 'g', {
+      'class': 'replay-trade-summary-group',
+      'pointer-events': 'all',
+    });
+    if (!group) return null;
+    append(adapter, svg, group);
+
+    var box = append(adapter, group, element(adapter, 'rect', {
+      'class': 'replay-trade-summary-box',
+      x: spec.x, y: spec.y, width: spec.width, height: spec.height, rx: 4,
+    }));
+    var headings = [];
+    (spec.columns || []).forEach(function (item, index) {
+      var columnX = spec.x + index * spec.orderWidth;
+      append(adapter, group, element(adapter, 'rect', {
+        'class': item.columnClass,
+        x: columnX + 1,
+        y: spec.y + 1,
+        width: Math.max(0, spec.orderWidth - 2),
+        height: spec.height - 2,
+      }));
+      if (index > 0) {
+        append(adapter, group, element(adapter, 'line', {
+          'class': 'replay-trade-summary-separator',
+          x1: columnX, x2: columnX,
+          y1: spec.y + 8, y2: spec.y + spec.height - 8,
+        }));
+      }
+      var heading = renderSummaryText(adapter, group, item.heading, columnX + 9, spec.y + 18,
+        'replay-trade-summary-title replay-trade-summary-order' + item.valueClass, {
+          'data-order-number': item.orderNumber,
+        });
+      headings.push({ node: heading, orderNumber: item.orderNumber, closed: !!item.closed });
+      renderSummaryText(adapter, group, item.statusLine, columnX + 9, spec.y + 36,
+        'replay-trade-summary-line' + item.valueClass);
+      renderSummaryText(adapter, group, item.amountLine, columnX + 9, spec.y + 53,
+        'replay-trade-summary-detail' + item.valueClass);
+      renderSummaryText(adapter, group, item.finalLine, columnX + 9, spec.y + 70,
+        'replay-trade-summary-detail' + item.valueClass);
+    });
+
+    var totalX = spec.x + (spec.columns || []).length * spec.orderWidth;
+    if ((spec.columns || []).length) {
+      append(adapter, group, element(adapter, 'line', {
+        'class': 'replay-trade-summary-separator',
+        x1: totalX, x2: totalX,
+        y1: spec.y + 8, y2: spec.y + spec.height - 8,
+      }));
+    }
+    var total = spec.total || {};
+    renderSummaryText(adapter, group, total.heading || '总计', totalX + 10, spec.y + 18,
+      'replay-trade-summary-title');
+    renderSummaryText(adapter, group, total.label, totalX + 10, spec.y + 36,
+      'replay-trade-summary-line' + (total.valueClass || ''));
+    renderSummaryText(adapter, group, total.value, totalX + 10, spec.y + 54,
+      'replay-trade-summary-line' + (total.valueClass || ''));
+    renderSummaryText(adapter, group, total.countText, totalX + 10, spec.y + 71,
+      'replay-trade-summary-detail');
+
+    return { group: group, box: box, headings: headings };
+  }
+
   return {
     renderBracketLevel: renderBracketLevel,
     renderExecutionMarker: renderExecutionMarker,
@@ -186,5 +337,7 @@
     renderPresetOrder: renderPresetOrder,
     renderPresetPreview: renderPresetPreview,
     renderHistoryGhost: renderHistoryGhost,
+    renderOrderRailRow: renderOrderRailRow,
+    renderPositionSummary: renderPositionSummary,
   };
 });
