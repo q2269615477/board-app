@@ -86,24 +86,48 @@ def test_index_shell_loads_modular_frontend_scripts():
         assert required in scripts, f"missing core entry script: {required}"
 
 
-def test_session_api_precedes_session_ui_and_ui_guards_named_boundary():
-    """session API/state modules must precede session UI and guard named boundaries."""
+def test_session_modules_load_in_dependency_order_and_ui_guards_named_boundaries():
+    """session API/state/render modules precede UI and guard named boundaries."""
     scripts = _parse_entry_scripts()
     api = "static/js/session-api.js"
     state = "static/js/session-state.js"
+    render = "static/js/session-render.js"
     ui = "static/js/session-ui.js"
     assert api in scripts, f"missing session API entry script: {api}"
     assert state in scripts, f"missing session state entry script: {state}"
+    assert render in scripts, f"missing session render entry script: {render}"
     assert ui in scripts, f"missing session UI entry script: {ui}"
-    assert scripts.index(api) < scripts.index(state) < scripts.index(ui), (
-        "session-api.js and session-state.js must be loaded before session-ui.js"
+    assert scripts.index(api) < scripts.index(state) < scripts.index(render) < scripts.index(ui), (
+        "session-api.js, session-state.js and session-render.js must be loaded before session-ui.js"
     )
     source = (ROOT / ui).read_text(encoding="utf-8")
     assert "function requireSessionAPI()" in source
     assert "SESSION_API_METHODS" in source
     assert "function requireSessionState()" in source
     assert "SESSION_STATE_METHODS" in source
+    assert "function requireSessionRender()" in source
+    assert "SESSION_RENDER_METHODS" in source
+    assert "renderSessionBody" in source
     assert "global.SessionAPI.api" not in source
+
+
+def test_session_render_is_a_standalone_pure_projection_module():
+    """SessionRender must not own browser state, I/O, timers, or event binding."""
+    render = ROOT / "static/js/session-render.js"
+    source = render.read_text(encoding="utf-8")
+    assert "module.exports" in source
+    assert "renderSessionBody" in source
+    for forbidden in (
+        "document",
+        "window",
+        "fetch(",
+        "setTimeout",
+        "setInterval",
+        "addEventListener",
+        "innerHTML",
+        "SessionUI",
+    ):
+        assert forbidden not in source, f"session-render.js must stay pure: {forbidden}"
 
 
 def test_session_state_is_a_standalone_pure_projection_module():

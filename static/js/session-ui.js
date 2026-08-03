@@ -32,6 +32,8 @@
     'projectBarToKbar',
   ];
 
+  const SESSION_RENDER_METHODS = ['renderSessionBody'];
+
   function requireSessionAPI() {
     const api = global.SessionAPI;
     if (!api) throw new Error('session-api.js 未加载');
@@ -46,6 +48,14 @@
     const missing = SESSION_STATE_METHODS.filter((name) => typeof state[name] !== 'function');
     if (missing.length) throw new Error('SessionState 缺少具名方法: ' + missing.join(', '));
     return state;
+  }
+
+  function requireSessionRender() {
+    const render = global.SessionRender;
+    if (!render) throw new Error('session-render.js 未加载');
+    const missing = SESSION_RENDER_METHODS.filter((name) => typeof render[name] !== 'function');
+    if (missing.length) throw new Error('SessionRender 缺少具名方法: ' + missing.join(', '));
+    return render;
   }
 
   let S = null;
@@ -635,7 +645,7 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
     const hdr = document.getElementById('sess-hdr-status');
     if (!body) return;
     if (!S) {
-      body.innerHTML = '<div class="empty">无会话</div>';
+      body.innerHTML = requireSessionRender().renderSessionBody(null, {}, [], {});
       return;
     }
     const ui = S.ui || {};
@@ -662,352 +672,12 @@ body.sess-side-on #right-panel, body.sess-side-on .right-col{margin-right:0}
       );
     });
 
-    const activeC = (S.causes || []).find((c) => c.id === ui.active_cause_id);
-    const activeE = (S.effects || []).find((e) => e.id === ui.active_effect_id);
-    const causes = S.causes || [];
-    const effects = S.effects || [];
-    const events = S.events || [];
-    const causeMap = {};
-    causes.forEach((c) => {
-      causeMap[c.id] = c;
-    });
-    const eventMap = {};
-    events.forEach((ev) => {
-      eventMap[ev.id] = ev;
-    });
-
-    function effectOf(causeId) {
-      return effects.find((e) => e.cause_id === causeId);
-    }
-    function indentHtml(depth) {
-      if (depth <= 0) return '';
-      let h = '<span class="ol-indent">';
-      for (let i = 0; i < depth; i++) h += '<span class="col"></span>';
-      return h + '</span>';
-    }
-
-    /**
-     * 列式渲染一条因果链：
-     *   因
-     *   [事件 | 子链 …]  （children_order 顺序）
-     *   果
-     */
-    function renderChain(causeId, depth) {
-      const c = causeMap[causeId];
-      if (!c) return '';
-      const ef = effectOf(c.id);
-      const phase = (ef && ef.phase) || 'idle';
-      const isChain = c.id === ui.active_cause_id;
-      const causeActive = isChain && !ui.active_event_id && (ui.side || 'cause') === 'cause';
-      const effectActive = isChain && !ui.active_event_id && ui.side === 'effect';
-      // 折叠状态（存于 ui）
-      const collapsed = ((ui.collapsed_chains || {})[c.id]) === true;
-      // 子链数（用于折叠时显示 +N）
-      const childChains = causes.filter((ch) => ch.parent_id === c.id);
-      const childEvents = events.filter((ev) => ev.cause_id === c.id && ev.id);
-      const childCount = childChains.length + childEvents.length;
-      let causeCls = 'ol-node ol-cause' + (causeActive ? ' active' : '');
-      if (c.state === 'closed') causeCls += ' closed';
-      let effectCls =
-        'ol-node ol-effect' +
-        (effectActive ? ' active' : '') +
-        (phase === 'collecting' ? ' collecting' : '') +
-        (phase === 'closed' ? ' closed' : '');
-
-      let wrapCls = 'ol-chain-wrap' + (isChain ? ' focused' : '') + (collapsed ? ' collapsed' : '');
-      let html = `<div class="${wrapCls}" data-depth="${depth}" data-chain="${esc(c.id)}">`;
-      // 因行（链顶）+ 删除
-      const collapseBtn = childCount > 0
-        ? `<span class="ol-collapse" data-toggle-collapse="${esc(c.id)}" title="${collapsed ? '展开' : '折叠'}子项">${collapsed ? '▶' : '▼'}</span>`
-        : '';
-      const childCountBadge = (collapsed && childCount > 0)
-        ? `<span class="ol-collapse-count" title="已折叠 ${childCount} 个子项">+${childCount}</span>`
-        : '';
-      html += `<div class="ol-line" data-depth="${depth}" data-toggle-line="1">
-  ${indentHtml(depth)}
-  <div class="ol-line-inner">
-  <div class="${causeCls}" data-cause="${esc(c.id)}" title="选中此因果链 · 因侧（点因≠事件） · 双击重命名">
-    <div class="ol-ttl">
-      ${collapseBtn}
-      <span class="tag">因</span>
-      <span class="ol-title" data-rename-cause="${esc(c.id)}">${esc(c.title || (depth > 0 ? '因-L' + depth : '因'))}</span>
-      <span class="ol-meta">L${depth}${isChain && !ui.active_event_id && (ui.side || 'cause') === 'cause' ? ' · 选中' : ''}</span>
-      ${childCountBadge}
-    </div>
-    <div class="ol-sub">
-      <span class="ol-chip">${esc(c.state || 'open')}</span>
-      <span class="ol-chip">K ${(c.kbars || []).length}</span>
-      <span class="ol-chip">线 ${(c.overlays || []).length}</span>
-    </div>
-  </div>
-  <button type="button" class="ol-del" data-del-cause="${esc(c.id)}" title="删除此因果链（含子链与事件）">×</button>
-  </div>
-</div>`;
-
-      // 中间：仅 children_order 中真实存在的 事件 / 子链（不预制事件）
-      const order = Array.isArray(c.children_order) ? c.children_order : [];
-      let items = order.filter((x) => x && x.id && (x.type === 'event' || x.type === 'chain'));
-      if (!items.length) {
-        // 兼容旧数据：只列真实事件 + 真实子链，绝不捏造空事件
-        events
-          .filter((ev) => ev.cause_id === c.id && ev.id)
-          .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
-          .forEach((ev) => items.push({ type: 'event', id: ev.id }));
-        causes
-          .filter((ch) => ch.parent_id === c.id && ch.id)
-          .forEach((ch) => items.push({ type: 'chain', id: ch.id }));
-      }
-      items.forEach((item) => {
-        if (item.type === 'event') {
-          const ev = eventMap[item.id];
-          if (!ev) return; // 无实体则不渲染
-          const act = ev.id === ui.active_event_id ? ' active' : '';
-          const t = (ev.created_at || '').slice(11, 16) || '';
-          html += `<div class="ol-line" data-depth="${depth + 1}" data-collapse-body="1">
-  ${indentHtml(depth + 1)}
-  <div class="ol-line-inner">
-  <div class="ol-node ol-event${act}" data-event="${esc(ev.id)}" title="属于链 L${depth} · 选中后：画线/选K/备注均归入此事件 · 双击重命名">
-    <div class="ol-ttl">
-      <span class="tag">事件</span>
-      <span class="ol-title" data-rename-event="${esc(ev.id)}">${esc(ev.title || ('事件' + (t ? '·' + t : '')))}</span>
-      <span class="ol-meta">∈L${depth}${t ? ' · ' + esc(t) : ''}</span>
-    </div>
-    <div class="ol-sub">
-      <span class="ol-chip">元素 ${(ev.elements || []).length || (ev.kbars || []).length + (ev.overlays || []).length + (ev.notes || []).length}</span>
-    </div>
-  </div>
-  <button type="button" class="ol-del" data-del-event="${esc(ev.id)}" title="删除此事件">×</button>
-  </div>
-</div>`;
-        } else if (item.type === 'chain') {
-          if (!causeMap[item.id]) return;
-          const childHtml = renderChain(item.id, depth + 1);
-          html += `<div data-collapse-body="1">${childHtml}</div>`;
-        }
-      });
-
-      // 果行（链底，与因同列）
-      const phaseLabel =
-        phase === 'collecting' ? '采集中' : phase === 'closed' ? '已闭合' : '待验证';
-      html += `<div class="ol-line" data-depth="${depth}">
-  ${indentHtml(depth)}
-  <div class="${effectCls}" data-effect="${esc(ef ? ef.id : '')}" data-cause-for-effect="${esc(
-        c.id
-      )}" title="点果：进果侧 / 再点闭合（点果≠事件）">
-    <div class="ol-ttl">
-      <span class="tag">果</span>
-      <span class="ol-meta">${esc(phaseLabel)}</span>
-    </div>
-    <div class="ol-sub">
-      <span class="ol-chip">K ${(ef && ef.kbars ? ef.kbars.length : 0)}</span>
-      <span class="ol-chip">线 ${(ef && ef.overlays ? ef.overlays.length : 0)}</span>
-    </div>
-  </div>
-</div>`;
-      html += `</div>`;
-      return html;
-    }
-
-    // 根层顺序
-    let rootItems = (S.root_order || []).slice();
-    if (!rootItems.length) {
-      causes
-        .filter((c) => !c.parent_id)
-        .forEach((c) => rootItems.push({ type: 'chain', id: c.id }));
-    }
-    const treeParts = [];
-    rootItems.forEach((item) => {
-      if (item && item.type === 'chain' && item.id) treeParts.push(renderChain(item.id, 0));
-    });
-    const treeHtml = treeParts.length
-      ? `<div class="chain-outline">${treeParts.join('')}</div>`
-      : `<div class="hint-box">
-        空白大纲 — 不预置任何节点。<br/>
-        <b>因</b>：无选中时建根链；选中某链后再点「因」= 其下子链（缩进）<br/>
-        <b>事件</b>：仅主动添加，归属当前选中的因果链<br/>
-        <b>果</b>：第1次进果侧，第2次闭合 · 点因/果都不是事件<br/>
-        点标题「会话分析」可取消选中，再点「因」可另建根链
-      </div>`;
-
-    const liveEv = events.find((e) => e.id === ui.active_event_id);
-    const liveSide = ui.side || 'cause';
-    const liveNode = liveSide === 'effect' ? activeE : activeC;
-    let liveLabel;
-    let liveTargetCls = 'cause';
-    if (liveEv) {
-      liveLabel =
-        '事件 ∈L' +
-        (activeC && activeC.depth != null ? activeC.depth : '?') +
-        ' · ' +
-        ((liveEv.created_at || '').slice(11, 16) || liveEv.id.slice(-6));
-      liveTargetCls = 'ev';
-    } else if (liveSide === 'effect') {
-      liveLabel = '果侧汇总 · ' + ((activeE && activeE.phase) || '');
-      liveTargetCls = 'effect';
-    } else {
-      liveLabel = '因侧汇总 · ' + ((activeC && activeC.state) || '未选链');
-      liveTargetCls = 'cause';
-    }
-
-    function linesKbars(arr) {
-      if (!arr || !arr.length) return '<div class="empty">尚未选K</div>';
-      return arr
-        .map((k, i) => {
-          const ohlc =
-            k.open != null
-              ? ` O${esc(k.open)} H${esc(k.high)} L${esc(k.low)} C${esc(k.close)}`
-              : '';
-          return `<div class="list-line">#${i + 1} ${esc(k.date || k.timestamp)} ${esc(
-            k.symbol || ''
-          )} ${esc(k.period || '')} ${esc(k.price_element || '')}@${esc(
-            k.price != null ? k.price : ''
-          )}${ohlc} 量${esc(fmtVol(k.volume))}${
-            k.amount != null ? ' 额' + esc(fmtVol(k.amount)) : ''
-          }</div>`;
-        })
-        .join('');
-    }
-    function linesOvs(arr) {
-      if (!arr || !arr.length) return '<div class="empty">无画线</div>';
-      return arr
-        .map((o, i) => {
-          const pts = (o.points || [])
-            .slice(0, 2)
-            .map((p) => p.value)
-            .join(',');
-          return `<div class="list-line">#${i + 1} ${esc(o.type)} ${esc(pts)}</div>`;
-        })
-        .join('');
-    }
-    function linesNotes(arr) {
-      if (!arr || !arr.length) return '<div class="empty">无备注</div>';
-      return arr
-        .map((n) => {
-          const t = typeof n === 'string' ? n : n.text || JSON.stringify(n);
-          return `<div class="list-line">${esc(t)}</div>`;
-        })
-        .join('');
-    }
-
-    // 元素区：事件内 elements 并列列表；无事件时退回因/果汇总
     const chartOvs = collectOverlays();
-    const depthNow = activeC ? (activeC.depth != null ? activeC.depth : 0) : 0;
-    const activeElId = ui.active_element_id;
-    let elementsHtml = '';
-    if (liveEv) {
-      const els = liveEv.elements || [];
-      if (!els.length) {
-        elementsHtml =
-          '<div class="empty">暂无元素 · 选K / 画线 / 写备注 将各自新增并列元素</div>';
-      } else {
-        elementsHtml =
-          '<div class="el-list">' +
-          els
-            .map((el, idx) => {
-              const kind = el.kind || 'kbar';
-              const d = el.data || {};
-              const act = el.id === activeElId ? ' active' : '';
-              let title = '';
-              let sub = '';
-              if (kind === 'kbar') {
-                title =
-                  (d.date || d.timestamp || 'K') +
-                  ' ' +
-                  (d.price_element || '') +
-                  '@' +
-                  (d.price != null ? d.price : '');
-                sub =
-                  '量' +
-                  fmtVol(d.volume) +
-                  (d.open != null
-                    ? ' · O' + d.open + ' H' + d.high + ' L' + d.low + ' C' + d.close
-                    : '');
-              } else if (kind === 'overlay') {
-                const pts = (d.points || [])
-                  .slice(0, 2)
-                  .map((p) => (p && p.value != null ? p.value : ''))
-                  .join(',');
-                title = (d.type || '画线') + (pts ? ' · ' + pts : '');
-                sub = 'id ' + String(d.id || '').slice(-8);
-              } else if (kind === 'note') {
-                title = d.text || '';
-                sub = (d.at || el.created_at || '').toString().slice(0, 19);
-              }
-              const kindLabel =
-                kind === 'kbar' ? 'K线' : kind === 'overlay' ? '画线' : '备注';
-              return `<div class="el-item${act}" data-element="${esc(el.id)}" data-event-for-el="${esc(
-                liveEv.id
-              )}">
-  <div class="el-body">
-    <span class="el-kind ${esc(kind)}">#${idx + 1} ${kindLabel}</span>
-    <div class="el-title">${esc(title)}</div>
-    <div class="el-sub">${esc(sub)}</div>
-  </div>
-  <button type="button" class="el-del" data-del-element="${esc(el.id)}" data-event-for-el="${esc(
-                liveEv.id
-              )}" title="删除此元素">×</button>
-</div>`;
-            })
-            .join('') +
-          '</div>';
-      }
-    } else {
-      const liveK = (liveNode && liveNode.kbars) || [];
-      const liveOv = (liveNode && liveNode.overlays) || [];
-      const liveNotes = (liveNode && liveNode.notes) || [];
-      elementsHtml =
-        '<div class="muted" style="margin-bottom:6px">未选事件 · 显示因/果汇总（点「事件」后可建并列元素）</div>' +
-        `<div class="card"><div style="color:#f39c12;margin-bottom:4px">选K ${liveK.length}</div>${linesKbars(
-          liveK
-        )}</div>` +
-        `<div class="card"><div style="color:#f39c12;margin-bottom:4px">画线 ${liveOv.length}</div>${linesOvs(
-          liveOv
-        )}</div>` +
-        `<div class="card"><div style="color:#f39c12;margin-bottom:4px">备注 ${liveNotes.length}</div>${linesNotes(
-          liveNotes
-        )}</div>`;
-    }
-
-    body.innerHTML = `
-<div class="sec">
-  <h4>图表</h4>
-  <div class="card">
-    <div class="kv"><span>标的</span><span>${esc(ctx.symbol_name || '')} ${esc(ctx.symbol)}</span></div>
-    <div class="kv"><span>周期</span><span>${esc(ctx.period)}</span></div>
-    <div class="kv"><span>图上画线</span><span>${chartOvs.length}</span></div>
-    <div class="kv"><span>当前链深度</span><span>L${depthNow}</span></div>
-  </div>
-</div>
-<div class="sec">
-  <h4>大纲 · 列式层级</h4>
-  ${treeHtml}
-</div>
-<div class="sec">
-  <h4>元素 <span class="live-target ${liveTargetCls}">${esc(liveLabel)}</span></h4>
-  <div class="card active">
-    <div class="kv"><span>当前链深度</span><span>L${depthNow}${
-      activeC ? '' : ' · 未选中'
-    }</span></div>
-    <div class="kv"><span>链 / 事件</span><span>${esc(
-      (ui.active_cause_id || '—').toString().slice(-8)
-    )} / ${esc((ui.active_event_id || '—').toString().slice(-8))}</span></div>
-    <div class="kv"><span>工具</span><span>${esc(ui.tool || 'browse')}${
-      pickKActive ? ' ·选K' : ''
-    }</span></div>
-    <div class="kv"><span>写入目标</span><span>${
-      liveEv ? '事件内并列元素' : liveSide === 'effect' ? '果汇总' : '因汇总'
-    }</span></div>
-  </div>
-  <div class="card">
-    <div style="color:#f39c12;margin-bottom:6px">元素列表 ${
-      liveEv ? (liveEv.elements || []).length : '—'
-    } · 点击高亮图表</div>
-    ${elementsHtml}
-  </div>
-  <div class="card"><div style="color:#787b86;margin-bottom:4px">图上实时画线 ${
-    chartOvs.length
-  }</div>${linesOvs(chartOvs)}</div>
-</div>`;
+    // Pure HTML composition lives in SessionRender; UI owns DOM insertion and
+    // the event bindings below.
+    body.innerHTML = requireSessionRender().renderSessionBody(S, ctx, chartOvs, {
+      pickKActive,
+    });
 
     body.querySelectorAll('[data-cause]').forEach((el) => {
       el.addEventListener('click', (e) => {
