@@ -1387,200 +1387,52 @@ def _update_single_index_tushare(code: str, name: str, data_type: str, max_retri
     return False, 0
 
 
-def _append_board_row_csv(csv_path, date_str, row_data) -> bool:
-    """向 CSV 追加一行板块日K数据，自动检测11列/7列格式，按日期去重。"""
-    import csv as _csv
-    from pathlib import Path as _P
-
-    fp = _P(csv_path)
-    content = fp.read_text(encoding='utf-8-sig') if fp.exists() else ''
-    lines = content.splitlines()
-    # 判断列数：有 header 时按 header 列数判断，无内容默认 11 列
-    num_cols = 11
-    if lines and lines[0].strip():
-        num_cols = len(lines[0].split(','))
-    elif not content.strip():
-        num_cols = 11
-
-    # 构建行
-    if num_cols >= 11:
-        row = [
-            date_str,
-            row_data.get('open', 0),
-            row_data.get('close', 0),
-            row_data.get('high', 0),
-            row_data.get('low', 0),
-            row_data.get('pct_change', 0),
-            0,  # 涨跌额（不可用）
-            row_data.get('vol', 0),
-            row_data.get('amount', 0),
-            0,  # 振幅（不可用）
-            0,  # 换手率（不可用）
-        ]
-        header = ['日期', '开盘', '收盘', '最高', '最低', '涨跌幅', '涨跌额',
-                  '成交量', '成交额', '振幅', '换手率']
-    else:
-        row = [
-            date_str,
-            row_data.get('open', 0),
-            row_data.get('close', 0),
-            row_data.get('high', 0),
-            row_data.get('low', 0),
-            row_data.get('vol', 0),
-            row_data.get('amount', 0),
-        ]
-        header = ['日期', '开盘', '收盘', '最高', '最低', '成交量', '成交额']
-
-    # 读已有行（跳过 header），按日期去重：保留最后出现的
-    existing_rows = []
-    if lines:
-        for line in lines[1:]:
-            if line.strip():
-                parts = line.split(',')
-                existing_rows.append(parts)
-
-    # 去重：以日期（第一列）为键，保留最后出现
-    dedup = {}
-    for parts in existing_rows:
-        if parts:
-            dedup[parts[0]] = parts
-    dedup[date_str] = [str(v) for v in row]
-
-    # 按日期排序后写出
-    sorted_rows = sorted(dedup.values(), key=lambda r: r[0] if r else '')
-
-    fp.parent.mkdir(parents=True, exist_ok=True)
-    with open(fp, 'w', newline='', encoding='utf-8-sig') as f:
-        w = _csv.writer(f)
-        # 空文件不写 header，只写数据行；非空文件保留已有 header
-        if lines and lines[0].strip():
-            w.writerow(header)
-        for r in sorted_rows:
-            w.writerow(r)
-    return True
-
-
 # ===== 板块数据（Tushare 仅此路径） =====
 
 
+# These wrappers intentionally resolve manager globals on every call.  Existing
+# callers patching data_update_manager._get_tushare_pro, _update_status,
+# _append_board_row_csv, _write_board_rows_sqlite, or Path therefore retain the
+# same seam while the implementation lives in services/board_update_service.
+from services.board_update_service import (
+    BoardUpdateDependencies as _BoardUpdateDependencies,
+    BoardUpdateService as _BoardUpdateService,
+    append_board_row_csv as _board_append_row_csv,
+    normalize_board_update_rows as _board_normalize_rows,
+    write_board_rows_sqlite as _board_write_rows_sqlite,
+    load_classified_boards as _board_load_classified_boards,
+)
+
+
+def _make_board_update_service() -> _BoardUpdateService:
+    return _BoardUpdateService(
+        _BoardUpdateDependencies(
+            get_tushare_pro=_get_tushare_pro,
+            update_status=_update_status,
+            append_board_row_csv=_append_board_row_csv,
+            normalize_board_update_rows=_normalize_board_update_rows,
+            write_board_rows_sqlite=_write_board_rows_sqlite,
+            path_factory=Path,
+            logger=logger,
+            now=datetime.now,
+        )
+    )
+
+
+def _append_board_row_csv(csv_path, date_str, row_data) -> bool:
+    return _board_append_row_csv(csv_path, date_str, row_data)
+
+
 def _normalize_board_update_rows(raw: pd.DataFrame, code: str) -> pd.DataFrame:
-    """Return daily board rows as date/open/high/low/close/volume plus CSV extras."""
-    if raw is None or raw.empty:
-        return pd.DataFrame()
-    source = raw.copy()
-    if 'ts_code' in source.columns:
-        symbols = source['ts_code'].astype(str).str.upper()
-        code_upper = str(code).upper()
-        source = source[
-            symbols.eq(f'{code_upper}.DC')
-            | symbols.eq(f'{code_upper}.TS')
-            | symbols.str.split('.').str[0].eq(code_upper)
-        ]
-    if source.empty:
-        return pd.DataFrame()
-
-    from data.board_kline import normalize_board_kline
-
-    canonical = normalize_board_kline(source)
-    if canonical.empty:
-        return canonical
-
-    source = source.reset_index(drop=True)
-    canonical = canonical.reset_index(drop=True)
-    if len(source) == len(canonical):
-        amount = source['amount'] if 'amount' in source.columns else 0
-        pct = source['pct_change'] if 'pct_change' in source.columns else 0
-        canonical['amount'] = pd.to_numeric(amount, errors='coerce').fillna(0) if hasattr(amount, '__len__') else float(amount or 0)
-        canonical['pct_change'] = pd.to_numeric(pct, errors='coerce').fillna(0) if hasattr(pct, '__len__') else float(pct or 0)
-    else:
-        canonical['amount'] = 0
-        canonical['pct_change'] = 0
-    canonical['vol'] = canonical['volume']
-    canonical = canonical.sort_values('date').drop_duplicates(subset=['date'], keep='last')
-    return canonical.reset_index(drop=True)
+    return _board_normalize_rows(raw, code)
 
 
 def _write_board_rows_sqlite(db_path, code: str, rows: pd.DataFrame) -> None:
-    """Write canonical board rows to the local kline SQLite file and refresh meta from DB truth."""
-    if rows is None or rows.empty:
-        return
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = _sqlite3.connect(str(db_path))
-    try:
-        conn.execute("""CREATE TABLE IF NOT EXISTS kline (
-            code TEXT NOT NULL, period TEXT NOT NULL, date TEXT NOT NULL,
-            open REAL, high REAL, low REAL, close REAL, volume REAL, updated_at TEXT,
-            PRIMARY KEY (code, period, date)
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS kline_meta (
-            code TEXT NOT NULL, period TEXT NOT NULL, rows INTEGER,
-            first_date TEXT, last_date TEXT, updated_at TEXT,
-            PRIMARY KEY (code, period)
-        )""")
-        cols = {row[1] for row in conn.execute('PRAGMA table_info(kline)').fetchall()}
-        if 'updated_at' not in cols:
-            conn.execute('ALTER TABLE kline ADD COLUMN updated_at TEXT')
-        now_db = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        payload = []
-        for _, row in rows.iterrows():
-            payload.append((
-                code, 'daily', str(row['date'])[:10],
-                float(row.get('open', 0) or 0),
-                float(row.get('high', 0) or 0),
-                float(row.get('low', 0) or 0),
-                float(row.get('close', 0) or 0),
-                float(row.get('volume', 0) or 0),
-            ))
-        if not payload:
-            return
-        conn.executemany(
-            'INSERT OR REPLACE INTO kline (code, period, date, open, high, low, close, volume, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
-            [p + (now_db,) for p in payload],
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO kline_meta (code, period, rows, first_date, last_date, updated_at) "
-            "SELECT code, 'daily', COUNT(*), MIN(date), MAX(date), ? "
-            "FROM kline WHERE code=? AND period='daily' GROUP BY code",
-            (now_db, code),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    return _board_write_rows_sqlite(db_path, code, rows)
 
 
 def _load_classified_boards(include_types=None):
-    """Load board metadata from both legacy and nested classification schemas."""
-    classification = Path('static') / 'board_classification.json'
-    if not classification.exists():
-        raise FileNotFoundError("board_classification.json 不存在")
-    with open(classification, 'r', encoding='utf-8') as handle:
-        categories = json.load(handle).get('categories', [])
-
-    allowed = set(include_types or ())
-    found = []
-    seen = set()
-
-    def visit(node):
-        if not isinstance(node, dict):
-            return
-        for board in node.get('boards', []):
-            if not isinstance(board, dict):
-                continue
-            board_type = str(board.get('type') or '')
-            code = str(board.get('code') or '')
-            if not code or (allowed and board_type not in allowed):
-                continue
-            key = (board_type, code)
-            if key in seen:
-                continue
-            seen.add(key)
-            found.append((board_type, str(board.get('name') or code), code))
-        for child in node.get('subcategories', []):
-            visit(child)
-
-    for category in categories:
-        visit(category)
-    return found
+    return _board_load_classified_boards(Path, include_types)
 
 
 def _update_single_board(
@@ -1590,79 +1442,14 @@ def _update_single_board(
     raw_override: pd.DataFrame = None,
     record_status: bool = True,
 ):
-    """Update one board. Returns True on success, None on empty data, False on failure."""
-    from data_loader import DATA_ROOT, _safe_filename
+    return _make_board_update_service().update_single_board(
+        board_type,
+        name,
+        code,
+        raw_override=raw_override,
+        record_status=record_status,
+    )
 
-    try:
-        logger.info(f"[板块] 更新 {name}({code})")
-        raw = raw_override
-        tushare_checked = raw_override is not None
-        if raw_override is None:
-            try:
-                pro = _get_tushare_pro()
-                tushare_checked = True
-                raw = pro.dc_daily(
-                    ts_code=f'{code}.DC',
-                    start_date=(datetime.now() - timedelta(days=30)).strftime('%Y%m%d'),
-                    end_date=datetime.now().strftime('%Y%m%d'),
-                )
-            except Exception as e:
-                logger.debug(f"[板块] Tushare {code} 跳过: {e}")
-
-        rows = _normalize_board_update_rows(raw, code)
-
-        # Only use live fallback when the local Tushare factory was unavailable or errored.
-        # If dc_daily returned an empty frame, treat it as empty for this update cycle.
-        if rows.empty and not tushare_checked:
-            try:
-                from data.board_api import get_board_kline
-                rows = _normalize_board_update_rows(get_board_kline(board_type, code), code)
-            except Exception as e:
-                logger.debug(f"[板块] fallback {code} 跳过: {e}")
-
-        if rows.empty:
-            logger.warning(f"[板块] {name}({code}) 返回空数据")
-            return None
-
-        subdir = DATA_ROOT / ('行业板块K线数据' if board_type == 'industry' else '概念板块K线数据')
-        subdir.mkdir(parents=True, exist_ok=True)
-        safe_name = _safe_filename(str(name or code))
-        csv_path = subdir / f'{safe_name}_{code}.csv'
-        legacy = subdir / f'{name}_{code}.csv'
-        if not csv_path.exists() and legacy.exists() and legacy != csv_path:
-            csv_path = legacy
-
-        for _, row in rows.iterrows():
-            _append_board_row_csv(csv_path, str(row['date'])[:10], row.to_dict())
-
-        try:
-            _write_board_rows_sqlite(DATA_ROOT / 'kline.db', code, rows)
-        except Exception as e:
-            logger.debug(f"[板块] SQLite 写 {code} 跳过: {e}")
-
-        def mark_board_success(status):
-            status.setdefault('boards', {})[code] = {
-                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'status': 'success',
-                'name': name,
-            }
-        if record_status:
-            _update_status(mark_board_success)
-        logger.info(f"[板块] {name}({code}) 更新成功")
-        return True
-    except Exception as e:
-        error_msg = str(e)[:200]
-        def mark_board_failure(status):
-            status.setdefault('boards', {})[code] = {
-                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'status': 'failed',
-                'error': error_msg,
-                'name': name,
-            }
-        if record_status:
-            _update_status(mark_board_failure)
-        logger.error(f"[板块] {name}({code}) 更新失败: {error_msg}")
-        return False
 
 def update_failed_boards(max_retries: int = 2, limit: int = 50) -> dict:
     """仅重试 update_status 中 status=failed 的板块（修 Errno 22 后首选用）。"""
