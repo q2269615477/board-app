@@ -389,3 +389,43 @@ class TestObservabilityResponseMatrix:
 
         stale = svc._ok_response([], 'stock:600519:daily', source='cache_stale')
         assert stale['stale'] is True
+
+    def test_empty_loader_is_marked_unavailable_not_generic_load(self):
+        """没有任何源返回数据时，不得伪装成 source=load。"""
+        svc = _make_service(db_has_data=False)
+        with patch("services.kline_service._qmt_http_daily", return_value=pd.DataFrame()), \
+             patch("services.kline_service.is_qmt_available", return_value=False):
+            result, status = svc.get_kline("stock", "600519", "daily", timeout=5)
+        assert status == 200
+        assert result["count"] == 0
+        assert result["source"] == "unavailable"
+        assert "sqlite" in result["fallback_chain"]
+        assert "qmt_http" in result["fallback_chain"]
+        svc._cache.set.assert_not_called()
+
+    def test_worker_loader_exception_is_marked_error(self):
+        """worker 内部吞掉的异常也要在元数据中可见。"""
+        svc = _make_service(db_has_data=False)
+        svc._load_daily = MagicMock(side_effect=RuntimeError("broken source"))
+        result = svc._do_load("stock", "600519", "daily", "", "stock:600519:daily")
+        assert result.empty
+        assert result.attrs["source"] == "error"
+        assert result.attrs["load_error"] == "RuntimeError"
+
+    def test_derived_period_inherits_daily_source_metadata(self):
+        svc = _make_service(db_has_data=True)
+        daily = _make_daily_df(5)
+        daily.attrs.update({"source": "qmt_http", "fallback_chain": ["sqlite", "qmt_http"]})
+        svc._db.read_kline.return_value = daily
+        with patch("data_loader._resample", return_value=_make_daily_df(1)):
+            result = svc._load_resample("stock", "600519", "weekly", "")
+        assert result.attrs["source"] == "qmt_http"
+        assert result.attrs["fallback_chain"] == ["sqlite", "qmt_http"]
+        assert result.attrs["derived_from"] == "daily"
+
+    def test_board_non_daily_sqlite_source_is_preserved(self):
+        svc = _make_service(db_has_data=True)
+        svc._db.read_kline.return_value = _make_daily_df(1)
+        result = svc._load_board_non_daily("industry", "BK1158", "weekly", "半导体")
+        assert result.attrs["source"] == "sqlite"
+        assert result.attrs["fallback_chain"] == ["sqlite"]

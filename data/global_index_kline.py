@@ -68,6 +68,16 @@ TUSHARE_INDEX_CODE_OVERRIDES = {
 }
 
 
+def _annotate(df: pd.DataFrame, source: str, fallback_chain) -> pd.DataFrame:
+    """Attach truthful loader provenance to a returned frame."""
+    result = df if df is not None else pd.DataFrame()
+    attrs = dict(getattr(result, "attrs", {}) or {})
+    attrs["source"] = source
+    attrs["fallback_chain"] = list(fallback_chain or [])
+    result.attrs = attrs
+    return result
+
+
 def canonical_a_share_index_code(code: str) -> str:
     key = str(code or "").strip().lower()
     return A_SHARE_INDEX_COMPAT_ALIASES.get(key, key)
@@ -200,12 +210,26 @@ def load_a_share_index_kline(code: str, period: str = 'daily') -> pd.DataFrame:
     """Load A-share index history with a Tushare-authoritative recent range."""
     code = str(code or '').strip()
     if not is_standard_a_share_index_code(code) or is_inactive_a_share_index(code):
-        return pd.DataFrame()
+        return _annotate(pd.DataFrame(), 'unavailable', [])
     repo = get_sqlite_repo()
     cached = _clean_a_share_index_frame(repo.read_kline(code, 'daily'))
+    base_chain = ['sqlite']
     if period in RESAMPLE_PERIODS:
         daily = load_a_share_index_kline(code, 'daily')
-        return resample_kline(daily, period) if daily is not None and not daily.empty else pd.DataFrame()
+        if daily is None or daily.empty:
+            return _annotate(
+                pd.DataFrame(), 'unavailable',
+                (getattr(daily, 'attrs', {}) or {}).get(
+                    'fallback_chain', base_chain + ['tushare_index_daily']
+                ),
+            )
+        out = resample_kline(daily, period)
+        attrs = getattr(daily, 'attrs', {}) or {}
+        return _annotate(
+            out if out is not None else pd.DataFrame(),
+            attrs.get('source') or 'unavailable',
+            attrs.get('fallback_chain') or base_chain,
+        )
 
     cached_amount = pd.to_numeric(
         cached.get('amount', pd.Series(dtype=float)), errors='coerce'
@@ -218,7 +242,10 @@ def load_a_share_index_kline(code: str, period: str = 'daily') -> pd.DataFrame:
     )
     remote = fetch_tushare_a_share_index_tail(code, start_date=amount_start)
     if remote is None or remote.empty:
-        return cached
+        return _annotate(
+            cached, 'sqlite' if not cached.empty else 'unavailable',
+            base_chain + ['tushare_index_daily'],
+        )
 
     remote = _clean_a_share_index_frame(remote)
     remote_start = remote['date'].min()
@@ -233,7 +260,11 @@ def load_a_share_index_kline(code: str, period: str = 'daily') -> pd.DataFrame:
         repo.replace_kline_period(code, 'daily', merged)
     except Exception as exc:
         logger.warning('[TushareIndex] replace %s failed: %s', code, exc)
-    return merged
+    return _annotate(
+        merged, 'tushare_index_daily',
+        base_chain + ['tushare_index_daily'] if not cached.empty
+        else ['tushare_index_daily'],
+    )
 
 
 def eastmoney_index_secid(code: str) -> str:
@@ -297,7 +328,7 @@ def load_global_index_kline(code: str, period: str = "daily") -> pd.DataFrame:
     code = str(code or "").strip()
     period = str(period or "daily").strip()
     if not code:
-        return pd.DataFrame()
+        return _annotate(pd.DataFrame(), "unavailable", [])
     if is_standard_a_share_index_code(code):
         return load_a_share_index_kline(code, period)
 
@@ -306,38 +337,67 @@ def load_global_index_kline(code: str, period: str = "daily") -> pd.DataFrame:
     if period in RESAMPLE_PERIODS:
         daily = load_global_index_kline(code, "daily")
         if daily is None or daily.empty:
-            return pd.DataFrame()
+            attrs = getattr(daily, "attrs", {}) or {}
+            return _annotate(
+                pd.DataFrame(), "unavailable",
+                attrs.get("fallback_chain") or ["sqlite"],
+            )
 
         out = resample_kline(daily, period)
         if not out.empty:
             repo.save_kline(code, period, out)
-        return out
+        attrs = getattr(daily, "attrs", {}) or {}
+        return _annotate(
+            out, attrs.get("source") or "unavailable",
+            attrs.get("fallback_chain") or ["sqlite"],
+        )
 
     cached = repo.read_kline(code, "daily")
     cached = _dedupe(cached) if cached is not None else pd.DataFrame()
+    fallback_chain = ["sqlite"]
 
     # A cache hit is not proof that the tail is current. Always request a
     # bounded Eastmoney tail and merge by date; this also overwrites malformed
     # bars previously synthesized from a spot-only response.
     limit = 180 if not cached.empty else 10000
+    fallback_chain.append("eastmoney_history")
     remote = fetch_eastmoney_global_kline(code, limit=limit)
+    remote_source = (
+        "eastmoney_history" if remote is not None and not remote.empty else ""
+    )
 
     # Tencent is a reliable full-OHLC fallback for Hong Kong indices.
     if remote is None or remote.empty:
+        fallback_chain.append("tencent_history")
         remote = fetch_tencent_global_kline(code)
+        remote_source = (
+            "tencent_history" if remote is not None and not remote.empty else ""
+        )
 
     # Sina exposes independent APAC and US daily-history channels. They fill
     # the exact gap between an older Yahoo cache and today's Eastmoney bar.
     if remote is None or remote.empty:
+        fallback_chain.append("sina_history")
         remote = fetch_sina_global_kline(code)
+        remote_source = (
+            "sina_history" if remote is not None and not remote.empty else ""
+        )
 
     # Yahoo remains a cold-start fallback only. It is intentionally skipped
     # for incremental cache refreshes because a blocked Yahoo request should
     # not delay the current-bar repair path.
     if (remote is None or remote.empty) and cached.empty:
+        fallback_chain.append("yahoo_history")
         remote = fetch_yahoo_global_kline(code)
+        remote_source = (
+            "yahoo_history" if remote is not None and not remote.empty else ""
+        )
 
+    fallback_chain.append("eastmoney_spot")
     spot_bar = fetch_eastmoney_spot_bar(code)
+    spot_source = (
+        "eastmoney_spot" if spot_bar is not None and not spot_bar.empty else ""
+    )
     replace_incompatible_cache = (
         code == "800000" and _all_a_cache_is_incompatible(cached, remote)
     )
@@ -350,7 +410,7 @@ def load_global_index_kline(code: str, period: str = "daily") -> pd.DataFrame:
     parts = [frame for frame in (cached, remote, spot_bar)
              if frame is not None and not frame.empty]
     if not parts:
-        return pd.DataFrame()
+        return _annotate(pd.DataFrame(), "unavailable", fallback_chain)
 
     merged = _dedupe(pd.concat(parts, ignore_index=True))
     if ((remote is not None and not remote.empty)
@@ -359,12 +419,18 @@ def load_global_index_kline(code: str, period: str = "daily") -> pd.DataFrame:
             repo.replace_kline_period(code, "daily", merged)
         else:
             repo.save_kline(code, "daily", merged)
-    return merged
+    source = (
+        remote_source or spot_source
+        or ("sqlite" if not cached.empty else "unavailable")
+    )
+    return _annotate(merged, source, fallback_chain)
 
 
 def resample_kline(df: pd.DataFrame, period: str) -> pd.DataFrame:
     """Resample daily OHLCV bars into week/month/quarter/year periods."""
-    return _dedupe(resample_ohlcv(df, period))
+    out = _dedupe(resample_ohlcv(df, period))
+    out.attrs = dict(getattr(df, "attrs", {}) or {})
+    return out
 
 
 def fetch_eastmoney_global_kline(code: str, limit: int = 180) -> pd.DataFrame:

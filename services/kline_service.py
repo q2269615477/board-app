@@ -563,6 +563,41 @@ def _fallback_chain_list(value) -> List:
     return [value]
 
 
+def _annotate_kline(
+    df: Optional[pd.DataFrame],
+    source: Optional[str] = None,
+    fallback_chain=None,
+    **extra_attrs,
+) -> pd.DataFrame:
+    """Attach source metadata without dropping attrs during transformations.
+
+    Pandas generally copies ``DataFrame.attrs`` for ``copy``/concat operations,
+    but resampling and a few loader boundaries intentionally construct a new
+    frame.  Keeping this tiny helper at the service boundary makes the wire
+    source contract deterministic and defensive.  ``None`` is normalized to
+    an empty frame so callers can annotate failed/unavailable paths as well.
+    """
+    result = df if df is not None else pd.DataFrame()
+    attrs = dict(getattr(result, 'attrs', {}) or {})
+    if source is not None:
+        attrs['source'] = str(source)
+    elif 'source' not in attrs:
+        # A non-empty frame supplied by a compatibility/mock loader keeps the
+        # historical generic label; an empty frame is explicitly unavailable.
+        attrs['source'] = 'unavailable' if result.empty else 'load'
+    if fallback_chain is not None:
+        attrs['fallback_chain'] = _fallback_chain_list(fallback_chain)
+    elif 'fallback_chain' in attrs:
+        attrs['fallback_chain'] = _fallback_chain_list(attrs['fallback_chain'])
+    else:
+        attrs['fallback_chain'] = []
+    for key, value in extra_attrs.items():
+        if value is not None:
+            attrs[key] = value
+    result.attrs = attrs
+    return result
+
+
 def _load_elapsed_ms(start_time: float) -> int:
     """Measure elapsed wall-clock time without exposing negative values."""
     return _nonnegative_load_ms((time.time() - start_time) * 1000)
@@ -745,10 +780,14 @@ class KLineService:
             df_source = getattr(df, 'attrs', {}).get('source', 'load')
             df_fallback = getattr(df, 'attrs', {}).get('fallback_chain', [])
             data, last_date = self._format_response(df)
-            self._cache.set(
-                cache_key, data,
-                ttl=_response_cache_ttl(data_type, period, code),
-            )
+            # Never cache an unavailable/error empty result as a successful
+            # L1 hit; doing so would relabel the next request as ``cache`` and
+            # hide the real source failure until TTL expiry.
+            if data:
+                self._cache.set(
+                    cache_key, data,
+                    ttl=_response_cache_ttl(data_type, period, code),
+                )
             _release_pending(cache_key, evt)
             return self._ok_response(
                 data, cache_key, last_date=last_date, source=df_source,
@@ -844,57 +883,101 @@ class KLineService:
         try:
             period = normalize_period(period)
             if period in MINUTE_PERIODS:
-                return self._load_minute(data_type, code, period)
+                return _annotate_kline(
+                    self._load_minute(data_type, code, period)
+                )
             if period == 'daily':
-                return self._load_daily(data_type, code, board_name)
+                return _annotate_kline(
+                    self._load_daily(data_type, code, board_name)
+                )
             if period in RESAMPLE_PERIODS:
-                return dedupe_kline_df(self._load_resample(data_type, code, period, board_name))
+                return _annotate_kline(
+                    dedupe_kline_df(
+                        self._load_resample(data_type, code, period, board_name)
+                    )
+                )
             if data_type in ('industry', 'concept'):
-                return self._load_board_non_daily(data_type, code, period, board_name)
-            return pd.DataFrame()
+                return _annotate_kline(
+                    self._load_board_non_daily(
+                        data_type, code, period, board_name
+                    )
+                )
+            return _annotate_kline(pd.DataFrame(), source='unavailable')
         except Exception as e:
             logger.error(f"[KLine] load failed {data_type}:{code} {period}: {e}")
-            return pd.DataFrame()
+            # Keep the existing 200/empty response behavior for a worker
+            # failure, but never let it masquerade as a successful ``load``.
+            # ``get_kline`` still exposes the error status for exceptions
+            # raised by the future itself; this branch is for loader failures
+            # that historically were swallowed here.
+            return _annotate_kline(
+                pd.DataFrame(), source='error', fallback_chain=[],
+                load_error=type(e).__name__,
+            )
 
     def _load_minute(self, data_type: str, code: str, period: str) -> pd.DataFrame:
         """Load minute bars: QMT HTTP first, xtdata only as a fallback."""
+        fallback_chain = []
         if data_type in ('stock', 'index'):
             if period == '1m':
+                fallback_chain.append('qmt_http')
                 http_df = _qmt_http_candles(code, period='1m', count=2000)
             else:
                 # 1m is the authoritative source for session-aware buckets.
+                fallback_chain.append('qmt_http_1m')
                 http_df = _qmt_http_candles(code, period='1m', count=2000)
                 if http_df is not None and not http_df.empty:
                     result = dedupe_kline_df(self._resample_from_1m(http_df, period))
-                    result.attrs['source'] = 'qmt_http'
-                    result.attrs['fallback_chain'] = ['qmt_http_1m']
-                    return result
+                    if result is not None and not result.empty:
+                        return _annotate_kline(
+                            result, source='qmt_http',
+                            fallback_chain=fallback_chain,
+                        )
+                    # 120m/240m are session-aware aggregates, so a valid
+                    # 1m payload that cannot be resampled must not be returned
+                    # as if it were already a 120m/240m bar.
+                    if period in ('120m', '240m'):
+                        http_df = None
                 if period not in ('120m', '240m'):
+                    fallback_chain.append('qmt_http')
                     http_df = _qmt_http_candles(code, period=period, count=2000)
             if http_df is not None and not http_df.empty:
                 result = dedupe_kline_df(http_df)
-                result.attrs['source'] = 'qmt_http'
-                result.attrs['fallback_chain'] = ['qmt_http']
-                return result
+                return _annotate_kline(
+                    result, source='qmt_http', fallback_chain=fallback_chain,
+                )
 
         if not is_qmt_available():
-            return pd.DataFrame()
+            return _annotate_kline(
+                pd.DataFrame(), source='unavailable',
+                fallback_chain=fallback_chain,
+            )
 
         if period in RESAMPLE_FROM_1M:
+            fallback_chain.append('qmt_xtdata')
             df_1m = self._qmt.get_minute_kline(code, data_type, '1m')
             if df_1m is not None and not df_1m.empty:
                 result = dedupe_kline_df(self._resample_from_1m(df_1m, period))
-                result.attrs['source'] = 'qmt_xtdata'
-                result.attrs['fallback_chain'] = ['qmt_http', 'qmt_xtdata']
-                return result
-            return pd.DataFrame()
+                if result is not None and not result.empty:
+                    return _annotate_kline(
+                        result, source='qmt_xtdata',
+                        fallback_chain=fallback_chain,
+                    )
+            return _annotate_kline(
+                pd.DataFrame(), source='unavailable',
+                fallback_chain=fallback_chain,
+            )
 
+        fallback_chain.append('qmt_xtdata')
         df = self._qmt.get_minute_kline(code, data_type, period)
         result = dedupe_kline_df(df) if df is not None else pd.DataFrame()
         if not result.empty:
-            result.attrs['source'] = 'qmt_xtdata'
-            result.attrs['fallback_chain'] = ['qmt_http', 'qmt_xtdata']
-        return result
+            return _annotate_kline(
+                result, source='qmt_xtdata', fallback_chain=fallback_chain,
+            )
+        return _annotate_kline(
+            result, source='unavailable', fallback_chain=fallback_chain,
+        )
 
     def _save_daily_source(self, code: str, df: pd.DataFrame):
         """Persist settled history, never the changing intraday bar."""
@@ -1013,16 +1096,20 @@ class KLineService:
         if data_type == 'index' and is_standard_a_share_index_code(code):
             fallback_chain.append('tushare_index_daily')
             if is_inactive_a_share_index(code):
-                empty = pd.DataFrame()
-                empty.attrs['source'] = 'unavailable'
-                empty.attrs['fallback_chain'] = fallback_chain
-                return empty
+                return _annotate_kline(
+                    pd.DataFrame(), source='unavailable',
+                    fallback_chain=fallback_chain,
+                )
             df = load_a_share_index_kline(code, 'daily')
             if df is not None and not df.empty:
                 result = dedupe_kline_df(df)
-                result.attrs['source'] = 'tushare_index_daily'
-                result.attrs['fallback_chain'] = fallback_chain
-                return self._attach_intraday(data_type, code, result)
+                attrs = getattr(df, 'attrs', {}) or {}
+                source = attrs.get('source') or 'tushare_index_daily'
+                chain = attrs.get('fallback_chain') or fallback_chain
+                return _annotate_kline(
+                    self._attach_intraday(data_type, code, result),
+                    source=source, fallback_chain=chain,
+                )
 
         # Overseas indices own an incremental HTTP refresh path. Reading
         # SQLite first would make any non-empty historical cache permanent.
@@ -1031,9 +1118,11 @@ class KLineService:
             df = load_global_index_kline(code, 'daily')
             if df is not None and not df.empty:
                 result = dedupe_kline_df(df)
-                result.attrs['source'] = 'global'
-                result.attrs['fallback_chain'] = fallback_chain
-                return result
+                attrs = getattr(df, 'attrs', {}) or {}
+                return _annotate_kline(
+                    result, source=attrs.get('source') or 'global',
+                    fallback_chain=attrs.get('fallback_chain') or fallback_chain,
+                )
 
         # 1. SQLite
         fallback_chain.append('sqlite')
@@ -1043,9 +1132,9 @@ class KLineService:
             df = self._ensure_latest_kline_bar(data_type, code, 'daily', df)
             result = dedupe_kline_df(df)
             result = self._attach_intraday(data_type, code, result)
-            result.attrs['source'] = 'sqlite'
-            result.attrs['fallback_chain'] = fallback_chain
-            return result
+            return _annotate_kline(
+                result, source='sqlite', fallback_chain=fallback_chain,
+            )
 
         # 2. Global index (hk/us)
         if data_type in GLOBAL_INDEX_TYPES or code in EASTMONEY_INDEX_CODES:
@@ -1053,9 +1142,11 @@ class KLineService:
             df = load_global_index_kline(code, 'daily')
             if df is not None and not df.empty:
                 result = dedupe_kline_df(df)
-                result.attrs['source'] = 'global'
-                result.attrs['fallback_chain'] = fallback_chain
-                return result
+                attrs = getattr(df, 'attrs', {}) or {}
+                return _annotate_kline(
+                    result, source=attrs.get('source') or 'global',
+                    fallback_chain=attrs.get('fallback_chain') or fallback_chain,
+                )
 
         # 3. QMT HTTP
         fallback_chain.append('qmt_http')
@@ -1065,9 +1156,9 @@ class KLineService:
             df = self._db.read_kline(code, 'daily')
             result = dedupe_kline_df(df if df is not None and not df.empty else qmt_http_df)
             result = self._attach_intraday(data_type, code, result)
-            result.attrs['source'] = 'qmt_http'
-            result.attrs['fallback_chain'] = fallback_chain
-            return result
+            return _annotate_kline(
+                result, source='qmt_http', fallback_chain=fallback_chain,
+            )
 
         # 4. QMT xtdata
         if is_qmt_available():
@@ -1079,14 +1170,14 @@ class KLineService:
                 df = self._db.read_kline(code, 'daily')
                 result = dedupe_kline_df(df if df is not None and not df.empty else qdf)
                 result = self._attach_intraday(data_type, code, result)
-                result.attrs['source'] = 'qmt_xtdata'
-                result.attrs['fallback_chain'] = fallback_chain
-                return result
+                return _annotate_kline(
+                    result, source='qmt_xtdata', fallback_chain=fallback_chain,
+                )
 
-        empty = pd.DataFrame()
-        empty.attrs['source'] = 'load'
-        empty.attrs['fallback_chain'] = fallback_chain
-        return empty
+        return _annotate_kline(
+            pd.DataFrame(), source='unavailable',
+            fallback_chain=fallback_chain,
+        )
 
     def _load_board_daily(self, data_type: str, code: str, board_name: str) -> pd.DataFrame:
         """Load board daily bars through the board updater, not stale SQLite only."""
@@ -1101,34 +1192,47 @@ class KLineService:
                 pass
             result = dedupe_kline_df(df)
             result = self._attach_board_snapshot(data_type, code, result)
-            result.attrs['source'] = 'board_loader'
-            result.attrs['fallback_chain'] = fallback_chain
-            return result
+            attrs = getattr(df, 'attrs', {}) or {}
+            return _annotate_kline(
+                result, source=attrs.get('source') or 'board_loader',
+                fallback_chain=attrs.get('fallback_chain') or fallback_chain,
+            )
 
         fallback_chain.append('sqlite')
         df = self._db.read_kline(code, 'daily')
         if df is not None and not df.empty:
             result = dedupe_kline_df(df)
             result = self._attach_board_snapshot(data_type, code, result)
-            result.attrs['source'] = 'sqlite'
-            result.attrs['fallback_chain'] = fallback_chain
-            return result
+            return _annotate_kline(
+                result, source='sqlite', fallback_chain=fallback_chain,
+            )
 
-        empty = pd.DataFrame()
-        empty.attrs['source'] = 'load'
-        empty.attrs['fallback_chain'] = fallback_chain
-        return empty
+        return _annotate_kline(
+            pd.DataFrame(), source='unavailable',
+            fallback_chain=fallback_chain,
+        )
 
     def _load_board_non_daily(self, data_type: str, code: str, period: str, board_name: str) -> pd.DataFrame:
         """Load direct non-daily board bars before falling back to the board loader."""
         df = self._db.read_kline(code, period)
         if df is not None and not df.empty:
-            return dedupe_kline_df(df)
+            return _annotate_kline(
+                dedupe_kline_df(df), source='sqlite',
+                fallback_chain=['sqlite'],
+            )
         df = load_board_kline(data_type, board_name, code, period)
         if df is not None and not df.empty:
             df = self._ensure_latest_kline_bar(data_type, code, period, df)
-            return dedupe_kline_df(df)
-        return pd.DataFrame()
+            attrs = getattr(df, 'attrs', {}) or {}
+            chain = attrs.get('fallback_chain') or ['board_loader']
+            return _annotate_kline(
+                dedupe_kline_df(df), source=attrs.get('source') or 'board_loader',
+                fallback_chain=chain,
+            )
+        return _annotate_kline(
+            pd.DataFrame(), source='unavailable',
+            fallback_chain=['sqlite', 'board_loader'],
+        )
 
     def _resample_from_1m(self, df_1m: pd.DataFrame, period: str) -> pd.DataFrame:
         """Resample 1m bars into A-share morning/afternoon session buckets."""
@@ -1208,21 +1312,38 @@ class KLineService:
     def _load_resample(self, data_type: str, code: str, period: str, board_name: str) -> pd.DataFrame:
         """从日线重采样（统一读 SQLite 日线，避免 loader 旁路不一致）。"""
         from data_loader import _resample
+        input_source = 'sqlite'
+        input_chain = ['sqlite']
         if (data_type in GLOBAL_INDEX_TYPES or code in EASTMONEY_INDEX_CODES
                 or (data_type == 'index' and _is_a_share_index_code(code))):
             df = self._load_daily(data_type, code, board_name)
+            daily_attrs = getattr(df, 'attrs', {}) or {}
+            input_source = daily_attrs.get('source') or input_source
+            input_chain = daily_attrs.get('fallback_chain') or input_chain
         else:
             df = self._db.read_kline(code, 'daily')
+            daily_attrs = getattr(df, 'attrs', {}) or {}
+            input_source = daily_attrs.get('source') or input_source
+            input_chain = daily_attrs.get('fallback_chain') or input_chain
         if df is None or df.empty:
             if data_type not in ('industry', 'concept'):
                 daily_df = self._do_load(
                     data_type, code, 'daily', board_name, f'{data_type}:{code}:daily'
                 )
                 df = daily_df if daily_df is not None else pd.DataFrame()
+                daily_attrs = getattr(df, 'attrs', {}) or {}
+                input_source = daily_attrs.get('source') or input_source
+                input_chain = daily_attrs.get('fallback_chain') or input_chain
             if (df is None or df.empty) and data_type in ('industry', 'concept'):
                 df = load_board_kline(data_type, board_name, code, 'daily')
+                daily_attrs = getattr(df, 'attrs', {}) or {}
+                input_source = daily_attrs.get('source') or 'board_loader'
+                input_chain = daily_attrs.get('fallback_chain') or ['board_loader']
         if df is None or df.empty:
-            return pd.DataFrame()
+            return _annotate_kline(
+                pd.DataFrame(), source='unavailable',
+                fallback_chain=input_chain,
+            )
 
         # 派生周期必须从当前日线重算；仅比较最后日期会复用过期的周/月线，
         # 因为日线在同一交易日内的 OHLC 仍可能发生变化。
@@ -1232,7 +1353,18 @@ class KLineService:
                 self._db.replace_kline_period(code, period, out)
         except Exception:
             pass
-        return out if out is not None else pd.DataFrame()
+        result = out if out is not None else pd.DataFrame()
+        if result is None or result.empty:
+            return _annotate_kline(
+                pd.DataFrame(), source='unavailable',
+                fallback_chain=input_chain,
+            )
+        # Derived bars inherit the actual daily source.  A resample must not
+        # silently reset metadata to the generic ``load`` default.
+        return _annotate_kline(
+            result, source=input_source, fallback_chain=input_chain,
+            derived_from='daily',
+        )
 
     # ---- 格式化响应 ----
 

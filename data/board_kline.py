@@ -16,6 +16,16 @@ from data.sqlite_repo import get_sqlite_repo
 RESAMPLE_PERIODS = {"weekly", "monthly", "quarterly", "yearly"}
 
 
+def _annotate(df: pd.DataFrame, source: str, fallback_chain) -> pd.DataFrame:
+    """Keep board loader provenance across daily/derived transformations."""
+    result = df if df is not None else pd.DataFrame()
+    attrs = dict(getattr(result, "attrs", {}) or {})
+    attrs["source"] = source
+    attrs["fallback_chain"] = list(fallback_chain or [])
+    result.attrs = attrs
+    return result
+
+
 def load_board_kline(board_type: str, name: str, code: str, period: str = "daily") -> pd.DataFrame:
     """Load board K-line data with a conservative incremental refresh."""
     code = str(code or "").strip()
@@ -26,9 +36,13 @@ def load_board_kline(board_type: str, name: str, code: str, period: str = "daily
     repo = get_sqlite_repo()
     daily = _read(repo, code, "daily")
     last_local = str(daily["date"].max())[:10] if daily is not None and not daily.empty else ""
+    local_chain = ["sqlite"]
 
     if _local_is_fresh_enough(last_local, daily):
-        return _period_from_daily(repo, code, period, daily)
+        return _period_from_daily(
+            repo, code, period, daily,
+            source="sqlite", fallback_chain=local_chain,
+        )
 
     try:
         from data.board_api import get_board_kline
@@ -38,13 +52,23 @@ def load_board_kline(board_type: str, name: str, code: str, period: str = "daily
             merged = _merge_daily(daily, incoming)
             if not merged.empty:
                 repo.save_kline(code, "daily", merged, name=name or code, data_type=board_type)
-                return _period_from_daily(repo, code, period, merged)
+                return _period_from_daily(
+                    repo, code, period, merged,
+                    source="board_loader",
+                    fallback_chain=local_chain + ["board_loader"],
+                )
     except Exception:
         pass
 
     if daily is not None and not daily.empty:
-        return _period_from_daily(repo, code, period, daily)
-    return pd.DataFrame()
+        return _period_from_daily(
+            repo, code, period, daily,
+            source="sqlite",
+            fallback_chain=local_chain + ["board_loader"],
+        )
+    return _annotate(
+        pd.DataFrame(), "unavailable", local_chain + ["board_loader"]
+    )
 
 
 def normalize_board_kline(df: pd.DataFrame) -> pd.DataFrame:
@@ -107,21 +131,29 @@ def _local_is_fresh_enough(last_local: str, daily: pd.DataFrame) -> bool:
     return False
 
 
-def _period_from_daily(repo, code: str, period: str, daily: pd.DataFrame) -> pd.DataFrame:
+def _period_from_daily(
+    repo, code: str, period: str, daily: pd.DataFrame,
+    source: str = "sqlite", fallback_chain=None,
+) -> pd.DataFrame:
+    chain = list(fallback_chain or ["sqlite"])
     if period == "daily":
-        return daily if daily is not None else pd.DataFrame()
+        return _annotate(
+            daily if daily is not None else pd.DataFrame(), source, chain
+        )
     cached = _read(repo, code, period)
     if cached is not None and not cached.empty:
         last_daily = str(daily["date"].max())[:10] if daily is not None and not daily.empty else ""
         last_cached = str(cached["date"].max())[:10]
         if last_cached <= last_daily:
-            return cached
+            return _annotate(cached, "sqlite", chain)
     if period in RESAMPLE_PERIODS and daily is not None and not daily.empty:
         out = resample_ohlcv(daily, period)
         if out is not None and not out.empty:
             repo.save_kline(code, period, out)
-        return out
-    return pd.DataFrame()
+        return _annotate(
+            out if out is not None else pd.DataFrame(), source, chain
+        )
+    return _annotate(pd.DataFrame(), "unavailable", chain)
 
 
 def _merge_daily(existing: pd.DataFrame, incoming: pd.DataFrame) -> pd.DataFrame:

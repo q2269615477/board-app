@@ -107,6 +107,19 @@ def test_minute_http_1m_is_resampled_into_a_share_sessions():
     service._qmt.get_minute_kline.assert_not_called()
 
 
+def test_minute_empty_resample_does_not_claim_http_source(monkeypatch):
+    service = KLineService.__new__(KLineService)
+    service._qmt = MagicMock()
+    service._qmt.get_minute_kline.return_value = pd.DataFrame()
+    with patch('services.kline_service._qmt_http_candles', return_value=_minute_rows()), \
+         patch.object(service, '_resample_from_1m', return_value=pd.DataFrame()), \
+         patch('services.kline_service.is_qmt_available', return_value=False):
+        result = service._load_minute('stock', '600519', '120m')
+    assert result.empty
+    assert result.attrs['source'] == 'unavailable'
+    assert result.attrs['fallback_chain'] == ['qmt_http_1m']
+
+
 def test_qmt_http_candles_parses_compact_minute_timestamp():
     session = MagicMock()
     response = MagicMock()

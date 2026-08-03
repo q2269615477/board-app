@@ -411,3 +411,71 @@ def test_eastmoney_all_a_cache_merges_history_and_current_bar(monkeypatch):
     assert out.iloc[-1]["close"] == pytest.approx(6350.92)
     assert not saved
     assert replaced and replaced[0]["date"].tolist() == out["date"].tolist()
+
+
+def test_global_loader_reports_actual_history_source(monkeypatch):
+    import data.global_index_kline as index_kline
+
+    class Repo:
+        def read_kline(self, code, period):
+            return pd.DataFrame()
+
+        def save_kline(self, code, period, frame):
+            pass
+
+    history = pd.DataFrame([{
+        "date": "2026-07-30", "open": 1, "high": 2,
+        "low": 0.5, "close": 1.5, "volume": 10,
+    }])
+    monkeypatch.setattr(index_kline, "get_sqlite_repo", lambda: Repo())
+    monkeypatch.setattr(index_kline, "fetch_eastmoney_global_kline", lambda *a, **k: history)
+    monkeypatch.setattr(index_kline, "fetch_eastmoney_spot_bar", lambda *a, **k: pd.DataFrame())
+    monkeypatch.setattr(index_kline, "fetch_tencent_global_kline", lambda *a, **k: pd.DataFrame())
+    monkeypatch.setattr(index_kline, "fetch_sina_global_kline", lambda *a, **k: pd.DataFrame())
+
+    result = index_kline.load_global_index_kline("^N225", "daily")
+    assert result.attrs["source"] == "eastmoney_history"
+    assert result.attrs["fallback_chain"] == [
+        "sqlite", "eastmoney_history", "eastmoney_spot"
+    ]
+
+
+def test_global_loader_empty_is_unavailable(monkeypatch):
+    import data.global_index_kline as index_kline
+
+    class Repo:
+        def read_kline(self, code, period):
+            return pd.DataFrame()
+
+    monkeypatch.setattr(index_kline, "get_sqlite_repo", lambda: Repo())
+    for name in (
+        "fetch_eastmoney_global_kline", "fetch_tencent_global_kline",
+        "fetch_sina_global_kline", "fetch_yahoo_global_kline",
+        "fetch_eastmoney_spot_bar",
+    ):
+        monkeypatch.setattr(index_kline, name, lambda *a, **k: pd.DataFrame())
+
+    result = index_kline.load_global_index_kline("^N225", "daily")
+    assert result.empty
+    assert result.attrs["source"] == "unavailable"
+    assert "eastmoney_history" in result.attrs["fallback_chain"]
+    assert "yahoo_history" in result.attrs["fallback_chain"]
+
+
+def test_a_share_loader_cache_fallback_is_not_labeled_tushare(monkeypatch):
+    import data.global_index_kline as index_kline
+
+    cached = pd.DataFrame([{
+        "date": "2026-07-30", "open": 1, "high": 2,
+        "low": 0.5, "close": 1.5, "volume": 10,
+    }])
+
+    class Repo:
+        def read_kline(self, code, period):
+            return cached
+
+    monkeypatch.setattr(index_kline, "get_sqlite_repo", lambda: Repo())
+    monkeypatch.setattr(index_kline, "fetch_tushare_a_share_index_tail", lambda *a, **k: pd.DataFrame())
+    result = index_kline.load_a_share_index_kline("sh000906", "daily")
+    assert result.attrs["source"] == "sqlite"
+    assert result.attrs["fallback_chain"] == ["sqlite", "tushare_index_daily"]
