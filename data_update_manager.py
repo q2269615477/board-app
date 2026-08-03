@@ -19,6 +19,10 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from services.kline_quality_service import scan_daily_frame
+from services.stock_update_service import (
+    StockUpdateDependencies,
+    StockUpdateService,
+)
 
 # 日志配置
 log_path = Path('data') / 'update_logs'
@@ -128,175 +132,66 @@ PREWARM_TARGETS = [
 ]
 
 
-# ===== 个股状态分类工具 =====
+# ===== 个股状态分类工具（服务委托 + 兼容 facade） =====
+
+def _stock_update_service() -> StockUpdateService:
+    """Build a stock helper service from the manager's live patch seams."""
+
+    # Resolve globals at call time.  This is deliberate: tests and legacy
+    # integrations patch these names on ``data_update_manager`` and expect the
+    # patch to affect the old helper functions immediately.
+    return StockUpdateService(
+        StockUpdateDependencies(
+            now=datetime.now,
+            scan_daily_frame=scan_daily_frame,
+            classify_stock_daily_status=globals().get(
+                'classify_stock_daily_status',
+            ),
+            ensure_tushare_token=globals().get('_ensure_tushare_token'),
+            get_tushare_pro=globals().get('_get_tushare_pro'),
+            logger=logger,
+            path_factory=Path,
+            db_path=globals().get('_LEDGER_DB'),
+        )
+    )
+
 
 def _target_trade_day_str():
-    """返回当天交易日 YYYYMMDD 字符串（用于数据新鲜度判定）。"""
-    from datetime import datetime
-    return datetime.now().strftime('%Y%m%d')
+    return _stock_update_service().target_trade_day_str()
 
 
 def classify_stock_daily_status(max_date_str, row_count, target_norm, quality_report=None):
-    """分类个股日线数据状态。
-
-    Args:
-        max_date_str: DB 中 MAX(date)，可能带横线(YYYY-MM-DD)或不带(YYYYMMDD)，也可能为 None
-        row_count: kline 行数
-        target_norm: 目标交易日 YYYYMMDD（如 '20260727'）
-
-    Returns:
-        'date_lag' / 'sparse' / 'repair_pending' / 'up_to_date'
-    """
-    if quality_report and quality_report.get('blocking_failure'):
-        return 'repair_pending'
-    if max_date_str is None or row_count == 0:
-        return 'date_lag'
-    normalized = max_date_str.replace('-', '')
-    if normalized != target_norm:
-        return 'date_lag'
-    # 历史稀疏由 history_repair 游标维护，不阻塞目标日结算。
-    return 'up_to_date'
+    return StockUpdateService().classify_stock_daily_status(
+        max_date_str, row_count, target_norm, quality_report
+    )
 
 
 def build_stock_pending_from_ledger(
     stocks, max_dates, row_counts, target_norm, quality_reports=None
 ):
-    """根据台账信息构建 pending 列表。
-
-    Args:
-        stocks: [(code, name), ...]
-        max_dates: {code: max_date_str_or_None}
-        row_counts: {code: int}
-        target_norm: 目标交易日 YYYYMMDD
-
-    Returns:
-        dict with pending, skipped_up_to_date, pending_date_lag, pending_sparse, total
-    """
-    pending = []
-    skipped_up_to_date = 0
-    pending_date_lag = 0
-    pending_sparse = 0
-    pending_repair = 0
-    repair_pending_codes = []
-    quality_reports = quality_reports or {}
-    for code, name in stocks:
-        status = classify_stock_daily_status(
-            max_dates.get(code), row_counts.get(code, 0), target_norm,
-            quality_reports.get(code),
-        )
-        if status == 'up_to_date':
-            skipped_up_to_date += 1
-        elif status == 'date_lag':
-            pending.append((code, name))
-            pending_date_lag += 1
-        elif status == 'sparse':
-            pending.append((code, name))
-            pending_sparse += 1
-        elif status == 'repair_pending':
-            pending.append((code, name))
-            pending_repair += 1
-            repair_pending_codes.append(code)
-    return {
-        'pending': pending,
-        'skipped_up_to_date': skipped_up_to_date,
-        'pending_date_lag': pending_date_lag,
-        'pending_sparse': pending_sparse,
-        'pending_repair': pending_repair,
-        'repair_pending_codes': repair_pending_codes,
-        'total': len(stocks),
-    }
+    return _stock_update_service().build_stock_pending_from_ledger(
+        stocks, max_dates, row_counts, target_norm, quality_reports
+    )
 
 
 def _scan_daily_quality_cursor(cur, codes):
-    """Read daily rows for selected codes and run the local quality scanner."""
-    reports = {}
-    for code in codes:
-        cur.execute(
-            "SELECT date, open, high, low, close, volume "
-            "FROM kline WHERE code=? AND period='daily' ORDER BY date",
-            (code,),
-        )
-        rows = cur.fetchall()
-        frame = pd.DataFrame(
-            rows,
-            columns=['date', 'open', 'high', 'low', 'close', 'volume'],
-        )
-        reports[code] = scan_daily_frame(frame, code=code)
-    return reports
+    return _stock_update_service().scan_daily_quality_cursor(cur, codes)
 
 
 def _spot_trade_date(row) -> str:
-    raw = str((row or {}).get('time') or '')
-    digits = ''.join(ch for ch in raw if ch.isdigit())
-    if len(digits) >= 8 and digits[:2] in {'19', '20'}:
-        return digits[:8]
-    return ''
+    return _stock_update_service().spot_trade_date(row)
 
 
 def _valid_settlement_row(row) -> bool:
-    try:
-        open_ = float(row.get('open', 0) or 0)
-        high = float(row.get('high', 0) or 0)
-        low = float(row.get('low', 0) or 0)
-        close = float(row.get('close', 0) or 0)
-        volume = float(row.get('volume', 0) or 0)
-        return (
-            open_ > 0 and high > 0 and low > 0 and close > 0
-            and high >= max(open_, low, close)
-            and low <= min(open_, high, close)
-            and volume >= 0
-        )
-    except (TypeError, ValueError, AttributeError):
-        return False
+    return _stock_update_service().valid_settlement_row(row)
 
 
 def _verify_no_bar_candidates(codes, target_norm):
-    """Return {code: traded_on_target_day}; None means verification unavailable."""
-    codes = [str(code) for code in codes if code]
-    if not codes:
-        return {}
-    try:
-        from core.env_bootstrap import ensure_tushare_token
-        if not ensure_tushare_token():
-            return None
-        pro = _get_tushare_pro()
-        frame = pro.daily(
-            trade_date=str(target_norm).replace('-', '')[:8],
-            fields='ts_code',
-        )
-        if frame is None:
-            return None
-        traded = {
-            str(value).split('.')[0]
-            for value in frame.get('ts_code', pd.Series(dtype=str)).dropna()
-        }
-        return {code: code in traded for code in codes}
-    except Exception as exc:
-        logger.warning(f"[QMT个股日更] 无bar校验失败: {exc}")
-        return None
+    return _stock_update_service().verify_no_bar_candidates(codes, target_norm)
 
 
 def _refresh_daily_meta_cursor(cur, codes, updated_at):
-    codes = [str(code) for code in codes if code]
-    if not codes:
-        return
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS kline_meta (
-            code TEXT NOT NULL, period TEXT NOT NULL, rows INTEGER,
-            first_date TEXT, last_date TEXT, updated_at TEXT,
-            PRIMARY KEY (code, period)
-        )"""
-    )
-    placeholders = ','.join('?' for _ in codes)
-    cur.execute(
-        f"""INSERT OR REPLACE INTO kline_meta
-            (code, period, rows, first_date, last_date, updated_at)
-            SELECT code, 'daily', COUNT(*), MIN(date), MAX(date), ?
-            FROM kline
-            WHERE code IN ({placeholders}) AND period='daily'
-            GROUP BY code""",
-        [updated_at] + codes,
-    )
+    return _stock_update_service().refresh_daily_meta_cursor(cur, codes, updated_at)
 
 
 def _load_status() -> dict:
