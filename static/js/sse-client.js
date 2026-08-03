@@ -158,6 +158,148 @@ function replayAnalysisRecord(id){
 
   // --- 状态指示器 ---
   const _STATUS_LABELS = { connected: '已连接', shared: '共享', reconnecting: '连接中', fallback: '轮询', frozen: '已冻结', disconnected: '断开' };
+  const _DATA_SOURCE_LABELS = ['顶部导航栏', '东财概念板块', '行业板块', '指数', '个股数据源'];
+  let _dataSourcePopover = null;
+  let _dataSourceHideTimer = null;
+  let _dataSourceHealthCache = null;
+  let _dataSourceHealthAt = 0;
+
+  function _formatHealthTime(value) {
+    if (!value) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value);
+    var date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString('zh-CN', { hour12: false });
+  }
+
+  function _healthFallbackItems(statusText) {
+    return _DATA_SOURCE_LABELS.map(function(label, index) {
+      return {
+        id: 'fallback-' + index,
+        label: label,
+        status: 'unavailable',
+        status_text: statusText,
+        source: '',
+        detail: '',
+        last_updated: ''
+      };
+    });
+  }
+
+  function _renderDataSourceHealth(items) {
+    if (!_dataSourcePopover) return;
+    _dataSourcePopover.replaceChildren();
+    var header = document.createElement('div');
+    header.className = 'data-source-health-title';
+    header.textContent = '数据更新状态';
+    _dataSourcePopover.appendChild(header);
+
+    (items || []).forEach(function(item) {
+      var row = document.createElement('div');
+      var state = ['healthy', 'warning', 'unavailable', 'idle'].indexOf(item.status) >= 0 ? item.status : 'unavailable';
+      row.className = 'data-source-health-row is-' + state;
+
+      var dot = document.createElement('span');
+      dot.className = 'data-source-health-dot';
+      dot.setAttribute('aria-hidden', 'true');
+
+      var content = document.createElement('div');
+      content.className = 'data-source-health-content';
+      var top = document.createElement('div');
+      top.className = 'data-source-health-topline';
+      var label = document.createElement('span');
+      label.className = 'data-source-health-label';
+      label.textContent = item.label || '';
+      var status = document.createElement('span');
+      status.className = 'data-source-health-state';
+      status.textContent = item.status_text || '未知';
+      top.append(label, status);
+
+      var meta = document.createElement('div');
+      meta.className = 'data-source-health-meta';
+      var parts = [];
+      if (item.source) parts.push(item.source);
+      if (item.detail) parts.push(item.detail);
+      var updated = _formatHealthTime(item.last_updated);
+      if (updated) parts.push('更新 ' + updated);
+      meta.textContent = parts.join(' · ') || '暂无状态详情';
+      content.append(top, meta);
+      row.append(dot, content);
+      _dataSourcePopover.appendChild(row);
+    });
+  }
+
+  function _positionDataSourcePopover() {
+    var anchor = document.getElementById('sse-status-indicator');
+    if (!anchor || !_dataSourcePopover || !_dataSourcePopover.classList.contains('show')) return;
+    var rect = anchor.getBoundingClientRect();
+    var width = _dataSourcePopover.offsetWidth || 350;
+    var left = Math.min(window.innerWidth - width - 8, Math.max(8, rect.right - width));
+    _dataSourcePopover.style.left = left + 'px';
+    _dataSourcePopover.style.top = Math.min(window.innerHeight - _dataSourcePopover.offsetHeight - 8, rect.bottom + 7) + 'px';
+  }
+
+  function _ensureDataSourcePopover() {
+    if (_dataSourcePopover) return _dataSourcePopover;
+    var popover = document.createElement('div');
+    popover.id = 'sse-data-source-popover';
+    popover.className = 'sse-data-source-popover';
+    popover.setAttribute('role', 'tooltip');
+    popover.setAttribute('aria-hidden', 'true');
+    popover.addEventListener('mouseenter', function() { clearTimeout(_dataSourceHideTimer); });
+    popover.addEventListener('mouseleave', _hideDataSourcePopoverSoon);
+    document.body.appendChild(popover);
+    _dataSourcePopover = popover;
+    return popover;
+  }
+
+  function _loadDataSourceHealth() {
+    if (_dataSourceHealthCache && Date.now() - _dataSourceHealthAt < 15000) {
+      _renderDataSourceHealth(_dataSourceHealthCache);
+      return Promise.resolve();
+    }
+    _renderDataSourceHealth(_healthFallbackItems('读取中'));
+    return fetch((typeof API === 'string' ? API : '') + '/api/system/data-source-health', { headers: { 'Accept': 'application/json' } })
+      .then(function(response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then(function(payload) {
+        var items = payload && Array.isArray(payload.items) ? payload.items : _healthFallbackItems('状态不可用');
+        _dataSourceHealthCache = items;
+        _dataSourceHealthAt = Date.now();
+        _renderDataSourceHealth(items);
+        _positionDataSourcePopover();
+      })
+      .catch(function() {
+        _renderDataSourceHealth(_healthFallbackItems('状态不可用'));
+        _positionDataSourcePopover();
+      });
+  }
+
+  function _showDataSourcePopover() {
+    clearTimeout(_dataSourceHideTimer);
+    var popover = _ensureDataSourcePopover();
+    popover.classList.add('show');
+    popover.setAttribute('aria-hidden', 'false');
+    var anchor = document.getElementById('sse-status-indicator');
+    if (anchor) anchor.setAttribute('aria-expanded', 'true');
+    _renderDataSourceHealth(_dataSourceHealthCache || _healthFallbackItems('读取中'));
+    _positionDataSourcePopover();
+    _loadDataSourceHealth();
+  }
+
+  function _hideDataSourcePopoverSoon() {
+    clearTimeout(_dataSourceHideTimer);
+    _dataSourceHideTimer = setTimeout(function() {
+      if (_dataSourcePopover) {
+        _dataSourcePopover.classList.remove('show');
+        _dataSourcePopover.setAttribute('aria-hidden', 'true');
+      }
+      var anchor = document.getElementById('sse-status-indicator');
+      if (anchor) anchor.setAttribute('aria-expanded', 'false');
+    }, 140);
+  }
 
   function _initStatusIndicator() {
     const tb = document.getElementById('toolbar');
@@ -165,13 +307,21 @@ function replayAnalysisRecord(id){
     if (document.getElementById('sse-status-indicator')) return;
     const el = document.createElement('span');
     el.id = 'sse-status-indicator';
-    el.title = 'SSE 连接状态';
     el.setAttribute('role', 'status');
     el.setAttribute('aria-live', 'polite');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-haspopup', 'true');
+    el.setAttribute('aria-expanded', 'false');
+    el.setAttribute('aria-describedby', 'sse-data-source-popover');
     el.style.cssText = 'cursor:default;user-select:none;flex-shrink:0';
     el.textContent = '';
     el.dataset.state = '';
+    el.addEventListener('mouseenter', _showDataSourcePopover);
+    el.addEventListener('mouseleave', _hideDataSourcePopoverSoon);
+    el.addEventListener('focus', _showDataSourcePopover);
+    el.addEventListener('blur', _hideDataSourcePopoverSoon);
     tb.appendChild(el);
+    window.addEventListener('resize', _positionDataSourcePopover);
   }
 
   function _setSseStatus(state) {
@@ -181,7 +331,6 @@ function replayAnalysisRecord(id){
     if (el.dataset.state === state) return;
     el.dataset.state = state;
     el.textContent = label;
-    el.title = '实时推送：' + (label || '未知');
     el.setAttribute('aria-label', '实时推送：' + (label || '未知'));
     if (state === 'connected') el.style.color = '#26a69a';
     else if (state === 'frozen') el.style.color = '#ff9800';

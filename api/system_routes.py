@@ -168,6 +168,13 @@ def system_health_route():
     return jsonify(result)
 
 
+@bp.route('/api/system/data-source-health')
+def data_source_health_route():
+    """Return local cache/update health without triggering upstream requests."""
+    from services.data_source_health import build_data_source_health
+    return jsonify(build_data_source_health())
+
+
 @bp.route('/api/system/frontend-config')
 def frontend_config_route():
     """前端需要的配置参数（纯数字，无敏感信息）"""

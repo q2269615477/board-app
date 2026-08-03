@@ -49,6 +49,47 @@ def get_nav_targets() -> List[Tuple[str, str, str]]:
     return list(PREWARM_TARGETS) + list(_EXTRA_NAV_TARGETS)
 
 
+def get_nav_spot_status(now=None) -> Dict[str, Any]:
+    """Return a read-only snapshot of top-bar cache health.
+
+    This function deliberately never refreshes the cache.  It is used by the
+    UI health popover, where a hover must not create network or QMT traffic.
+    """
+    wall_now = now or datetime.now()
+    targets = get_nav_targets()
+    market_meta = _market_meta(targets=targets, now=wall_now)
+    ttl = _nav_cache_ttl(now=wall_now, targets=targets)
+    with _lock:
+        cache_count = len(_cache)
+        cache_ts = float(_cache_ts or 0.0)
+        cache_meta = dict(_cache_meta)
+        inflight = bool(_inflight)
+
+    age_sec = max(0.0, time.time() - cache_ts) if cache_ts else None
+    channels = {}
+    for name, value in (cache_meta.get("channels") or {}).items():
+        if not isinstance(value, dict):
+            continue
+        channels[str(name)] = {
+            "count": int(value.get("count") or 0),
+            "channel": str(value.get("channel") or name),
+            "error": bool(value.get("error")),
+        }
+    return {
+        "count": cache_count,
+        "cached_at": (
+            datetime.fromtimestamp(cache_ts, tz=timezone.utc).astimezone().isoformat()
+            if cache_ts else None
+        ),
+        "age_sec": round(age_sec, 1) if age_sec is not None else None,
+        "ttl_sec": round(float(ttl), 1),
+        "stale": bool(cache_count and age_sec is not None and age_sec > max(float(ttl) * 2, 15.0)),
+        "inflight": inflight,
+        "channels": channels,
+        **market_meta,
+    }
+
+
 def _a_share_nav_phase(now=None) -> str:
     """Keep the legacy entry point while delegating to the shared clock."""
     return market_state(MARKET_A_SHARE, now=now)["market_phase"]
