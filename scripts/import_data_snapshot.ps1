@@ -1,142 +1,126 @@
 <#
 .SYNOPSIS
-  Import a data snapshot from a backup directory.
+  Validate or restore a board-app data snapshot.
 .DESCRIPTION
-  Restores critical data assets from a snapshot directory. Does NOT delete
-  existing data (overwrites in place). Requires explicit -Confirm parameter.
-  Without -Confirm, runs in dry-run mode showing what would be restored.
+  Without -Confirm this command is a read-only dry-run: it validates the
+  manifest, SHA256 values, and SQLite quick_check and prints safety risks.
+  A real restore requires both -Confirm and an explicit non-interactive token
+  (-ConfirmValue RESTORE for merge, RESTORE_EXACT for exact vault replacement),
+  plus -Stopped to declare that Flask/QMT writers have been stopped.
+
+  The default vault mode is Merge.  It never deletes files that are not in the
+  snapshot.  Exact mode is explicit and first creates a same-volume recovery
+  copy before replacing the vault tree.
 .PARAMETER SrcDir
-  Source directory containing the snapshot. Required.
+  Source directory containing a manifest.json snapshot.  Required.
 .PARAMETER Confirm
-  Must be passed to actually perform the restore. Without it, only dry-run.
+  Enables an actual restore; without it the command is always dry-run.
+.PARAMETER ConfirmValue
+  Non-interactive confirmation token.  RESTORE is required for Merge and
+  RESTORE_EXACT is required for Exact.  The old -Confirm switch is retained,
+  but an interactive prompt is intentionally not used.
+.PARAMETER Stopped
+  Explicitly declares that application/QMT writers are stopped.  Required for
+  an actual restore; existing SQLite WAL/SHM sidecars are moved into the
+  recovery copy instead of being mixed with the restored database.
+.PARAMETER VaultMode
+  Merge (default) preserves existing vault files; Exact replaces the vault
+  tree after creating a protection copy.
+.PARAMETER ProjectRoot
+  Project root (defaults to the parent of this scripts directory).
 .EXAMPLE
-  .\scripts\import_data_snapshot.ps1 -SrcDir "D:\backups\board-app\snapshot-20260731" -Confirm
+  .\scripts\import_data_snapshot.ps1 -SrcDir "D:\backups\snapshot"
+.EXAMPLE
+  .\scripts\import_data_snapshot.ps1 -SrcDir "D:\backups\snapshot" -Confirm -ConfirmValue RESTORE -Stopped
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
     [string]$SrcDir,
 
-    [switch]$Confirm
+    [switch]$Confirm,
+
+    [string]$ConfirmValue,
+
+    [switch]$Stopped,
+
+    [ValidateSet("Merge", "Exact")]
+    [string]$VaultMode = "Merge",
+
+    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-Set-Location $root
+$root = (Resolve-Path -LiteralPath $ProjectRoot).Path
+$helper = Join-Path $PSScriptRoot "data_snapshot.py"
 
-if (-not (Test-Path $SrcDir)) {
-    Write-Host "ERROR: Source directory does not exist: $SrcDir" -ForegroundColor Red
-    exit 1
+if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+    throw "Snapshot helper not found: $helper"
 }
 
-# Files to restore: (source filename, destination relative path)
-$files = @(
-    @{Src="kline.db";                  Dest="data/kline.db"},
-    @{Src="stock_data.db";             Dest="data/stock_data.db"},
-    @{Src="annotation_index.sqlite";   Dest="data/annotation_index.sqlite"},
-    @{Src="session_index.sqlite";      Dest="data/session_index.sqlite"},
-    @{Src="signals.json";              Dest="data/signals.json"}
+$python = $null
+$venvPython = Join-Path $root "venv\Scripts\python.exe"
+$scriptVenvPython = Join-Path (Split-Path -Parent $PSScriptRoot) "venv\Scripts\python.exe"
+if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
+    $python = $venvPython
+} elseif (Test-Path -LiteralPath $scriptVenvPython -PathType Leaf) {
+    $python = $scriptVenvPython
+} elseif (Get-Command py -ErrorAction SilentlyContinue) {
+    $python = "py"
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+    $python = "python"
+} else {
+    throw "Python executable not found (expected venv\Scripts\python.exe, py, or python)."
+}
+
+$modeLower = $VaultMode.ToLowerInvariant()
+$arguments = @(
+    $helper,
+    "restore",
+    "--project-root", $root,
+    "--src", $SrcDir,
+    "--vault-mode", $modeLower,
+    "--dry-run"
 )
 
-# Directories to restore
-$dirs = @(
-    @{Src="TradingVault"; Dest="vault/TradingVault"}
-)
+if ($Confirm) {
+    if ([string]::IsNullOrWhiteSpace($ConfirmValue)) {
+        throw "A non-interactive confirmation token is required. Use -ConfirmValue RESTORE (or RESTORE_EXACT for -VaultMode Exact)."
+    }
+    # Replace the dry-run argument only after -Confirm and the explicit token
+    # have both been supplied.  This keeps accidental invocations harmless.
+    $arguments = @(
+        $helper,
+        "restore",
+        "--project-root", $root,
+        "--src", $SrcDir,
+        "--vault-mode", $modeLower,
+        "--confirm-value", $ConfirmValue
+    )
+    if ($Stopped) {
+        $arguments += "--stopped"
+    }
+}
 
 Write-Host "=== Data Snapshot Import ===" -ForegroundColor Cyan
 Write-Host "Source:  $SrcDir"
 Write-Host "Target:  $root"
-if (-not $Confirm) {
-    Write-Host "Mode:    DRY-RUN (pass -Confirm to execute)" -ForegroundColor DarkYellow
+Write-Host "Vault:   $VaultMode"
+if ($Confirm) {
+    Write-Host "Mode:    RESTORE (explicit confirmation)" -ForegroundColor Red
 } else {
-    Write-Host "Mode:    RESTORE" -ForegroundColor Red
+    Write-Host "Mode:    DRY-RUN (no files modified)" -ForegroundColor Yellow
 }
 Write-Host ""
 
-# Show what will be restored
-Write-Host "Files to restore:" -ForegroundColor Yellow
-foreach ($f in $files) {
-    $srcPath = Join-Path $SrcDir $f.Src
-    if (Test-Path $srcPath) {
-        $sizeMB = [math]::Round((Get-Item $srcPath).Length / 1MB, 1)
-        $destPath = Join-Path $root ($f.Dest -replace '/', '\')
-        $exists = if (Test-Path $destPath) { "(OVERWRITE)" } else { "(NEW)" }
-        Write-Host "  $($f.Src) -> $($f.Dest) ($sizeMB MB) $exists"
-    } else {
-        Write-Host "  SKIP (not in snapshot): $($f.Src)" -ForegroundColor DarkYellow
-    }
+& $python @arguments
+$exitCode = $LASTEXITCODE
+if ($exitCode -ne 0) {
+    throw "Snapshot import validation/restore failed (exit code $exitCode)."
 }
 
-Write-Host ""
-Write-Host "Directories to restore:" -ForegroundColor Yellow
-foreach ($d in $dirs) {
-    $srcPath = Join-Path $SrcDir $d.Src
-    if (Test-Path $srcPath) {
-        $dirSize = (Get-ChildItem $srcPath -Recurse -File | Measure-Object -Property Length -Sum).Sum
-        $dirMB = [math]::Round($dirSize / 1MB, 1)
-        Write-Host "  $($d.Src) -> $($d.Dest) ($dirMB MB)"
-    } else {
-        Write-Host "  SKIP (not in snapshot): $($d.Src)" -ForegroundColor DarkYellow
-    }
+if ($Confirm) {
+    Write-Host "Snapshot restore completed; inspect the reported protection copy before restarting the app." -ForegroundColor Green
+} else {
+    Write-Host "Dry-run completed. No files were modified." -ForegroundColor Yellow
 }
-
-# Dry-run stop
-if (-not $Confirm) {
-    Write-Host ""
-    Write-Host "DRY-RUN complete. No files were modified." -ForegroundColor DarkYellow
-    Write-Host "To execute: .\scripts\import_data_snapshot.ps1 -SrcDir `"$SrcDir`" -Confirm" -ForegroundColor DarkYellow
-    exit 0
-}
-
-# Confirm prompt
-Write-Host ""
-Write-Host "WARNING: This will overwrite existing data files." -ForegroundColor Red
-$response = Read-Host "Type 'RESTORE' to confirm"
-if ($response -ne "RESTORE") {
-    Write-Host "Aborted. No files were modified." -ForegroundColor DarkYellow
-    exit 0
-}
-
-# Execute restore
-Write-Host ""
-Write-Host "Restoring files..." -ForegroundColor Yellow
-$restoredCount = 0
-foreach ($f in $files) {
-    $srcPath = Join-Path $SrcDir $f.Src
-    if (-not (Test-Path $srcPath)) {
-        continue
-    }
-    $destPath = Join-Path $root ($f.Dest -replace '/', '\')
-    $destDir = Split-Path $destPath -Parent
-    if (-not (Test-Path $destDir)) {
-        New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-    }
-    Copy-Item $srcPath $destPath -Force
-    $restoredCount++
-    Write-Host "  Restored: $($f.Dest)"
-}
-
-Write-Host ""
-Write-Host "Restoring directories..." -ForegroundColor Yellow
-foreach ($d in $dirs) {
-    $srcPath = Join-Path $SrcDir $d.Src
-    if (-not (Test-Path $srcPath)) {
-        continue
-    }
-    $destPath = Join-Path $root ($d.Dest -replace '/', '\')
-    $destParent = Split-Path $destPath -Parent
-    if (-not (Test-Path $destParent)) {
-        New-Item -ItemType Directory -Force -Path $destParent | Out-Null
-    }
-    Copy-Item -Recurse $srcPath $destPath -Force
-    $restoredCount++
-    Write-Host "  Restored: $($d.Dest)"
-}
-
-Write-Host ""
-Write-Host "Restore complete. $restoredCount items restored." -ForegroundColor Green
-Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host "  1. Rebuild search index:  python build_search_index.py"
-Write-Host "  2. Run baseline verify:   .\scripts\verify_baseline.ps1"
-Write-Host "  3. Start the app:         python app.py"

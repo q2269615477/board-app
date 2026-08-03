@@ -1,112 +1,70 @@
 <#
 .SYNOPSIS
-  Export a read-only data snapshot to a user-specified directory.
+  Export a consistent, read-only board-app data snapshot.
 .DESCRIPTION
-  Copies critical data assets (SQLite databases, signals, vault) to a backup
-  directory. Does NOT delete or modify original data. Does NOT commit anything
-  to Git. Prints file paths and sizes before copying.
+  SQLite files are copied through sqlite3's backup API.  The source project is
+  never checkpointed, vacuumed, or otherwise opened for writing.  Ordinary
+  files and vault directories retain their project-relative paths in the
+  snapshot and a manifest records SHA256/size metadata for every item.
 .PARAMETER DestDir
-  Target directory for the snapshot. Required.
+  Target directory for the snapshot.  It must be new or empty.  A directory
+  under the checkout is allowed except inside the recursively copied vault.
+.PARAMETER ProjectRoot
+  Project root (defaults to the parent of this scripts directory).  This is
+  useful for testing or for a relocated checkout; DestDir remains compatible
+  with the original CLI.
 .EXAMPLE
-  .\scripts\export_data_snapshot.ps1 -DestDir "D:\backups\board-app\snapshot-20260731"
+  .\scripts\export_data_snapshot.ps1 -DestDir "D:\backups\board-app\snapshot-20260804"
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [string]$DestDir
+    [string]$DestDir,
+
+    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-Set-Location $root
+$root = (Resolve-Path -LiteralPath $ProjectRoot).Path
+$helper = Join-Path $PSScriptRoot "data_snapshot.py"
 
-if (-not (Test-Path $DestDir)) {
-    New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
+if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+    throw "Snapshot helper not found: $helper"
 }
 
-# Files to back up (relative to project root)
-$files = @(
-    "data/kline.db",
-    "data/stock_data.db",
-    "data/annotation_index.sqlite",
-    "data/session_index.sqlite",
-    "data/signals.json"
-)
-
-# Directories to back up
-$dirs = @(
-    "vault/TradingVault"
-)
+# Prefer the repository virtualenv, then the standard Windows launchers.  An
+# argument array keeps paths with spaces intact and avoids shell evaluation.
+$python = $null
+$venvPython = Join-Path $root "venv\Scripts\python.exe"
+$scriptVenvPython = Join-Path (Split-Path -Parent $PSScriptRoot) "venv\Scripts\python.exe"
+if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
+    $python = $venvPython
+} elseif (Test-Path -LiteralPath $scriptVenvPython -PathType Leaf) {
+    $python = $scriptVenvPython
+} elseif (Get-Command py -ErrorAction SilentlyContinue) {
+    $python = "py"
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+    $python = "python"
+} else {
+    throw "Python executable not found (expected venv\Scripts\python.exe, py, or python)."
+}
 
 Write-Host "=== Data Snapshot Export ===" -ForegroundColor Cyan
-Write-Host "Source: $root"
+Write-Host "Source:      $root"
 Write-Host "Destination: $DestDir"
+Write-Host "Mode:        SQLite backup API (source read-only)" -ForegroundColor Yellow
 Write-Host ""
 
-# Step 1: SQLite checkpoint (flush WAL to main db)
-Write-Host "[1/3] Running SQLite checkpoint..." -ForegroundColor Yellow
-foreach ($dbFile in @("data/kline.db", "data/stock_data.db", "data/annotation_index.sqlite", "data/session_index.sqlite")) {
-    $dbPath = Join-Path $root ($dbFile -replace '/', '\')
-    if (Test-Path $dbPath) {
-        Write-Host "  Checkpoint: $dbFile"
-        try {
-            py -c "import sqlite3; c=sqlite3.connect(r'$dbPath'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()"
-        } catch {
-            Write-Host "  WARNING: checkpoint failed for $dbFile (may not have WAL)" -ForegroundColor DarkYellow
-        }
-    }
+$arguments = @(
+    $helper,
+    "export",
+    "--project-root", $root,
+    "--dest", $DestDir
+)
+& $python @arguments
+$exitCode = $LASTEXITCODE
+if ($exitCode -ne 0) {
+    throw "Snapshot export failed (exit code $exitCode)."
 }
-Write-Host ""
 
-# Step 2: Copy files
-Write-Host "[2/3] Copying files..." -ForegroundColor Yellow
-$copiedCount = 0
-foreach ($f in $files) {
-    $srcPath = Join-Path $root ($f -replace '/', '\')
-    if (-not (Test-Path $srcPath)) {
-        Write-Host "  SKIP (not found): $f" -ForegroundColor DarkYellow
-        continue
-    }
-    $sizeBytes = (Get-Item $srcPath).Length
-    $sizeMB = [math]::Round($sizeBytes / 1MB, 1)
-    Write-Host "  $f ($sizeMB MB)"
-
-    $destFile = Join-Path $DestDir (Split-Path $f -Leaf)
-    Copy-Item $srcPath $destFile -Force
-    $copiedCount++
-}
-Write-Host ""
-
-# Step 3: Copy directories
-Write-Host "[3/3] Copying directories..." -ForegroundColor Yellow
-foreach ($d in $dirs) {
-    $srcPath = Join-Path $root ($d -replace '/', '\')
-    if (-not (Test-Path $srcPath)) {
-        Write-Host "  SKIP (not found): $d" -ForegroundColor DarkYellow
-        continue
-    }
-    $dirSize = (Get-ChildItem $srcPath -Recurse -File | Measure-Object -Property Length -Sum).Sum
-    $dirMB = [math]::Round($dirSize / 1MB, 1)
-    Write-Host "  $d ($dirMB MB)"
-
-    $destDirName = Split-Path $d -Leaf
-    $destPath = Join-Path $DestDir $destDirName
-    Copy-Item -Recurse $srcPath $destPath -Force
-    $copiedCount++
-}
-Write-Host ""
-
-# Record backup info
-$timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-$infoFile = Join-Path $DestDir "BACKUP_INFO.txt"
-@"
-Backup completed: $timestamp
-Source: $root
-Files copied: $copiedCount
-"@ | Out-File -FilePath $infoFile -Encoding UTF8
-
-Write-Host "Snapshot exported to: $DestDir" -ForegroundColor Green
-Write-Host "Files copied: $copiedCount"
-Write-Host ""
-Write-Host "NOTE: This snapshot is NOT committed to Git." -ForegroundColor DarkYellow
-Write-Host "      Store it in a safe external location." -ForegroundColor DarkYellow
+Write-Host "Snapshot export completed." -ForegroundColor Green
