@@ -147,6 +147,33 @@ def test_noon_snapshot_accepts_board_cache_dictionary(monkeypatch):
     assert captured['BK0001']['source'] == 'eastmoney_push2delay_frozen'
 
 
+def test_noon_industry_failure_does_not_block_concept(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        'services.nav_spot_service.fetch_nav_spots',
+        lambda force=False: {'data': {}},
+    )
+
+    class Cache:
+        def get(self, board_type):
+            if board_type == 'industry':
+                raise RuntimeError('industry unavailable')
+            return {
+                'BK2001': {'最新价': 98.7, '涨跌幅': -0.8},
+            }
+
+    monkeypatch.setattr(
+        'services.board_spot_cache.get_board_spot_cache', lambda: Cache()
+    )
+    monkeypatch.setattr(
+        'services.data_update_scheduler.noon_cache_manager.save_noon_data',
+        lambda data: captured.update(data) or True,
+    )
+
+    assert update_noon_data() is True
+    assert captured['BK2001']['price'] == 98.7
+
+
 def test_completed_friday_update_waits_until_next_trading_close(monkeypatch):
     friday = datetime(2026, 7, 31, 19, 52, 49)
     monday_close = datetime(2026, 8, 3, 15, 30)

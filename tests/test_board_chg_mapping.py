@@ -49,7 +49,31 @@ class TestBoardChgMapping:
         assert app_ctx.board_chg_cache['BK0001'] == 3.0
 
     def test_cache_failure_does_not_recreate_direct_tushare_chain(self, app_ctx):
+        app_ctx.board_chg_cache = {'industry:BK0001': 1.0}
         with patch('services.board_spot_cache.get_board_spot_cache',
                    side_effect=RuntimeError('cache unavailable')):
             app_ctx._reload_board_changes()
-        assert app_ctx.board_chg_cache == {}
+        assert app_ctx.board_chg_cache == {'industry:BK0001': 1.0}
+
+    def test_industry_failure_does_not_block_concept_refresh(self, app_ctx):
+        cache = MagicMock()
+        cache.get.side_effect = [RuntimeError('industry unavailable'), {'BK2001': {}}]
+        cache.get_chgs.return_value = {'concept:BK2001': 2.5, 'BK2001': 2.5}
+
+        with patch('services.board_spot_cache.get_board_spot_cache', return_value=cache):
+            app_ctx._reload_board_changes(force=True)
+
+        assert cache.get.call_count == 2
+        cache.get.assert_any_call('industry', force=True)
+        cache.get.assert_any_call('concept', force=True)
+        assert app_ctx.board_chg_cache['concept:BK2001'] == 2.5
+
+    def test_derived_view_failure_preserves_last_success(self, app_ctx):
+        app_ctx.board_chg_cache = {'concept:BK2001': -1.2}
+        cache = MagicMock()
+        cache.get_chgs.side_effect = RuntimeError('derive failed')
+
+        with patch('services.board_spot_cache.get_board_spot_cache', return_value=cache):
+            app_ctx._reload_board_changes()
+
+        assert app_ctx.board_chg_cache == {'concept:BK2001': -1.2}

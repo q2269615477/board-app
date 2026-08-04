@@ -441,18 +441,24 @@ class AppContext:
         try:
             from services.board_spot_cache import get_board_spot_cache
             cache = get_board_spot_cache()
-            if force:
-                cache.get('industry', force=True)
-                cache.get('concept', force=True)
-            else:
-                cache.get('industry')
-                cache.get('concept')
-            result = cache.get_chgs()
+            for board_type in ('industry', 'concept'):
+                try:
+                    cache.get(board_type, force=True) if force else cache.get(board_type)
+                except Exception as e:
+                    # 行业与概念是两个独立刷新区；一边失败仍要刷新另一边，
+                    # BoardSpotCache 会为失败的一边保留最近一次成功值。
+                    logger.debug(f"[涨跌幅] {board_type} 刷新失败: {e}")
+            try:
+                result = cache.get_chgs()
+            except Exception as e:
+                logger.debug(f"[涨跌幅] 派生涨跌幅失败，保留现有缓存: {e}")
+                result = None
         except Exception as e:
             logger.debug(f"[涨跌幅] BoardSpotCache 不可用: {e}")
-            result = {}
+            result = None
         with self.board_chg_lock:
-            self.board_chg_cache = result
+            if result or (result is not None and not self.board_chg_cache):
+                self.board_chg_cache = result
             if result:
                 logger.info(f"[涨跌幅] BoardSpotCache 已加载 {len(result)} 个板块涨跌幅")
 

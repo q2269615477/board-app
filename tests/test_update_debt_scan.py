@@ -67,3 +67,61 @@ def test_force_bypasses_completed_marker_but_respects_settlement_window(monkeypa
     assert normal['skipped'] is True
     assert forced['deferred'] is True
     assert forced['completion_ready'] is False
+
+
+def test_scan_universe_failure_is_unavailable_not_fresh(monkeypatch):
+    monkeypatch.setattr(
+        dum, 'get_all_cached_stocks',
+        lambda: (_ for _ in ()).throw(RuntimeError('ledger busy')),
+    )
+    monkeypatch.setattr(
+        dum, '_load_classified_boards',
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError('taxonomy busy')),
+    )
+    monkeypatch.setattr(dum, '_managed_index_targets', lambda: [])
+
+    debt = dum.scan_update_debt()
+
+    assert debt['needs_catchup'] is True
+    assert debt['stocks']['available'] is False
+    assert debt['boards']['available'] is False
+    assert '个股 状态不可用' in debt['summary']
+    assert '板块 状态不可用' in debt['summary']
+
+
+def test_scan_metadata_db_failure_is_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setattr(dum, '_LEDGER_DB', tmp_path / 'missing' / 'market.db')
+    monkeypatch.setattr(dum, 'get_all_cached_stocks', lambda: [('600001', 'A')])
+    monkeypatch.setattr(dum, '_managed_index_targets', lambda: [])
+    monkeypatch.setattr(
+        dum, '_load_classified_boards',
+        lambda *_a, **_k: [('industry', '测试板块', 'BK0001')],
+    )
+
+    debt = dum.scan_update_debt()
+
+    assert debt['stocks']['available'] is False
+    assert debt['boards']['available'] is False
+    assert debt['needs_catchup'] is True
+
+
+def test_index_universe_failure_does_not_hide_stock_and_board_debt(monkeypatch, tmp_path):
+    db_path = tmp_path / 'market.db'
+    _db(db_path)
+    monkeypatch.setattr(dum, '_LEDGER_DB', db_path)
+    monkeypatch.setattr(dum, 'get_all_cached_stocks', lambda: [('600001', 'A')])
+    monkeypatch.setattr(
+        dum, '_managed_index_targets',
+        lambda: (_ for _ in ()).throw(RuntimeError('index config broken')),
+    )
+    monkeypatch.setattr(
+        dum, '_load_classified_boards',
+        lambda *_a, **_k: [('industry', '测试板块', 'BK0001')],
+    )
+
+    debt = dum.scan_update_debt()
+
+    assert debt['indices']['available'] is False
+    assert debt['stocks']['available'] is True
+    assert debt['boards']['available'] is True
+    assert debt['boards']['lagging'] == 1

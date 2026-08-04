@@ -367,6 +367,40 @@ class TestEnsureSnapshot:
         assert cache.is_frozen() is False
 
     @patch('services.board_snapshot.datetime')
+    def test_industry_exception_still_refreshes_concept(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 7, 27, 14, 0, 0)
+        cache = get_snapshot_cache()
+
+        with patch.object(
+            cache, 'capture_all',
+            side_effect=[RuntimeError('industry down'), 503],
+        ) as capture:
+            result = cache.refresh_snapshot(force=True)
+
+        assert capture.call_count == 2
+        assert result['refreshed'] is False
+        assert result['partial'] is True
+        assert result['reason'] == 'partial_refresh'
+        assert result['industry_refreshed'] == 0
+        assert result['concept_refreshed'] == 503
+        assert result['errors']['industry'] == 'industry down'
+
+    @patch('services.board_snapshot.datetime')
+    def test_both_snapshot_exceptions_report_each_area(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 7, 27, 14, 0, 0)
+        cache = get_snapshot_cache()
+
+        with patch.object(
+            cache, 'capture_all',
+            side_effect=[RuntimeError('industry down'), RuntimeError('concept down')],
+        ):
+            result = cache.refresh_snapshot(force=True)
+
+        assert result['reason'] == 'refresh_error'
+        assert result['stale'] is True
+        assert set(result['errors']) == {'industry', 'concept'}
+
+    @patch('services.board_snapshot.datetime')
     def test_manual_refresh_after_close_fetches_final_snapshot(self, mock_dt):
         """A weekday manual refresh must replace a stale intraday snapshot."""
         mock_dt.now.return_value = datetime(2026, 7, 29, 15, 30, 0)

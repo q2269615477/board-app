@@ -328,36 +328,48 @@ class BoardSnapshotCache:
             return finish(reason='throttled', frozen=False)
 
         previous_capture = today_data.get('captured_at') or None
-        try:
-            n_ind = self.capture_all('industry')
-            n_con = self.capture_all('concept')
+        counts = {'industry': 0, 'concept': 0}
+        errors = {}
+        for board_type in ('industry', 'concept'):
+            try:
+                counts[board_type] = self.capture_all(board_type)
+            except Exception as exc:
+                errors[board_type] = str(exc)[:200]
+                logger.warning(
+                    '[board_snapshot] %s capture 异常，继续另一功能区: %s',
+                    board_type,
+                    exc,
+                )
+
+        n_ind = counts['industry']
+        n_con = counts['concept']
+        if n_ind > 0 or n_con > 0:
             self._last_capture_ts = time.time()
-            refreshed = n_ind > 0 and n_con > 0
-            partial = (n_ind > 0) != (n_con > 0)
-            return finish(
-                refreshed=refreshed,
-                partial=partial,
-                stale=not refreshed,
-                reason=(
-                    ('refreshed_after_close' if force_after_close else 'refreshed')
-                    if refreshed else
-                    'partial_refresh' if partial else 'refresh_failed'
-                ),
-                frozen=False,
-                previous_captured_at=previous_capture,
-                captured_at=today_data.get('captured_at') or previous_capture,
-                industry_refreshed=n_ind,
-                concept_refreshed=n_con,
-            )
-        except Exception as exc:
-            logger.warning('[board_snapshot] capture 异常，保留上次数据: %s', exc)
-            return finish(
-                stale=True,
-                reason='refresh_error',
-                error=str(exc)[:200],
-                frozen=False,
-                previous_captured_at=previous_capture,
-            )
+        refreshed = n_ind > 0 and n_con > 0
+        partial = (n_ind > 0) != (n_con > 0)
+        reason = (
+            ('refreshed_after_close' if force_after_close else 'refreshed')
+            if refreshed else
+            'partial_refresh' if partial else
+            'refresh_error' if errors else 'refresh_failed'
+        )
+        values = {
+            'refreshed': refreshed,
+            'partial': partial,
+            'stale': not refreshed,
+            'reason': reason,
+            'frozen': False,
+            'previous_captured_at': previous_capture,
+            'captured_at': today_data.get('captured_at') or previous_capture,
+            'industry_refreshed': n_ind,
+            'concept_refreshed': n_con,
+        }
+        if errors:
+            values['errors'] = errors
+            values['error'] = '；'.join(
+                f'{key}: {message}' for key, message in errors.items()
+            )[:400]
+        return finish(**values)
 
     def ensure_snapshot(self, force: bool = False) -> bool:
         """确保今日快照已生成（实时模式）。

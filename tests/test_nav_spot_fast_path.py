@@ -96,6 +96,34 @@ def test_failed_force_refresh_does_not_rejuvenate_old_cache():
     assert nav._cache_ts == old_ts
 
 
+def test_local_seed_failure_does_not_block_http_source():
+    _reset()
+    market_meta = {
+        'active_markets': ['us'],
+        'market_signature': ['us:live:1'],
+        'all_markets_closed': False,
+    }
+    state = {'market': 'us', 'market_phase': 'live', 'market_open': True}
+    with patch.object(
+        nav, 'get_nav_targets', return_value=[('SPX', '标普', 'global')]
+    ), patch.object(
+        nav, '_split_targets', return_value=([], [('SPX', '标普', 'global')])
+    ), patch.object(nav, '_market_meta', return_value=market_meta), patch.object(
+        nav, 'market_state', return_value=state
+    ), patch.object(
+        nav, '_load_local_nav_spots', side_effect=RuntimeError('sqlite busy')
+    ), patch.object(
+        nav, '_fetch_http_spots', return_value={
+            'SPX': {'price': 7600.5, 'changePct': 1.2, 'channel': 'http'},
+        }
+    ):
+        result = nav.fetch_nav_spots(force=True)
+
+    assert result['data']['SPX']['price'] == 7600.5
+    assert result['meta']['channels']['local']['error'] == 'sqlite busy'
+    assert result['meta']['channels']['http']['count'] == 1
+
+
 def test_closed_market_sqlite_settlement_overrides_old_process_cache():
     _reset()
     nav._cache = {'sh000688': {'price': 1576.322, 'channel': 'old_cache'}}

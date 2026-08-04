@@ -420,7 +420,15 @@ def fetch_nav_spots(force: bool = False) -> Dict[str, Any]:
 
         # Every cycle starts from the last valid process snapshot, with SQLite
         # filling cold-start gaps. Closed markets never trigger remote work.
-        local_seed = _load_local_nav_spots(now=wall_now)
+        try:
+            local_seed = _load_local_nav_spots(now=wall_now)
+            meta["channels"]["local"] = {"count": len(local_seed)}
+        except Exception as exc:
+            # 本地 SQLite 只是冷启动/收盘兜底；读取失败不能阻断 QMT
+            # 或各海外 HTTP 行情源继续独立刷新。
+            local_seed = {}
+            meta["channels"]["local"] = {"count": 0, "error": str(exc)[:160]}
+            logger.warning("[nav_spot] local seed failed, continue remote sources: %s", exc)
         data.update(previous_cache)
         for code, row in local_seed.items():
             state = market_state(

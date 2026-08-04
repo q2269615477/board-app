@@ -51,7 +51,15 @@ def update_noon_data() -> bool:
             cache = get_board_spot_cache()
             board_data = {}
             for board_type in ('industry', 'concept'):
-                frame = cache.get(board_type)
+                try:
+                    frame = cache.get(board_type)
+                except Exception as e:
+                    logger.warning(
+                        '[午休更新] %s 板块缓存读取失败，继续另一功能区: %s',
+                        board_type,
+                        e,
+                    )
+                    continue
                 if frame is None:
                     continue
                 if isinstance(frame, dict):

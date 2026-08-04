@@ -1874,18 +1874,38 @@ def _update_all_today_impl(
     logger.info("[日更] Step 1/4: 指数更新 (国内 QMT/Tushare, 外围 global loader)")
     _emit_update_progress(progress_callback, 'indices', 0, 4, '指数更新开始')
     _mark_daily_stage_running('indices')
-    result['indices'] = update_all_indices_qmt(max_retries)
+    try:
+        result['indices'] = update_all_indices_qmt(max_retries)
+    except Exception as e:
+        # 指数、个股、板块属于独立数据源。一个源抛异常时只记录本区失败，
+        # 不得阻断后续功能区按各自时间窗口继续更新。
+        logger.warning(f"[日更] 指数更新异常，继续其他数据源: {e}")
+        result['indices'] = {
+            'success': 0,
+            'failed': 1,
+            'error': str(e)[:200],
+            'completion_ready': False,
+        }
     _emit_update_progress(progress_callback, 'indices', 1, 4, '指数更新完成')
 
     # 2. 个股：仅 QMT
     logger.info("[日更] Step 2/4: 个股日更 (QMT HTTP 18080)")
     _emit_update_progress(progress_callback, 'stocks', 1, 4, '个股更新开始')
     _mark_daily_stage_running('stocks')
-    result['stocks'] = qmt_update_all_stocks(
-        max_retries,
-        cancel_check=cancel_check,
-        force=force,
-    )
+    try:
+        result['stocks'] = qmt_update_all_stocks(
+            max_retries,
+            cancel_check=cancel_check,
+            force=force,
+        )
+    except Exception as e:
+        logger.warning(f"[日更] 个股更新异常，继续其他数据源: {e}")
+        result['stocks'] = {
+            'success': 0,
+            'failed': 1,
+            'error': str(e)[:200],
+            'completion_ready': False,
+        }
     if not (result['stocks'] or {}).get('error'):
         # 取消检查：如果个股更新被取消，跳过后续步骤
         if (result['stocks'] or {}).get('canceled'):
@@ -2374,47 +2394,95 @@ def scan_update_debt(sample_limit: int = 5) -> dict:
     except Exception:
         a_share_target = _target_trade_day_str().replace('-', '')[:8]
 
+    stock_universe_error = ''
     try:
         stock_rows = get_all_cached_stocks()
         stock_codes = [
             row if isinstance(row, str) else row[0]
             for row in (stock_rows or [])
         ]
-    except Exception:
+    except Exception as exc:
         stock_codes = []
+        stock_universe_error = str(exc)[:160]
 
-    index_codes = [code for code, _name, _typ in _managed_index_targets()]
+    index_universe_error = ''
+    try:
+        index_codes = [code for code, _name, _typ in _managed_index_targets()]
+    except Exception as exc:
+        index_codes = []
+        index_universe_error = str(exc)[:160]
     index_targets = {}
+    index_target_errors = []
     for code in index_codes:
-        target, _is_open = _index_session_target(
-            code, fallback_td_norm=a_share_target
-        )
-        index_targets[code] = target
+        try:
+            target, _is_open = _index_session_target(
+                code, fallback_td_norm=a_share_target
+            )
+            index_targets[code] = target
+        except Exception as exc:
+            index_targets[code] = ''
+            index_target_errors.append(f'{code}: {str(exc)[:80]}')
 
+    board_universe_error = ''
     try:
         board_codes = [
             code for _typ, _name, code
             in _load_classified_boards(('industry', 'concept'))
         ]
-    except Exception:
+    except Exception as exc:
         board_codes = []
+        board_universe_error = str(exc)[:160]
 
-    stocks = _daily_debt_bucket(
-        stock_codes, {code: a_share_target for code in stock_codes}, sample_limit
+    if stock_universe_error:
+        stocks = {
+            'available': False, 'total': 0, 'lagging': 0, 'up_to_date': 0,
+            'max_lag': 0, 'samples': [], 'error': stock_universe_error,
+        }
+    else:
+        stocks = _daily_debt_bucket(
+            stock_codes, {code: a_share_target for code in stock_codes}, sample_limit
+        )
+        stocks['available'] = not bool(stocks.get('error'))
+    if index_universe_error:
+        indices = {
+            'available': False, 'total': 0, 'lagging': 0, 'up_to_date': 0,
+            'max_lag': 0, 'samples': [], 'error': index_universe_error,
+        }
+    else:
+        indices = _daily_debt_bucket(index_codes, index_targets, sample_limit)
+        indices['available'] = not index_target_errors and not bool(indices.get('error'))
+        if index_target_errors:
+            indices['error'] = '；'.join(index_target_errors)[:160]
+    if board_universe_error:
+        boards = {
+            'available': False, 'total': 0, 'lagging': 0, 'up_to_date': 0,
+            'max_lag': 0, 'samples': [], 'error': board_universe_error,
+        }
+    else:
+        boards = _daily_debt_bucket(
+            board_codes, {code: a_share_target for code in board_codes}, sample_limit
+        )
+        boards['available'] = not bool(boards.get('error'))
+
+    def bucket_summary(label, bucket):
+        if bucket.get('available') is False:
+            return f'{label} 状态不可用'
+        return f"{label} {bucket['lagging']}/{bucket['total']}"
+
+    needs = any(
+        bucket.get('available') is False or bucket.get('lagging', 0) > 0
+        for bucket in (stocks, indices, boards)
     )
-    indices = _daily_debt_bucket(index_codes, index_targets, sample_limit)
-    boards = _daily_debt_bucket(
-        board_codes, {code: a_share_target for code in board_codes}, sample_limit
-    )
-    needs = any(bucket.get('lagging', 0) > 0 for bucket in (stocks, indices, boards))
     return {
         'target_trade_date': a_share_target,
         'target': a_share_target,
         'needs_catchup': needs,
         'summary': (
-            f"欠更扫描：个股 {stocks['lagging']}/{stocks['total']}，"
-            f"指数 {indices['lagging']}/{indices['total']}，"
-            f"板块 {boards['lagging']}/{boards['total']}"
+            '欠更扫描：' + '，'.join((
+                bucket_summary('个股', stocks),
+                bucket_summary('指数', indices),
+                bucket_summary('板块', boards),
+            ))
         ),
         'stocks': stocks,
         'indices': indices,

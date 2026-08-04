@@ -111,6 +111,93 @@ def test_update_all_today_guard_released_when_impl_raises(monkeypatch):
     assert dum.is_full_update_in_progress() is False
 
 
+def _patch_independent_daily_stages(monkeypatch, dum, calls):
+    monkeypatch.setattr(dum, "is_today_updated", lambda: False)
+    monkeypatch.setattr(dum, "_is_trading_day", lambda: True)
+    monkeypatch.setattr(dum, "_is_at_or_after", lambda *_args: True)
+    monkeypatch.setattr(dum, "_mark_today_done", lambda: None)
+    monkeypatch.setattr(dum, "_mark_daily_update_pending", lambda *_args: None)
+    monkeypatch.setattr(dum, "_mark_daily_stage_running", lambda *_args: None)
+    monkeypatch.setenv("BOARD_HISTORY_REPAIR_BATCH", "0")
+    monkeypatch.setattr(
+        dum,
+        "materialize_higher_periods",
+        lambda **_kwargs: {
+            "success": 0, "failed": 0, "total": 0,
+            "completion_ready": True,
+        },
+    )
+
+    def boards(*_args, **_kwargs):
+        calls.append("boards")
+        return {
+            "success": 1, "failed": 0, "total": 1,
+            "completion_ready": True, "settled_codes": ["BK0001"],
+            "target_trade_date": "20260804",
+        }
+
+    monkeypatch.setattr(dum, "update_all_boards", boards)
+    monkeypatch.setattr(
+        dum, "_verify_board_daily_target", lambda **_kwargs: {"verified": True}
+    )
+    monkeypatch.setattr(
+        dum,
+        "refresh_all_boards_weekly_monthly",
+        lambda: calls.append("weekly_monthly") or {
+            "success": 1, "failed": 0, "total": 1,
+            "completion_ready": True,
+        },
+    )
+
+
+def test_index_source_exception_does_not_block_stock_or_board_updates(monkeypatch):
+    import data_update_manager as dum
+
+    calls = []
+    _patch_independent_daily_stages(monkeypatch, dum, calls)
+    monkeypatch.setattr(
+        dum, "update_all_indices_qmt",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("index down")),
+    )
+    monkeypatch.setattr(
+        dum,
+        "qmt_update_all_stocks",
+        lambda *_args, **_kwargs: calls.append("stocks") or {
+            "success": 1, "failed": 0, "total": 1,
+            "completion_ready": True, "updated_codes": [],
+        },
+    )
+
+    result = dum.update_all_today(force=True)
+
+    assert result["indices"]["error"] == "index down"
+    assert calls == ["stocks", "boards", "weekly_monthly"]
+    assert "indices" in result["pending_stages"]
+
+
+def test_stock_source_exception_does_not_block_board_updates(monkeypatch):
+    import data_update_manager as dum
+
+    calls = []
+    _patch_independent_daily_stages(monkeypatch, dum, calls)
+    monkeypatch.setattr(
+        dum, "update_all_indices_qmt", lambda *_args, **_kwargs: {
+            "success": 1, "failed": 0, "total": 1,
+            "completion_ready": True, "updated_codes": [],
+        }
+    )
+    monkeypatch.setattr(
+        dum, "qmt_update_all_stocks",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("qmt down")),
+    )
+
+    result = dum.update_all_today(force=True)
+
+    assert result["stocks"]["error"] == "qmt down"
+    assert calls == ["boards", "weekly_monthly"]
+    assert "stocks" in result["pending_stages"]
+
+
 def test_task_factory_reads_the_manager_owned_full_update_guard():
     import data_update_manager as dum
     from services.update_task_factories import _full_update_already_running
