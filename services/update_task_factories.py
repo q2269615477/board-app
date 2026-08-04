@@ -32,8 +32,97 @@ def _compress_debt(debt) -> dict:
             'total': bucket.get('total'),
             'lagging': bucket.get('lagging'),
             'max_lag': bucket.get('max_lag'),
+            'available': bucket.get('available', True),
+            'error': str(bucket.get('error') or '')[:160],
         }
     return out
+
+
+_FORCE_AREA_META = {
+    'indices': ('指数日线', 'QMT / Tushare / 全球指数数据源'),
+    'stocks': ('个股日线', 'QMT'),
+    'boards': ('板块日线', 'Tushare'),
+    'higher_periods': ('个股/指数高周期', '本地日线物化'),
+    'weekly_monthly': ('板块周月线', '本地日线重采样'),
+}
+
+
+def _debt_area_statuses(debt) -> dict:
+    """Build structured per-area state without merging source outcomes."""
+    areas = {}
+    for key in ('indices', 'stocks', 'boards'):
+        label, source = _FORCE_AREA_META[key]
+        bucket = debt.get(key) if isinstance(debt, dict) else None
+        if not isinstance(bucket, dict):
+            areas[key] = {
+                'label': label,
+                'source': source,
+                'status': 'unavailable',
+                'message': '欠更状态不可用',
+            }
+            continue
+        if bucket.get('available') is False or bucket.get('error'):
+            areas[key] = {
+                'label': label,
+                'source': source,
+                'status': 'unavailable',
+                'message': str(bucket.get('error') or '数据范围状态不可用')[:200],
+            }
+            continue
+        lagging = int(bucket.get('lagging') or 0)
+        total = int(bucket.get('total') or 0)
+        areas[key] = {
+            'label': label,
+            'source': source,
+            'status': 'pending' if lagging else 'fresh',
+            'message': f'{lagging}/{total} 个标的欠更' if lagging else '已是最新',
+        }
+    return areas
+
+
+def _result_area_statuses(result) -> dict:
+    """Expose every daily area independently for the force-refresh UI."""
+    result = result if isinstance(result, dict) else {}
+    pending = set(result.get('pending_stages') or [])
+    areas = {}
+    for key, (label, source) in _FORCE_AREA_META.items():
+        stage = result.get(key)
+        if not isinstance(stage, dict):
+            overall_message = str(result.get('message') or '')[:200]
+            if result.get('deferred'):
+                status = 'deferred'
+            elif result.get('running'):
+                status = 'pending'
+            else:
+                status = 'pending' if key in pending else 'unavailable'
+            areas[key] = {
+                'label': label,
+                'source': source,
+                'status': status,
+                'message': overall_message or '本轮未返回更新结果',
+            }
+            continue
+
+        message = str(stage.get('message') or stage.get('error') or '')[:200]
+        if stage.get('canceled'):
+            status = 'canceled'
+            message = message or '更新已取消'
+        elif stage.get('error'):
+            status = 'failed'
+        elif stage.get('deferred'):
+            status = 'deferred'
+        elif key in pending:
+            status = 'pending'
+        else:
+            status = 'fresh'
+            message = message or '更新完成'
+        areas[key] = {
+            'label': label,
+            'source': source,
+            'status': status,
+            'message': message,
+        }
+    return areas
 
 
 def _scan_update_debt_safe():
@@ -44,10 +133,9 @@ def _scan_update_debt_safe():
     except Exception:
         return {
             'summary': '欠更扫描不可用',
-            'needs_catchup': False,
-            'stocks': {'total': 0, 'lagging': 0, 'max_lag': 0},
-            'indices': {'total': 0, 'lagging': 0, 'max_lag': 0},
-            'boards': {'total': 0, 'lagging': 0, 'max_lag': 0},
+            # Unknown freshness must not be reported as "no debt".  Force a
+            # best-effort update; each source still reports its own outcome.
+            'needs_catchup': True,
         }
 
 
@@ -78,13 +166,21 @@ def create_force_update_task() -> UpdateTask:
     """创建强制刷新任务：即时清缓存 + 轻量 spot；欠更时后台 fire-and-forget 全量补齐。"""
     svc = update_task_service
 
-    if svc.has_running('force'):
-        running = next(
-            (t for t in svc.list_tasks() if t.type == 'force' and t.status == 'running'),
-            None
-        )
-        if running:
-            return running
+    # runner 的即时部分会很快 success，但后台 debt/catchup 仍可能运行。
+    # 在后台真正结束前复用同一任务，避免连续点击创建多个扫描线程。
+    active_background_states = {'scheduled', 'scanning', 'running'}
+    existing = next(
+        (
+            t for t in svc.list_tasks()
+            if t.type == 'force' and (
+                t.status in ('pending', 'running')
+                or (t.detail or {}).get('background_state') in active_background_states
+            )
+        ),
+        None,
+    )
+    if existing:
+        return existing
 
     def runner(task: UpdateTask, cancel_check):
         # 同步路径只做内存级操作，必须 <100ms（欠更扫描/全量补齐全部丢后台）
@@ -105,7 +201,9 @@ def create_force_update_task() -> UpdateTask:
         task.detail['full_already_running'] = bool(full_running)
         # 后台线程会回写；先给默认值
         task.detail['background_catchup'] = False
+        task.detail['background_state'] = 'scheduled'
         task.detail['debt_before'] = None
+        task.detail['areas'] = {}
 
         def _bg_debt_and_catchup():
             """扫欠更 + 必要时 force 全量；不阻塞 force 任务成功。
@@ -114,24 +212,30 @@ def create_force_update_task() -> UpdateTask:
               stage / stocks_done / stocks_pending / catchup_message
             """
             try:
+                task.detail['background_state'] = 'scanning'
                 debt = _scan_update_debt_safe()
                 task.detail['debt_before'] = _compress_debt(debt)
+                task.detail['areas'] = _debt_area_statuses(debt)
             except Exception:
                 debt = {'needs_catchup': True, 'summary': ''}
+                task.detail['areas'] = _debt_area_statuses(debt)
             needs = bool(debt.get('needs_catchup'))
             if _full_update_already_running():
                 task.detail['full_already_running'] = True
                 task.detail['background_catchup'] = False
                 task.detail['stage'] = 'skipped_full_running'
+                task.detail['background_state'] = 'running_elsewhere'
                 return
             if not needs:
                 task.detail['background_catchup'] = False
                 task.detail['stage'] = 'no_debt'
+                task.detail['background_state'] = 'complete'
                 return
             try:
                 from data_update_manager import update_all_today
                 task.detail['background_catchup'] = True
                 task.detail['stage'] = 'catchup_start'
+                task.detail['background_state'] = 'running'
                 task.detail['catchup_message'] = '后台全量补齐开始'
 
                 def _progress(stage, current, total, message):
@@ -153,6 +257,7 @@ def create_force_update_task() -> UpdateTask:
                 task.detail['catchup_result'] = _result_detail(res) if res else {}
                 # 从子结果提取 pending/success 便于 UI
                 if isinstance(res, dict):
+                    task.detail['areas'] = _result_area_statuses(res)
                     st = res.get('stocks') if isinstance(res.get('stocks'), dict) else {}
                     bd = res.get('boards') if isinstance(res.get('boards'), dict) else {}
                     ix = res.get('indices') if isinstance(res.get('indices'), dict) else {}
@@ -166,6 +271,7 @@ def create_force_update_task() -> UpdateTask:
                     if ix:
                         task.detail['indices_done'] = ix.get('success')
                 task.detail['stage'] = 'catchup_done'
+                task.detail['background_state'] = 'complete'
                 task.detail['catchup_message'] = '后台全量补齐结束'
                 try:
                     debt_after = _scan_update_debt_safe()
@@ -174,7 +280,10 @@ def create_force_update_task() -> UpdateTask:
                     pass
             except Exception as e:
                 task.detail['stage'] = 'catchup_error'
+                task.detail['background_state'] = 'error'
                 task.detail['catchup_message'] = str(e)[:200]
+                if not task.detail.get('areas'):
+                    task.detail['areas'] = _debt_area_statuses({})
 
         # 无论是否已有全量，都起后台扫欠更（已有全量时 bg 函数会早退不重复跑）
         threading.Thread(

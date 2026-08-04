@@ -115,6 +115,23 @@ class TestForceFactoryInstant:
         # 同步路径 debt_before 仍为默认 None（后台才写）
         assert task.detail.get('debt_before') is None
 
+    def test_reuses_success_task_while_its_background_is_active(self):
+        from services.update_task_factories import create_force_update_task
+        from services.update_task_service import update_task_service, UpdateTask
+
+        existing = UpdateTask(
+            id='activebg',
+            type='force',
+            status='success',
+            message='即时部分完成',
+            started_at='2026-08-04 09:00:00',
+            detail={'background_state': 'running'},
+        )
+        with update_task_service._lock:
+            update_task_service._tasks[existing.id] = existing
+
+        assert create_force_update_task() is existing
+
     def test_sync_path_does_not_call_update_all_today(self, monkeypatch):
         """同步 runner 路径不调用 update_all_today（仅 bg target 才可能调用）"""
         from services.update_task_factories import create_force_update_task
@@ -220,6 +237,90 @@ class TestForceFactoryInstant:
         assert len(update_calls) == 1
         assert update_calls[0].get('force') is True
         assert task.detail.get('background_catchup') is True
+        assert task.detail.get('background_state') == 'complete'
+
+    def test_bg_target_exposes_independent_area_failures(self, monkeypatch):
+        from services.update_task_factories import create_force_update_task
+
+        bg_targets = []
+
+        class FakeThread:
+            def __init__(self, target=None, **_kwargs):
+                bg_targets.append(target)
+
+            def start(self):
+                pass
+
+        result = {
+            'indices': {'success': 2, 'failed': 0, 'completion_ready': True},
+            'stocks': {'success': 0, 'failed': 1, 'error': 'QMT unavailable'},
+            'boards': {'success': 3, 'failed': 0, 'formal_ready': True},
+            'weekly_monthly': {'success': 3, 'failed': 0, 'completion_ready': True},
+            'pending_stages': ['stocks'],
+            'completion_ready': False,
+        }
+        _patch_force_deps(
+            monkeypatch,
+            debt=_mock_debt(needs_catchup=True),
+            update_all_today=lambda **_kwargs: result,
+        )
+        monkeypatch.setattr('services.update_task_factories.threading.Thread', FakeThread)
+
+        cap = _capture_runner(monkeypatch)
+        task = create_force_update_task()
+        cap['fn'](task, lambda: False)
+        bg_targets[0]()
+
+        areas = task.detail['areas']
+        assert areas['indices']['status'] == 'fresh'
+        assert areas['stocks']['status'] == 'failed'
+        assert areas['stocks']['source'] == 'QMT'
+        assert areas['boards']['status'] == 'fresh'
+        assert task.detail['background_state'] == 'complete'
+
+    def test_debt_scan_failure_forces_best_effort_catchup(self, monkeypatch):
+        from services.update_task_factories import _scan_update_debt_safe
+
+        monkeypatch.setattr(
+            'data_update_manager.scan_update_debt',
+            lambda: (_ for _ in ()).throw(RuntimeError('db busy')),
+        )
+
+        debt = _scan_update_debt_safe()
+
+        assert debt['needs_catchup'] is True
+        assert '不可用' in debt['summary']
+
+    def test_deferred_daily_result_keeps_schedule_reason_per_area(self):
+        from services.update_task_factories import _result_area_statuses
+
+        areas = _result_area_statuses({
+            'deferred': True,
+            'completion_ready': False,
+            'pending_stages': ['indices', 'stocks', 'boards'],
+            'message': '等待15:30后执行盘后增量',
+        })
+
+        assert all(area['status'] == 'deferred' for area in areas.values())
+        assert all('15:30' in area['message'] for area in areas.values())
+
+    def test_unavailable_universe_is_not_reported_fresh(self):
+        from services.update_task_factories import _debt_area_statuses
+
+        areas = _debt_area_statuses({
+            'indices': {'available': True, 'total': 1, 'lagging': 0},
+            'stocks': {'available': False, 'error': 'ledger busy'},
+            'boards': {'available': False, 'error': 'taxonomy busy'},
+        })
+
+        assert areas['indices']['status'] == 'fresh'
+        assert areas['stocks']['status'] == 'unavailable'
+        assert areas['boards']['status'] == 'unavailable'
+
+        legacy_error = _debt_area_statuses({
+            'indices': {'error': 'db busy', 'total': 0, 'lagging': 0},
+        })
+        assert legacy_error['indices']['status'] == 'unavailable'
 
     def test_full_already_running_succeeds(self, monkeypatch):
         """全量已在进行 → force 仍成功；bg 起线程但 target 不调 update_all_today"""
