@@ -323,7 +323,87 @@ def market_timezone_for_index(code: str) -> str:
     )
 
 
-def load_global_index_kline(code: str, period: str = "daily") -> pd.DataFrame:
+def _frame_last_date(df: pd.DataFrame) -> str:
+    """Return a normalized last date for a history candidate.
+
+    A source can return rows in either ascending or descending order and a
+    cache can contain a malformed date left by an older writer.  Comparing
+    the normalized maximum rather than relying on row order is what lets the
+    incremental loader decide whether an apparently non-empty Eastmoney tail
+    is actually behind the local cache.
+    """
+    if df is None or df.empty or "date" not in df.columns:
+        return ""
+    dates = pd.to_datetime(df["date"], errors="coerce")
+    if dates.isna().all():
+        return ""
+    return dates.max().strftime("%Y-%m-%d")
+
+
+def _global_history_sources(code: str):
+    """Return applicable fallback history providers in stable order.
+
+    Do not put providers that cannot serve ``code`` in the chain.  The chain
+    is user-visible observability, so recording an inapplicable source would
+    falsely suggest that it was queried.
+    """
+    normalized = str(code or "").strip()
+    sources = []
+    if normalized in TENCENT_SYMBOLS:
+        sources.append(("tencent_history", fetch_tencent_global_kline))
+    if normalized in SINA_GLOBAL_SYMBOLS or normalized in SINA_US_SYMBOLS:
+        sources.append(("sina_history", fetch_sina_global_kline))
+    return sources
+
+
+def _normalize_history_date(value) -> str:
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    return parsed.strftime("%Y-%m-%d")
+
+
+def _eastmoney_history_is_stale(
+    cached: pd.DataFrame,
+    eastmoney: pd.DataFrame,
+    target_date=None,
+) -> bool:
+    """Whether an Eastmoney tail must be checked against backup histories.
+
+    A non-empty response is not enough to prove freshness.  When its last
+    date is at or before the local tail, probe independent history feeds so a
+    newer tail can repair the cache.  If there is no local tail, the existing
+    cold-start behavior remains unchanged: Eastmoney is trusted while it
+    returns rows and other sources are only used when it is empty.
+    """
+    if eastmoney is None or eastmoney.empty:
+        return True
+    eastmoney_last = _frame_last_date(eastmoney)
+    target = _normalize_history_date(target_date)
+    if target and (not eastmoney_last or eastmoney_last < target):
+        return True
+    if cached is None or cached.empty:
+        return False
+    cached_last = _frame_last_date(cached)
+    if not eastmoney_last:
+        return True
+    if not cached_last:
+        return True
+    return eastmoney_last <= cached_last
+
+
+def _history_candidate_sort_key(item):
+    """Sort history candidates from oldest to newest for date-wise merging."""
+    _, frame = item
+    return _frame_last_date(frame)
+
+
+def load_global_index_kline(
+    code: str,
+    period: str = "daily",
+    *,
+    target_date=None,
+) -> pd.DataFrame:
     """Load and incrementally refresh global-index bars."""
     code = str(code or "").strip()
     period = str(period or "daily").strip()
@@ -335,7 +415,7 @@ def load_global_index_kline(code: str, period: str = "daily") -> pd.DataFrame:
     repo = get_sqlite_repo()
 
     if period in RESAMPLE_PERIODS:
-        daily = load_global_index_kline(code, "daily")
+        daily = load_global_index_kline(code, "daily", target_date=target_date)
         if daily is None or daily.empty:
             attrs = getattr(daily, "attrs", {}) or {}
             return _annotate(
@@ -361,42 +441,67 @@ def load_global_index_kline(code: str, period: str = "daily") -> pd.DataFrame:
     # bars previously synthesized from a spot-only response.
     limit = 180 if not cached.empty else 10000
     fallback_chain.append("eastmoney_history")
-    remote = fetch_eastmoney_global_kline(code, limit=limit)
-    remote_source = (
-        "eastmoney_history" if remote is not None and not remote.empty else ""
-    )
+    eastmoney = fetch_eastmoney_global_kline(code, limit=limit)
+    history_candidates = []
+    if eastmoney is not None and not eastmoney.empty:
+        history_candidates.append(("eastmoney_history", eastmoney))
 
-    # Tencent is a reliable full-OHLC fallback for Hong Kong indices.
-    if remote is None or remote.empty:
-        fallback_chain.append("tencent_history")
-        remote = fetch_tencent_global_kline(code)
-        remote_source = (
-            "tencent_history" if remote is not None and not remote.empty else ""
-        )
+    # A non-empty Eastmoney response can still be behind the local tail (for
+    # example, the endpoint may be serving Friday while Sina already has
+    # Monday).  In that case query applicable independent history sources and
+    # merge the newest tail by date.  Empty Eastmoney responses retain the
+    # original fallback behavior.
+    if _eastmoney_history_is_stale(cached, eastmoney, target_date=target_date):
+        for source_name, fetcher in _global_history_sources(code):
+            fallback_chain.append(source_name)
+            try:
+                candidate = fetcher(code)
+            except Exception as exc:
+                logger.warning(
+                    "[GlobalKline] %s %s failed: %s",
+                    source_name,
+                    code,
+                    exc,
+                )
+                candidate = pd.DataFrame()
+            if candidate is not None and not candidate.empty:
+                history_candidates.append((source_name, candidate))
 
-    # Sina exposes independent APAC and US daily-history channels. They fill
-    # the exact gap between an older Yahoo cache and today's Eastmoney bar.
-    if remote is None or remote.empty:
-        fallback_chain.append("sina_history")
-        remote = fetch_sina_global_kline(code)
-        remote_source = (
-            "sina_history" if remote is not None and not remote.empty else ""
+        # Yahoo remains a cold-start fallback, or a last resort after all
+        # applicable independent sources failed to provide a newer tail.  Do
+        # not put it on the chain for a healthy incremental Eastmoney hit.
+        latest_history_date = max(
+            (_frame_last_date(frame) for _, frame in history_candidates),
+            default="",
         )
-
-    # Yahoo remains a cold-start fallback only. It is intentionally skipped
-    # for incremental cache refreshes because a blocked Yahoo request should
-    # not delay the current-bar repair path.
-    if (remote is None or remote.empty) and cached.empty:
-        fallback_chain.append("yahoo_history")
-        remote = fetch_yahoo_global_kline(code)
-        remote_source = (
-            "yahoo_history" if remote is not None and not remote.empty else ""
-        )
+        eastmoney_last = _frame_last_date(eastmoney)
+        target = _normalize_history_date(target_date)
+        yahoo_supported = str(code or "").strip() in YAHOO_SYMBOLS
+        if yahoo_supported and (
+            not history_candidates
+            or (target and latest_history_date < target)
+            or not eastmoney_last
+            or (not target and latest_history_date <= eastmoney_last)
+        ):
+            fallback_chain.append("yahoo_history")
+            try:
+                yahoo = fetch_yahoo_global_kline(code)
+            except Exception as exc:
+                logger.warning("[GlobalKline] yahoo_history %s failed: %s", code, exc)
+                yahoo = pd.DataFrame()
+            if yahoo is not None and not yahoo.empty:
+                history_candidates.append(("yahoo_history", yahoo))
 
     fallback_chain.append("eastmoney_spot")
     spot_bar = fetch_eastmoney_spot_bar(code)
     spot_source = (
         "eastmoney_spot" if spot_bar is not None and not spot_bar.empty else ""
+    )
+    remote_frames = [frame for _, frame in history_candidates
+                     if frame is not None and not frame.empty]
+    remote = (
+        _dedupe(pd.concat(remote_frames, ignore_index=True))
+        if remote_frames else pd.DataFrame()
     )
     replace_incompatible_cache = (
         code == "800000" and _all_a_cache_is_incompatible(cached, remote)
@@ -407,22 +512,58 @@ def load_global_index_kline(code: str, period: str = "daily") -> pd.DataFrame:
         )
         cached = pd.DataFrame()
 
-    parts = [frame for frame in (cached, remote, spot_bar)
-             if frame is not None and not frame.empty]
-    if not parts:
+    history_parts = [frame for frame in (cached, remote)
+                     if frame is not None and not frame.empty]
+    if not history_parts and (spot_bar is None or spot_bar.empty):
         return _annotate(pd.DataFrame(), "unavailable", fallback_chain)
 
-    merged = _dedupe(pd.concat(parts, ignore_index=True))
-    if ((remote is not None and not remote.empty)
-            or (spot_bar is not None and not spot_bar.empty)):
-        if replace_incompatible_cache:
-            repo.replace_kline_period(code, "daily", merged)
-        else:
-            repo.save_kline(code, "daily", merged)
-    source = (
-        remote_source or spot_source
-        or ("sqlite" if not cached.empty else "unavailable")
+    # Sort history candidates by their actual last date before merging.  This
+    # makes a newer Sina/Tencent tail win same-date collisions without
+    # discarding older Eastmoney history.  Spot is intentionally kept out of
+    # this persisted frame: it can be an incomplete live-session bar.
+    history_sources = list(history_candidates)
+    if cached is not None and not cached.empty:
+        history_sources.append(("sqlite", cached))
+    ordered_history = sorted(history_sources, key=_history_candidate_sort_key)
+    history_frames = [
+        frame for _, frame in ordered_history
+        if frame is not None and not frame.empty
+    ]
+    history_merged = (
+        _dedupe(pd.concat(history_frames, ignore_index=True))
+        if history_frames else pd.DataFrame()
     )
+    display_parts = [frame for frame in (history_merged, spot_bar)
+                     if frame is not None and not frame.empty]
+    merged = _dedupe(pd.concat(display_parts, ignore_index=True))
+
+    if remote is not None and not remote.empty:
+        if replace_incompatible_cache:
+            repo.replace_kline_period(code, "daily", history_merged)
+        else:
+            repo.save_kline(code, "daily", history_merged)
+
+    # Report the provider owning the freshest historical tail.  Equal-date
+    # collisions intentionally prefer the later candidate (independent backup
+    # providers come after Eastmoney in ``history_candidates``).  A spot-only
+    # response is returned for display but is never persisted or mislabeled as
+    # a historical source.
+    source_candidates = []
+    if cached is not None and not cached.empty:
+        source_candidates.append(("sqlite", cached))
+    source_candidates.extend(history_candidates)
+    freshest_source = ""
+    freshest_date = ""
+    for candidate_source, frame in source_candidates:
+        candidate_date = _frame_last_date(frame)
+        if candidate_date and candidate_date >= freshest_date:
+            freshest_source = candidate_source
+            freshest_date = candidate_date
+    spot_date = _frame_last_date(spot_bar)
+    if spot_source and spot_date and spot_date > freshest_date:
+        source = spot_source
+    else:
+        source = freshest_source or spot_source or "unavailable"
     return _annotate(merged, source, fallback_chain)
 
 

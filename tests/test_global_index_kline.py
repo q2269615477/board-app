@@ -366,7 +366,14 @@ def test_cached_history_is_refreshed_and_merged_by_date(monkeypatch):
         "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31"
     ]
     assert out.loc[out["date"] == "2026-07-29", "close"].iloc[0] == pytest.approx(64611.15)
-    assert saved and saved[0][2]["date"].tolist() == out["date"].tolist()
+    # The live spot bar is returned for display but is not persisted as a
+    # formal daily history row until an authoritative history feed confirms
+    # the session has closed.
+    assert saved and saved[0][2]["date"].tolist() == [
+        "2026-07-28", "2026-07-29", "2026-07-30"
+    ]
+    assert out["date"].tolist()[-1] == "2026-07-31"
+    assert out.attrs["source"] == "eastmoney_spot"
 
 
 def test_eastmoney_all_a_cache_merges_history_and_current_bar(monkeypatch):
@@ -410,7 +417,195 @@ def test_eastmoney_all_a_cache_merges_history_and_current_bar(monkeypatch):
     assert out["date"].tolist() == ["2026-07-30", "2026-07-31"]
     assert out.iloc[-1]["close"] == pytest.approx(6350.92)
     assert not saved
-    assert replaced and replaced[0]["date"].tolist() == out["date"].tolist()
+    # Keep the 800000 incompatible-cache replacement, but never include the
+    # spot-only current bar in the persisted replacement.
+    assert replaced and replaced[0]["date"].tolist() == ["2026-07-30"]
+
+
+def test_stale_eastmoney_tail_uses_newer_sina_history_and_persists(monkeypatch):
+    import data.global_index_kline as index_kline
+
+    saved = []
+
+    class Repo:
+        def read_kline(self, code, period):
+            assert (code, period) == ("^N225", "daily")
+            return pd.DataFrame([{
+                "date": "2026-08-01", "open": 100, "high": 101,
+                "low": 99, "close": 100.5, "volume": 10,
+            }])
+
+        def save_kline(self, code, period, frame):
+            saved.append((code, period, frame.copy()))
+
+    eastmoney = pd.DataFrame([{
+        "date": "2026-08-01", "open": 100, "high": 101,
+        "low": 99, "close": 100.5, "volume": 10,
+    }])
+    sina = pd.DataFrame([
+        {
+            "date": "2026-08-01", "open": 100, "high": 101,
+            "low": 99, "close": 100.5, "volume": 10,
+        },
+        {
+            "date": "2026-08-03", "open": 102, "high": 103,
+            "low": 101, "close": 102.5, "volume": 11,
+        },
+    ])
+
+    monkeypatch.setattr(index_kline, "get_sqlite_repo", lambda: Repo())
+    monkeypatch.setattr(
+        index_kline, "fetch_eastmoney_global_kline", lambda *a, **k: eastmoney
+    )
+    monkeypatch.setattr(index_kline, "fetch_sina_global_kline", lambda *a, **k: sina)
+    monkeypatch.setattr(
+        index_kline, "fetch_eastmoney_spot_bar", lambda *a, **k: pd.DataFrame()
+    )
+    monkeypatch.setattr(
+        index_kline, "fetch_yahoo_global_kline",
+        lambda *a, **k: pytest.fail("Yahoo is not needed after a newer Sina tail"),
+    )
+
+    out = index_kline.load_global_index_kline("^N225", "daily")
+
+    assert out["date"].tolist() == ["2026-08-01", "2026-08-03"]
+    assert out.iloc[-1]["close"] == pytest.approx(102.5)
+    assert out.attrs["source"] == "sina_history"
+    assert "sina_history" in out.attrs["fallback_chain"]
+    assert saved and saved[0][2]["date"].tolist() == [
+        "2026-08-01", "2026-08-03"
+    ]
+
+
+def test_target_date_probes_backup_when_eastmoney_advanced_but_is_still_stale(
+    monkeypatch,
+):
+    import data.global_index_kline as index_kline
+
+    saved = []
+
+    class Repo:
+        def read_kline(self, code, period):
+            return pd.DataFrame([{
+                "date": "2026-07-31", "open": 100, "high": 101,
+                "low": 99, "close": 100.5, "volume": 10,
+            }])
+
+        def save_kline(self, code, period, frame):
+            saved.append(frame.copy())
+
+    eastmoney = pd.DataFrame([{
+        "date": "2026-08-01", "open": 101, "high": 102,
+        "low": 100, "close": 101.5, "volume": 11,
+    }])
+    sina = pd.DataFrame([{
+        "date": "2026-08-03", "open": 102, "high": 103,
+        "low": 101, "close": 102.5, "volume": 12,
+    }])
+    monkeypatch.setattr(index_kline, "get_sqlite_repo", lambda: Repo())
+    monkeypatch.setattr(
+        index_kline, "fetch_eastmoney_global_kline", lambda *a, **k: eastmoney
+    )
+    monkeypatch.setattr(index_kline, "fetch_sina_global_kline", lambda *a, **k: sina)
+    monkeypatch.setattr(
+        index_kline, "fetch_eastmoney_spot_bar", lambda *a, **k: pd.DataFrame()
+    )
+    monkeypatch.setattr(
+        index_kline, "fetch_yahoo_global_kline", lambda *a, **k: pd.DataFrame()
+    )
+
+    out = index_kline.load_global_index_kline(
+        "^N225", "daily", target_date="20260803"
+    )
+
+    assert out["date"].tolist() == [
+        "2026-07-31", "2026-08-01", "2026-08-03"
+    ]
+    assert out.attrs["source"] == "sina_history"
+    assert saved and saved[0]["date"].tolist()[-1] == "2026-08-03"
+
+
+def test_target_date_continues_to_yahoo_when_other_backups_are_still_stale(
+    monkeypatch,
+):
+    import data.global_index_kline as index_kline
+
+    class Repo:
+        def read_kline(self, code, period):
+            return pd.DataFrame([{
+                "date": "2026-07-31", "open": 100, "high": 101,
+                "low": 99, "close": 100.5, "volume": 10,
+            }])
+
+        def save_kline(self, code, period, frame):
+            self.saved = frame.copy()
+
+    repo = Repo()
+    def frame(day, close):
+        return pd.DataFrame([{
+            "date": day, "open": close - 0.5, "high": close + 0.5,
+            "low": close - 1, "close": close, "volume": 10,
+        }])
+
+    monkeypatch.setattr(index_kline, "get_sqlite_repo", lambda: repo)
+    monkeypatch.setattr(
+        index_kline, "fetch_eastmoney_global_kline",
+        lambda *a, **k: frame("2026-08-01", 101),
+    )
+    monkeypatch.setattr(
+        index_kline, "fetch_sina_global_kline",
+        lambda *a, **k: frame("2026-08-02", 102),
+    )
+    monkeypatch.setattr(
+        index_kline, "fetch_yahoo_global_kline",
+        lambda *a, **k: frame("2026-08-03", 103),
+    )
+    monkeypatch.setattr(
+        index_kline, "fetch_eastmoney_spot_bar", lambda *a, **k: pd.DataFrame()
+    )
+
+    out = index_kline.load_global_index_kline(
+        "^N225", "daily", target_date="20260803"
+    )
+
+    assert out["date"].tolist()[-1] == "2026-08-03"
+    assert out.attrs["source"] == "yahoo_history"
+    assert "yahoo_history" in out.attrs["fallback_chain"]
+    assert repo.saved["date"].tolist()[-1] == "2026-08-03"
+
+
+def test_spot_only_global_response_is_not_persisted(monkeypatch):
+    import data.global_index_kline as index_kline
+
+    writes = []
+
+    class Repo:
+        def read_kline(self, code, period):
+            return pd.DataFrame()
+
+        def save_kline(self, *args):
+            writes.append(("save", args))
+
+        def replace_kline_period(self, *args):
+            writes.append(("replace", args))
+
+    spot = pd.DataFrame([{
+        "date": "2026-08-04", "open": 103, "high": 104,
+        "low": 102, "close": 103.5, "volume": 12,
+    }])
+    monkeypatch.setattr(index_kline, "get_sqlite_repo", lambda: Repo())
+    for name in (
+        "fetch_eastmoney_global_kline", "fetch_tencent_global_kline",
+        "fetch_sina_global_kline", "fetch_yahoo_global_kline",
+    ):
+        monkeypatch.setattr(index_kline, name, lambda *a, **k: pd.DataFrame())
+    monkeypatch.setattr(index_kline, "fetch_eastmoney_spot_bar", lambda *a, **k: spot)
+
+    out = index_kline.load_global_index_kline("^N225", "daily")
+
+    assert out["date"].tolist() == ["2026-08-04"]
+    assert out.attrs["source"] == "eastmoney_spot"
+    assert writes == []
 
 
 def test_global_loader_reports_actual_history_source(monkeypatch):

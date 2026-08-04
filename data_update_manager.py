@@ -18,6 +18,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import pandas as pd
 
+from core.config import SQLITE_PATH
 from services.kline_quality_service import scan_daily_frame
 from services.stock_update_service import (
     StockUpdateDependencies,
@@ -101,6 +102,12 @@ QMT_INDEX_MAP = {
 BOARD_ONLY_PREWARM = frozenset({'BK1158'})
 # 不走 QMT 的东财自有指数；由官方 secid 历史/快照接口维护。
 EASTMONEY_INDEX_CODES = frozenset({'800000'})
+# 外围市场指数没有 QMT/Tushare 的可靠日线通道。它们由
+# ``data.global_index_kline.load_global_index_kline`` 负责拉取、合并和持久化。
+# 保持这份名单与 ``PREWARM_TARGETS`` 同步，避免被误送到 QMT/Tushare。
+GLOBAL_INDEX_CODES = frozenset({
+    '^N225', '^KS11', '^TWII', 'SPX', 'IXIC', 'DJI',
+})
 PERMANENT_SKIP_INDICES = {}
 
 # ===== 指数日更按交易所日历 =====
@@ -136,6 +143,12 @@ PREWARM_TARGETS = [
     ('HSTECH', '恒生科技', 'hk_index'),
     ('BK1158', '微盘股', 'concept'),
     ('800000', '东方财富全A', 'index'),
+    ('^N225', '日经225', 'global_index'),
+    ('^KS11', '韩国综合指数', 'global_index'),
+    ('^TWII', '台湾加权指数', 'global_index'),
+    ('SPX', '标普500', 'global_index'),
+    ('IXIC', '纳斯达克综合指数', 'global_index'),
+    ('DJI', '道琼斯工业指数', 'global_index'),
 ]
 
 
@@ -233,7 +246,7 @@ def is_qmt_daily_done() -> bool:
 # ===== 个股台账（SQLite存储） =====
 
 import sqlite3 as _sqlite3
-_LEDGER_DB = str(Path('data') / 'kline.db')
+_LEDGER_DB = str(SQLITE_PATH)
 
 
 def _ensure_ledger_schema():
@@ -805,26 +818,56 @@ def _index_session_target(code, now=None, fallback_td_norm=None):
     )
 
 
+def _is_managed_index_code(code: str) -> bool:
+    """Return whether ``code`` belongs to the formal daily-index universe.
+
+    The same predicate is intentionally shared by the update entrypoint, debt
+    scanner and status projection.  In particular, global symbols are
+    managed by the global-history loader rather than being inferred from a
+    QMT/Tushare mapping.
+    """
+    return (
+        (code in QMT_INDEX_MAP
+         or code in EASTMONEY_INDEX_CODES
+         or code in GLOBAL_INDEX_CODES)
+        and code not in BOARD_ONLY_PREWARM
+        and code not in PERMANENT_SKIP_INDICES
+    )
+
+
+def _managed_index_targets():
+    """Return the configured index targets that the daily updater owns."""
+    return [
+        (code, name, data_type)
+        for code, name, data_type in PREWARM_TARGETS
+        if _is_managed_index_code(code)
+    ]
+
+
 def update_all_indices_qmt(max_retries: int = 3) -> dict:
-    """更新指数日K：QMT 优先，若无数据或断连则 Tushare 兜底。"""
+    """更新正式指数日K。
+
+    A-share/HK symbols retain the QMT + Tushare path.  The six overseas
+    symbols use ``load_global_index_kline`` exclusively; they must not be
+    routed through QMT or the domestic Tushare tail fallback.
+    """
     _ensure_ledger_schema()
 
-    qmt_targets = [
-        (c, n, t) for c, n, t in PREWARM_TARGETS
-        if ((c in QMT_INDEX_MAP or c in EASTMONEY_INDEX_CODES)
-            and c not in BOARD_ONLY_PREWARM)
-    ]
+    qmt_targets = _managed_index_targets()
     result = {
         'success': 0, 'failed': 0, 'skipped': 0,
         'deferred': 0, 'delegated': 0, 'total': len(qmt_targets),
         'written': 0, 'channel': 'qmt', 'updated_codes': [],
     }
     outcomes = {}
-    logger.info(f"[QMT指数] 开始更新 {result['total']} 个指数（QMT 优先）")
+    logger.info(
+        f"[指数日更] 开始更新 {result['total']} 个指数（外围走 global loader）"
+    )
 
-    qmt_available = _qmt_connect()
-    if not qmt_available:
-        logger.warning("[QMT指数] QMT 不可用，全部回退 Tushare 兜底")
+    qmt_required = any(code in QMT_INDEX_MAP for code, _name, _dtype in qmt_targets)
+    qmt_available = _qmt_connect() if qmt_required else False
+    if qmt_required and not qmt_available:
+        logger.warning("[指数日更] QMT 不可用，国内指数回退 Tushare 兜底")
 
     conn = _sqlite3.connect(_LEDGER_DB)
     cur = conn.cursor()
@@ -863,6 +906,95 @@ def update_all_indices_qmt(max_retries: int = 3) -> dict:
                 }
                 continue
 
+            if code in GLOBAL_INDEX_CODES:
+                # 外围指数的历史数据由 global_index_kline 负责获取并持久化。
+                # 这里只验证它是否真的把本地共享库推进到该交易所目标日，
+                # 防止“远端有返回但本地仍陈旧”被记录为成功。
+                cur.execute(
+                    "SELECT COALESCE(MAX(date),'19900101') FROM kline "
+                    "WHERE code=? AND period='daily'",
+                    (code,),
+                )
+                before_max = str(cur.fetchone()[0] or '19900101').replace('-', '')
+                if before_max >= target_norm:
+                    # 轮询调度器会频繁检查外围市场；已经覆盖目标日时，
+                    # 不再触发网络请求，也不把“未调用 loader”伪装成远端来源。
+                    result['success'] += 1
+                    result['channel'] = (
+                        'global_index' if result['channel'] == 'qmt'
+                        else result['channel']
+                    )
+                    outcomes[code] = {
+                        'status': 'success',
+                        'name': name,
+                        'local_max': before_max,
+                        'target_date': target_norm,
+                        'channel': 'global_index',
+                        'source': 'sqlite',
+                        'fallback_chain': ['sqlite'],
+                    }
+                    continue
+
+                from data.global_index_kline import load_global_index_kline
+
+                df = load_global_index_kline(
+                    code, 'daily', target_date=target_norm
+                )
+                loader_attrs = dict(getattr(df, 'attrs', {}) or {})
+                loader_source = str(loader_attrs.get('source') or 'unavailable')
+                loader_chain = list(loader_attrs.get('fallback_chain') or [])
+                cur.execute(
+                    "SELECT COALESCE(MAX(date),'19900101') FROM kline "
+                    "WHERE code=? AND period='daily'",
+                    (code,),
+                )
+                local_max = str(cur.fetchone()[0] or '19900101').replace('-', '')
+                if local_max >= target_norm:
+                    written = 0
+                    if df is not None and not df.empty and 'date' in df.columns:
+                        before_date = pd.to_datetime(
+                            before_max, format='%Y%m%d', errors='coerce'
+                        )
+                        local_date = pd.to_datetime(
+                            local_max, format='%Y%m%d', errors='coerce'
+                        )
+                        frame_dates = pd.to_datetime(
+                            df['date'], errors='coerce'
+                        )
+                        written = int(
+                            ((frame_dates > before_date)
+                             & (frame_dates <= local_date)).sum()
+                        )
+                    result['success'] += 1
+                    result['written'] += written
+                    if written:
+                        result['updated_codes'].append(code)
+                    if result['channel'] == 'qmt':
+                        result['channel'] = 'global_index'
+                    elif result['channel'] != 'global_index':
+                        result['channel'] = 'qmt+global_index'
+                    outcomes[code] = {
+                        'status': 'success',
+                        'name': name,
+                        'local_max': local_max,
+                        'target_date': target_norm,
+                        'channel': 'global_index',
+                        'source': loader_source,
+                        'fallback_chain': loader_chain,
+                    }
+                else:
+                    result['failed'] += 1
+                    outcomes[code] = {
+                        'status': 'stale_no_source',
+                        'name': name,
+                        'local_max': local_max,
+                        'target_date': target_norm,
+                        'channel': 'global_index',
+                        'source': loader_source,
+                        'fallback_chain': loader_chain,
+                    }
+                continue
+
             if code in EASTMONEY_INDEX_CODES:
                 from data.global_index_kline import load_global_index_kline
 
@@ -895,6 +1027,14 @@ def update_all_indices_qmt(max_retries: int = 3) -> dict:
                         'local_max': local_max,
                         'target_date': target_norm,
                         'channel': 'eastmoney',
+                        'source': (getattr(df, 'attrs', {}) or {}).get(
+                            'source', 'unavailable'
+                        ),
+                        'fallback_chain': list(
+                            (getattr(df, 'attrs', {}) or {}).get(
+                                'fallback_chain', []
+                            )
+                        ),
                     }
                 else:
                     result['failed'] += 1
@@ -904,6 +1044,14 @@ def update_all_indices_qmt(max_retries: int = 3) -> dict:
                         'local_max': local_max,
                         'target_date': target_norm,
                         'channel': 'eastmoney',
+                        'source': (getattr(df, 'attrs', {}) or {}).get(
+                            'source', 'unavailable'
+                        ),
+                        'fallback_chain': list(
+                            (getattr(df, 'attrs', {}) or {}).get(
+                                'fallback_chain', []
+                            )
+                        ),
                     }
                 continue
 
@@ -1689,7 +1837,7 @@ def _update_all_today_impl(
 ) -> dict:
     """
     每日全量更新入口（数据源纪律）：
-    1. 指数 → 仅 QMT
+    1. 国内指数 → QMT/Tushare；外围指数 → global_index_kline
     2. 个股 → 仅 QMT（公式口批量）
     3. 东财板块 → 仅 Tushare（dc_*）
     4. 板块周月线 → 本地重采样/加载（依赖上一步板块日线）
@@ -1711,26 +1859,22 @@ def _update_all_today_impl(
         }
 
     logger.info("=" * 50)
-    logger.info("[日更] === 开始每日全量更新 (指数/个股=QMT, 东财板块=Tushare) ===")
+    logger.info(
+        "[日更] === 开始每日全量更新 "
+        "(国内指数/个股=QMT, 外围指数=global loader, 东财板块=Tushare) ==="
+    )
     result = {
         'indices': None, 'stocks': None, 'boards': None,
         'weekly_monthly': None, 'higher_periods': None,
         'history_repair': None,
     }
 
-    qmt_formula_ok = _qmt_connect()
-
-    # 1. 指数：仅 QMT
-    logger.info("[日更] Step 1/4: 指数更新 (仅 QMT)")
+    # 1. 指数：函数内部按代码选择 QMT/Tushare 或 global loader；
+    # 不在此处用 QMT 连接状态门控外围市场更新。
+    logger.info("[日更] Step 1/4: 指数更新 (国内 QMT/Tushare, 外围 global loader)")
     _emit_update_progress(progress_callback, 'indices', 0, 4, '指数更新开始')
     _mark_daily_stage_running('indices')
-    if qmt_formula_ok:
-        result['indices'] = update_all_indices_qmt(max_retries)
-    else:
-        logger.error("[日更] QMT 不可用，跳过指数（不回退 Tushare）")
-        result['indices'] = {
-            'success': 0, 'failed': 0, 'skipped': True, 'error': 'QMT不可用',
-        }
+    result['indices'] = update_all_indices_qmt(max_retries)
     _emit_update_progress(progress_callback, 'indices', 1, 4, '指数更新完成')
 
     # 2. 个股：仅 QMT
@@ -1971,6 +2115,30 @@ def _wait_after_daily_update(now: datetime, completion_ready: bool) -> float:
     return max(1, (_next_trade_close(now) - now).total_seconds())
 
 
+def _wait_after_non_trade_index_poll(
+    now: datetime, completion_ready: bool
+) -> float:
+    """Choose the non-A-share-day peripheral-index polling interval.
+
+    A-share holidays/weekends must not suppress Japan/Korea/Taiwan/US
+    settlement.  Keep retrying an unfinished exchange every ten minutes; if
+    every configured index is current, cap the next probe at one hour so a
+    late US session cannot be missed across the date boundary.
+    """
+    if not completion_ready:
+        return 600
+    return min(3600, max(1, (_next_trade_close(now) - now).total_seconds()))
+
+
+def _poll_indices_on_a_share_holiday(now: datetime):
+    """Run the exchange-aware index stage while the A-share market is closed."""
+    result = update_all_indices_qmt()
+    wait_seconds = _wait_after_non_trade_index_poll(
+        now, bool(result.get('completion_ready'))
+    )
+    return result, wait_seconds
+
+
 # ===== 定时调度器（交易日历感知） =====
 
 _scheduler_thread = None
@@ -1981,7 +2149,10 @@ _SCHEDULER_MAX_ERRORS = 5
 
 def _scheduler_loop():
     global _scheduler_running, _scheduler_error_count
-    logger.info("[调度器] 启动（指数/个股=QMT, 东财板块=Tushare, 交易日历感知）")
+    logger.info(
+        "[调度器] 启动（国内指数/个股=QMT, 外围指数=global loader, "
+        "东财板块=Tushare, 交易日历感知）"
+    )
     _scheduler_running = True
 
     while _scheduler_running:
@@ -1990,9 +2161,22 @@ def _scheduler_loop():
             is_trade = _is_trading_day()
 
             if not is_trade:
-                next_trade = _next_trade_close()
-                wait_sec = (next_trade - now).total_seconds()
-                logger.info(f"[调度器] 非交易日，距下次更新 {(next_trade).strftime('%m-%d %H:%M')} 还有 {wait_sec/3600:.1f}小时")
+                # A股休市不等于外围市场休市（尤其长假/周末跨时区）。
+                # 直接走正式指数入口；各市场的盘中延后和目标交易日由
+                # ``_index_session_target`` 在入口内分别判定。
+                logger.info("[调度器] A股非交易日，轮询外围指数正式日线")
+                index_result, wait_sec = _poll_indices_on_a_share_holiday(now)
+                if index_result.get('completion_ready'):
+                    logger.info(
+                        "[调度器] 外围指数已覆盖各自目标日，%ss后再次检查",
+                        int(wait_sec),
+                    )
+                else:
+                    logger.info(
+                        "[调度器] 外围/指数仍待结算，%ss后重试: %s",
+                        int(wait_sec),
+                        index_result,
+                    )
             else:
                 close_time = now.replace(hour=15, minute=30, second=0, microsecond=0)
                 if now < close_time:
@@ -2199,12 +2383,7 @@ def scan_update_debt(sample_limit: int = 5) -> dict:
     except Exception:
         stock_codes = []
 
-    index_codes = [
-        code for code, _name, _typ in PREWARM_TARGETS
-        if ((code in QMT_INDEX_MAP or code in EASTMONEY_INDEX_CODES)
-            and code not in BOARD_ONLY_PREWARM
-            and code not in PERMANENT_SKIP_INDICES)
-    ]
+    index_codes = [code for code, _name, _typ in _managed_index_targets()]
     index_targets = {}
     for code in index_codes:
         target, _is_open = _index_session_target(
@@ -2259,9 +2438,7 @@ def get_update_status() -> dict:
         pass
     indices = status.get('indices', {})
     required_index_codes = {
-        code for code, _name, _data_type in PREWARM_TARGETS
-        if ((code in QMT_INDEX_MAP or code in EASTMONEY_INDEX_CODES)
-            and code not in BOARD_ONLY_PREWARM)
+        code for code, _name, _data_type in _managed_index_targets()
     }
     reported_index_codes = required_index_codes | set(PERMANENT_SKIP_INDICES)
     indices = {

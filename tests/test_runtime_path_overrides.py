@@ -66,6 +66,20 @@ class TestDataDirOverride:
         assert Path(data_dir) == target
         assert Path(config_data_dir) == target
 
+    def test_update_manager_uses_overridden_market_database(self, tmp_path):
+        """日更调度与行情加载器必须检查同一个注入数据库。"""
+        target = tmp_path / 'runtime-data'
+        out = _run_py(
+            "from pathlib import Path; "
+            "import data_update_manager as manager; "
+            "from core.config import SQLITE_PATH; "
+            "print(Path(manager._LEDGER_DB)); print(SQLITE_PATH)",
+            {'BOARD_APP_DATA_DIR': str(target)},
+        )
+        manager_db, config_db = out.splitlines()
+        assert Path(manager_db) == target / 'kline.db'
+        assert Path(manager_db) == Path(config_db)
+
     def test_default_unchanged_without_env(self):
         """未设置环境变量时，DATA_DIR 保持 BASE_DIR/data 不变。"""
         out = _run_py(
