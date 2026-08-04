@@ -711,29 +711,126 @@ function _reloadSelectedChart(){
   } catch(e) {}
 }
 
+function _forceArea(label, promise){
+  return Promise.resolve(promise).then(function(value){
+    return {label: label, status: 'fresh', value: value};
+  }).catch(function(error){
+    return {
+      label: label,
+      status: 'failed',
+      message: (error && error.message) || '请求失败'
+    };
+  });
+}
+
+function _forceAreaIssues(areas){
+  // deferred = 按计划稍后执行（非错误），不得归类为“未及时更新”的问题区域；
+  // failed/unavailable/pending/canceled 仍按原语义提示。
+  var bad = ['failed', 'pending', 'unavailable', 'canceled'];
+  return (areas || []).filter(function(area){
+    return area && bad.indexOf(area.status) >= 0;
+  });
+}
+
+function _showForceAreaIssues(prefix, areas){
+  var issues = _forceAreaIssues(areas);
+  if(!issues.length) return false;
+  var detail = issues.map(function(area){
+    var suffix = area.message ? '（' + area.message + '）' : '';
+    return escHtml((area.label || '未知功能区') + suffix);
+  }).join('；');
+  showToastBar(escHtml(prefix || '以下数据未及时更新：') + detail);
+  return true;
+}
+
+function _taskAreaList(detail){
+  var areas = detail && detail.areas;
+  if(!areas || typeof areas !== 'object') return [];
+  return Object.keys(areas).map(function(key){
+    var area = areas[key] || {};
+    return {
+      label: area.label || key,
+      status: area.status || 'unavailable',
+      message: area.message || ''
+    };
+  });
+}
+
 function pollUpdateTask(taskId){
   var pollCount = 0;
-  var MAX_POLL = 15; // 即时 force 数秒内结束
+  var MAX_POLL = 375; // 最多跟踪 5 分钟；12 秒时先提示尚未及时完成的功能区
+  var TIMELY_POLL = 15;
   var POLL_INTERVAL = 800;
+  var timelyNotified = false;
+  var consecutivePollErrors = 0;
+  var lastAreas = [];
+
+  function reportPollFailure(message){
+    var areas = lastAreas.filter(function(area){ return area.status !== 'fresh'; });
+    if(!areas.length){
+      areas = [{label:'日线后台补齐', status:'unavailable', message:message}];
+    }
+    _showForceAreaIssues('以下数据未及时更新：', areas);
+  }
+
   var timer = setInterval(function(){
     pollCount++;
     if(pollCount > MAX_POLL){
       clearInterval(timer);
+      reportPollFailure('5分钟内未返回最终状态');
       return;
     }
     fetch(API+'/api/tasks/'+taskId)
       .then(function(r){return r.json()})
       .then(function(j){
-        if(!j.ok || !j.task) { clearInterval(timer); return; }
+        if(!j.ok || !j.task) {
+          consecutivePollErrors++;
+          if(consecutivePollErrors >= 3){
+            clearInterval(timer);
+            reportPollFailure('任务状态接口连续不可用');
+          }
+          return;
+        }
+        consecutivePollErrors = 0;
         var t = j.task;
+        var d = t.detail || {};
+        var currentAreas = _taskAreaList(d);
+        if(currentAreas.length) lastAreas = currentAreas;
+        var backgroundState = d.background_state || '';
+        var backgroundActive = ['scheduled', 'scanning', 'running'].indexOf(backgroundState) >= 0;
+        if(backgroundActive && pollCount >= TIMELY_POLL && !timelyNotified){
+          timelyNotified = true;
+          var pendingAreas = _taskAreaList(d).filter(function(area){
+            return area.status !== 'fresh';
+          });
+          if(!pendingAreas.length){
+            pendingAreas = [{label:'日线后台补齐', status:'pending', message:'仍在检查各数据源'}];
+          }
+          _showForceAreaIssues('以下数据未及时完成：', pendingAreas);
+        }
         if(t.status === 'running' || t.status === 'pending'){
           return;
         }
+        // force 任务的即时部分已结束，但 detail 仍由独立后台更新器回写。
+        if(backgroundActive) return;
         clearInterval(timer);
+        if(_taskCenterOpen){
+          try{ renderTaskCenter(); }catch(e){}
+        }
         if(t.status === 'success' || t.status === 'done'){
-          var d = t.detail || {};
           var msg = t.message || '界面已即时刷新';
-          if(d.background_catchup){
+          var taskAreas = _taskAreaList(d);
+          var reported = false;
+          if(d.background_state === 'running_elsewhere'){
+            toast('后台日更正在运行；各功能区继续独立刷新');
+          } else {
+            reported = _showForceAreaIssues('以下数据未及时更新：', taskAreas);
+          }
+          if(d.background_state === 'error' && !reported){
+            showToastBar('以下数据未及时更新：日线后台补齐（'+escHtml(d.catchup_message || '后台异常')+'）');
+          } else if(reported){
+            // 已给出逐区提示，不再用笼统成功消息覆盖。
+          } else if(d.background_catchup){
             toast(_truncDebtSummary(msg, 140) || '已即时刷新；后台补齐欠更中');
           } else if(d.full_already_running){
             toast('后台日更进行中，界面已即时刷新');
@@ -747,7 +844,13 @@ function pollUpdateTask(taskId){
           showToastBar('数据更新失败：'+escHtml(t.error||t.message||t.status));
         }
       })
-      .catch(function(){});
+      .catch(function(){
+        consecutivePollErrors++;
+        if(consecutivePollErrors >= 3){
+          clearInterval(timer);
+          reportPollFailure('任务状态请求连续失败');
+        }
+      });
   }, POLL_INTERVAL);
 }
 
@@ -759,7 +862,7 @@ function forceRefresh(){
   try { if (typeof _consCache !== 'undefined' && _consCache && _consCache.clear) _consCache.clear(); } catch(_){}
   toast('正在即时刷新...');
   // 1) 板块快照强制刷新（盘中立即拉东财实时；盘后空操作）
-  var snapP = fetch(API+'/api/snapshot/refresh', {method:'POST'})
+  var snapP = _forceArea('概念/行业板块实时数据', fetch(API+'/api/snapshot/refresh', {method:'POST'})
     .then(function(r){
       return r.json().then(function(j){
         if(!r.ok || !j || !j.ok) throw new Error((j && j.message) || ('HTTP '+r.status));
@@ -773,43 +876,38 @@ function forceRefresh(){
         // 若当前正展开成分面板 → 重拉成分
         try { if (typeof consDoRefresh === 'function') consDoRefresh(); } catch(_){}
       }
-    }).catch(function(e){
-      showToastBar('板块数据刷新失败：'+escHtml((e && e.message) || '未知错误'));
-    });
+    }));
   // 顶部和左侧指数必须走同步 force 路径，不能等待下一轮后台轮询。
-  var idxP = Promise.all([
-    (typeof refreshIdxPrices === 'function' ? refreshIdxPrices(true) : Promise.resolve()),
-    (typeof loadIndexBoardChanges === 'function' ? loadIndexBoardChanges(true) : Promise.resolve())
-  ]).catch(function(e){
-    showToastBar('指数数据刷新失败：'+escHtml((e && e.message) || '未知错误'));
-  });
+  var topIdxP = _forceArea('顶部导航栏指数',
+    typeof refreshIdxPrices === 'function'
+      ? refreshIdxPrices(true)
+      : Promise.reject(new Error('刷新函数不可用'))
+  );
+  var leftIdxP = _forceArea('左侧指数功能区',
+    typeof loadIndexBoardChanges === 'function'
+      ? loadIndexBoardChanges(true)
+      : Promise.reject(new Error('刷新函数不可用'))
+  );
   if(_taskCenterOpen){
     setTimeout(function(){ try{ renderTaskCenter(); }catch(e){} }, 400);
   }
   // 2) 触发原有后台 force update（个股历史补齐）
-  var taskP = fetch(API+'/api/tasks/update/force', {method:'POST'})
+  var taskP = _forceArea('日线后台补齐', fetch(API+'/api/tasks/update/force', {method:'POST'})
     .then(function(r){ return r.json(); })
     .then(function(j){
       if(!j.ok || !j.task){
-        return;
+        throw new Error((j && j.message) || '任务未创建');
       }
       var t = j.task;
-      if(t.status === 'success' || t.status === 'done'){
-        var d = t.detail || {};
-        toast(_truncDebtSummary(t.message || '界面已即时刷新', 140));
-        _reloadSelectedChart();
-        if(d.background_catchup){
-          // 后台补齐不阻塞
-        }
-      } else {
-        pollUpdateTask(t.id);
-      }
-    })
-    .catch(function(){});
-  // 等两个都触发后，立即重绘当前图（不等 task 完成）
-  Promise.all([snapP, taskP, idxP]).then(function(){
+      // 即时任务可能已经 success，但独立数据源状态仍在 detail 中后台回写。
+      pollUpdateTask(t.id);
+      return t;
+    }));
+  // 所有功能区独立结算；一个失败不会短路其他功能区。
+  Promise.all([snapP, topIdxP, leftIdxP, taskP]).then(function(areas){
+    _showForceAreaIssues('以下数据未及时更新：', areas);
     _reloadSelectedChart();
-  }).catch(function(){});
+  });
   return snapP;
 }
 
@@ -1036,6 +1134,21 @@ function renderTaskCenter(){
         const stCls = ['running','pending','success','canceled','failed'].includes(st) ? st : 'unknown';
         h += '<div class="task-top"><span class="task-id">' + escHtml(t.id ? t.id.slice(0,12) : '?') + '</span><span class="task-status ' + stCls + '">' + stText + '</span></div>';
         if(msg) h += '<div class="task-msg">' + escHtml(String(msg)) + '</div>';
+        const areaItems = _taskAreaList(t.detail || {});
+        if(areaItems.length){
+          const areaStatusText = {
+            fresh:'已更新', pending:'待更新', deferred:'按时段等待',
+            failed:'失败', unavailable:'状态不可用', canceled:'已取消'
+          };
+          h += '<div class="task-areas">';
+          areaItems.forEach(area => {
+            const areaCls = ['fresh','pending','deferred','failed','unavailable','canceled'].includes(area.status) ? area.status : 'unavailable';
+            h += '<div class="task-area ' + areaCls + '"><span>' + escHtml(area.label || '未知功能区') + '</span><b>' + escHtml(areaStatusText[areaCls] || areaCls) + '</b>';
+            if(area.message) h += '<small>' + escHtml(area.message) + '</small>';
+            h += '</div>';
+          });
+          h += '</div>';
+        }
         h += '<div class="task-progress"><div class="task-progress-bar"><div class="task-progress-fill" style="width:' + pct + '%"></div></div><span class="task-progress-pct">' + pct + '%</span></div>';
         if(canCancel) h += '<div class="task-actions"><button class="task-btn cancel" onclick="cancelTask(\'' + escAttr(t.id) + '\')">取消</button></div>';
         h += '</div>';

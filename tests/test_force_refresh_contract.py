@@ -28,6 +28,24 @@ def test_frontend_force_refreshes_top_and_left_index_quotes():
     assert 'loadIndexBoardChanges(true)' in sse
 
 
+def test_force_refresh_reports_each_area_without_short_circuiting():
+    index_bar = (ROOT / 'static/js/index-bar.js').read_text(encoding='utf-8')
+    nav = (ROOT / 'static/js/nav-panel.js').read_text(encoding='utf-8')
+    sse = (ROOT / 'static/js/sse-client.js').read_text(encoding='utf-8')
+
+    assert "if (force) throw e;" in index_bar
+    assert "if (force) throw e;" in nav
+    assert "Promise.all([snapP, topIdxP, leftIdxP, taskP])" in sse
+    assert "以下数据未及时更新：" in sse
+    assert "以下数据未及时完成：" in sse
+    assert "background_state" in sse
+    assert "consecutivePollErrors >= 3" in sse
+    assert "reportPollFailure('5分钟内未返回最终状态')" in sse
+    assert "if(d.background_state === 'running_elsewhere')" in sse
+    for label in ('概念/行业板块实时数据', '顶部导航栏指数', '左侧指数功能区', '日线后台补齐'):
+        assert label in sse
+
+
 def test_force_index_route_uses_synchronous_fetch():
     cached = {
         'data': {

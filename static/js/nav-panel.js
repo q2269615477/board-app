@@ -1677,6 +1677,8 @@ function loadIndexBoardChanges(force){
       // A failed request must be retryable after the in-flight promise clears.
       codes.forEach(function(code){ _indexChgRequested.delete(code); });
       console.debug('[Nav] 指数涨跌幅加载失败', e);
+      // 强刷调用者需要知道本功能区未更新；普通后台刷新仍保持静默。
+      if (force) throw e;
     })
     .finally(function(){ _indexChgLoadPromise = null; });
   return _indexChgLoadPromise;

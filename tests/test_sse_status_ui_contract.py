@@ -50,3 +50,12 @@ def test_data_update_and_error_feedback_paths_remain_present():
     assert "toast('数据更新中...')" in SSE_CLIENT
     assert "data_update_incomplete" in SSE_CLIENT
     assert "showToastBar('任务失败: ' + msg)" in SSE_CLIENT
+
+
+def test_task_center_keeps_per_area_update_status_visible():
+    assert "const areaItems = _taskAreaList(t.detail || {})" in SSE_CLIENT
+    assert "按时段等待" in SSE_CLIENT
+    assert "task-area " in SSE_CLIENT
+    assert ".task-areas" in APP_CSS
+    assert ".task-area.failed" in APP_CSS
+    assert "if(_taskCenterOpen)" in SSE_CLIENT

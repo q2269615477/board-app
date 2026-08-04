@@ -238,6 +238,13 @@ body[data-board-theme="light"] .data-source-health-meta{color:#596579}
 .task-status.success{background:rgba(38,166,154,.18);color:#7dcec4}
 .task-status.canceled,.task-status.failed{background:rgba(239,83,80,.18);color:#e57373}
 .task-msg{font-size:10px;color:#b2b5be;margin:2px 0;word-break:break-all}
+.task-areas{display:grid;gap:3px;margin:5px 0}
+.task-area{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:3px 6px;border-left:2px solid #434651;background:#1b202b;color:#b2b5be}
+.task-area b{font-size:9px;font-weight:600;color:#b2b5be}
+.task-area small{grid-column:1/-1;color:#787b86;word-break:break-all}
+.task-area.fresh{border-left-color:#26a69a}.task-area.fresh b{color:#7dcec4}
+.task-area.pending,.task-area.deferred{border-left-color:#f39c12}.task-area.pending b,.task-area.deferred b{color:#f0c674}
+.task-area.failed,.task-area.unavailable,.task-area.canceled{border-left-color:#ef5350}.task-area.failed b,.task-area.unavailable b,.task-area.canceled b{color:#e57373}
 .task-progress{display:flex;align-items:center;gap:6px;margin:3px 0}
 .task-progress-bar{flex:1;height:4px;background:#2a2e39;border-radius:2px;overflow:hidden}
 .task-progress-fill{height:100%;background:#2962ff;border-radius:2px;transition:width .3s}

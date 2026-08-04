@@ -417,6 +417,8 @@ function refreshIdxPrices(force) {
     const bar = document.getElementById('index-bar');
     if (bar && !bar.dataset.quoteCount) bar.dataset.quoteState = 'error';
     console.warn('[IndexBar] refresh prices failed', e);
+    // 自动轮询保持静默；用户点击强制刷新时把失败交还给聚合提示。
+    if (force) throw e;
   }).finally(function() {
     const bar = document.getElementById('index-bar');
     if (bar) delete bar.dataset.quoteRefreshing;
